@@ -1,0 +1,191 @@
+package com.wrbug.polymarketbot.service.common
+
+import com.google.gson.Gson
+import com.wrbug.polymarketbot.api.ApiKeyResponse
+import com.wrbug.polymarketbot.api.PolymarketClobApi
+import com.wrbug.polymarketbot.constants.PolymarketConstants
+import com.wrbug.polymarketbot.util.PolymarketL1AuthInterceptor
+import com.wrbug.polymarketbot.util.RetrofitFactory
+import com.wrbug.polymarketbot.util.createClient
+import kotlinx.coroutines.runBlocking
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Service
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+
+@Service
+class PolymarketApiKeyService(
+    private val gson: Gson
+) {
+    
+    private val logger = LoggerFactory.getLogger(PolymarketApiKeyService::class.java)
+    
+    data class ApiKeyCreds(
+        val apiKey: String,
+        val secret: String,
+        val passphrase: String
+    )
+    
+    fun createOrDeriveApiKey(
+        privateKey: String,
+        walletAddress: String,
+        chainId: Long = 137L
+    ): Result<ApiKeyCreds> {
+        return runBlocking {
+            try {
+                val deriveResult = deriveApiKey(privateKey, walletAddress, chainId)
+                val maskedAddress = "${walletAddress.take(6)}...${walletAddress.takeLast(4)}"
+                if (deriveResult.isSuccess) {
+                    val creds = deriveResult.getOrNull()
+                    if (creds != null && isApiCreds(creds)) {
+                        logger.debug("成功获取现有 API Key: $maskedAddress")
+                        return@runBlocking Result.success(creds)
+                    }
+                }
+                logger.debug("获取现有 API Key 失败，尝试创建新的: $maskedAddress")
+                val createResult = createApiKey(privateKey, walletAddress, chainId)
+                if (createResult.isSuccess) {
+                    val creds = createResult.getOrNull()
+                    if (creds != null && isApiCreds(creds)) {
+                        logger.debug("成功创建新 API Key: $maskedAddress")
+                        return@runBlocking Result.success(creds)
+                    }
+                }
+                val error = createResult.exceptionOrNull() ?: deriveResult.exceptionOrNull()
+                val errorMsg = error?.message ?: "未知错误"
+                logger.error("获取和创建 API Key 都失败: $maskedAddress", error)
+                Result.failure(
+                    IllegalStateException("无法获取或创建 API Key: $errorMsg")
+                )
+            } catch (e: Exception) {
+                val maskedAddress = "${walletAddress.take(6)}...${walletAddress.takeLast(4)}"
+                logger.error("创建或获取 API Key 异常: $maskedAddress", e)
+                Result.failure(e)
+            }
+        }
+    }
+    
+    private fun isApiCreds(creds: ApiKeyCreds?): Boolean {
+        return creds != null && 
+               creds.apiKey.isNotBlank() && 
+               creds.secret.isNotBlank() && 
+               creds.passphrase.isNotBlank()
+    }
+    
+    private suspend fun fetchServerTimeOrNull(): Long? {
+        return try {
+            val timeApi = createUnauthenticatedApi()
+            val timeResponse = timeApi.getServerTime()
+            if (timeResponse.isSuccessful) {
+                timeResponse.body()?.string()?.trim()?.toLongOrNull()
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            logger.warn("获取服务器时间失败，使用本地时间", e)
+            null
+        }
+    }
+    
+    private suspend fun createApiKey(
+        privateKey: String,
+        walletAddress: String,
+        chainId: Long
+    ): Result<ApiKeyCreds> {
+        return try {
+            val serverTime = fetchServerTimeOrNull()
+            val api = createL1AuthenticatedApi(privateKey, walletAddress, chainId, serverTime)
+            val response = api.createApiKey()
+            
+            if (response.isSuccessful && response.body() != null) {
+                val apiKeyResponse = response.body()!!
+                Result.success(
+                    ApiKeyCreds(
+                        apiKey = apiKeyResponse.apiKey,
+                        secret = apiKeyResponse.secret,
+                        passphrase = apiKeyResponse.passphrase
+                    )
+                )
+            } else {
+                val errorBody = response.errorBody()?.string() ?: "未知错误"
+                logger.warn("创建 API Key 失败: ${response.code()} $errorBody")
+                Result.failure(
+                    IllegalStateException("创建 API Key 失败: ${response.code()} $errorBody")
+                )
+            }
+        } catch (e: Exception) {
+            logger.error("创建 API Key 异常", e)
+            Result.failure(e)
+        }
+    }
+    
+    private suspend fun deriveApiKey(
+        privateKey: String,
+        walletAddress: String,
+        chainId: Long
+    ): Result<ApiKeyCreds> {
+        return try {
+            val serverTime = fetchServerTimeOrNull()
+            val api = createL1AuthenticatedApi(privateKey, walletAddress, chainId, serverTime)
+            val response = api.deriveApiKey()
+            
+            if (response.isSuccessful && response.body() != null) {
+                val apiKeyResponse = response.body()!!
+                Result.success(
+                    ApiKeyCreds(
+                        apiKey = apiKeyResponse.apiKey,
+                        secret = apiKeyResponse.secret,
+                        passphrase = apiKeyResponse.passphrase
+                    )
+                )
+            } else {
+                val errorBody = response.errorBody()?.string() ?: "未知错误"
+                logger.warn("获取 API Key 失败: ${response.code()} $errorBody")
+                Result.failure(
+                    IllegalStateException("获取 API Key 失败: ${response.code()} $errorBody")
+                )
+            }
+        } catch (e: Exception) {
+            logger.error("获取 API Key 异常", e)
+            Result.failure(e)
+        }
+    }
+    
+    private fun createL1AuthenticatedApi(
+        privateKey: String,
+        walletAddress: String,
+        chainId: Long,
+        serverTime: Long? = null
+    ): PolymarketClobApi {
+        val authInterceptor = PolymarketL1AuthInterceptor(
+            privateKey = privateKey,
+            walletAddress = walletAddress,
+            chainId = chainId,
+            useServerTime = serverTime != null,
+            serverTime = serverTime
+        )
+        
+        val okHttpClient = createClient()
+            .addInterceptor(authInterceptor)
+            .build()
+        
+        return Retrofit.Builder()
+            .baseUrl(PolymarketConstants.CLOB_BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+            .create(PolymarketClobApi::class.java)
+    }
+    
+    private fun createUnauthenticatedApi(): PolymarketClobApi {
+        val okHttpClient = createClient().build()
+        
+        return Retrofit.Builder()
+            .baseUrl(PolymarketConstants.CLOB_BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+            .create(PolymarketClobApi::class.java)
+    }
+}
+

@@ -1,0 +1,15 @@
+-- ============================================
+-- V6: 添加价格区间过滤字段
+-- 用于配置价格区间，仅在指定价格区间内的订单才会下单
+-- ============================================
+
+-- 添加价格区间字段到跟单配置表
+ALTER TABLE copy_trading
+ADD COLUMN min_price DECIMAL(20, 8) NULL COMMENT '最低价格（可选），NULL表示不限制最低价',
+ADD COLUMN max_price DECIMAL(20, 8) NULL COMMENT '最高价格（可选），NULL表示不限制最高价';
+
+-- 添加价格区间字段到跟单模板表
+ALTER TABLE copy_trading_templates
+ADD COLUMN min_price DECIMAL(20, 8) NULL COMMENT '最低价格（可选），NULL表示不限制最低价',
+ADD COLUMN max_price DECIMAL(20, 8) NULL COMMENT '最高价格（可选），NULL表示不限制最高价';
+

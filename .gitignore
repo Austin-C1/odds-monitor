@@ -1,0 +1,137 @@
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.cursor/
+.github/
+.dockerignore
+.playwright-cli/
+.reference/
+.superpowers/
+screenshot/
+polymarket-demo/
+docs/superpowers/
+docs/
+工具/
+*报告*.md
+*report*.md
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Gradle
+backend/.gradle/
+backend/build/
+backend/bin/
+backend/out/
+backend/*.log
+backend/gradle-app.setting
+backend/.gradle
+# 注意：gradle-wrapper.jar 应该被提交，不要忽略
+# backend/gradle/wrapper/gradle-wrapper.jar
+polyhub/
+# Kotlin
+*.kt.bak
+*.class
+
+# Java
+*.jar
+*.hprof
+!backend/gradle/wrapper/gradle-wrapper.jar
+*.war
+*.ear
+*.class
+hs_err_pid*
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-store/
+polymarket-trading-bot/
+# Frontend build
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+frontend/.temp/
+frontend/.tmp/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+config/update.json
+config/local.env.ps1
+
+# Application properties (may contain sensitive data)
+backend/src/main/resources/application-local.properties
+backend/src/main/resources/application-dev.properties
+backend/src/main/resources/application-prod.properties
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*-db-backup*.sql
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+updates/
+backups/
+output/
+tmp-logback/
+tmp-jstack.txt
+.tools/
+
+# Coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Test
+test-results/
+*.test.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Misc
+*.bak
+*.backup
+*.old
+
+# Submodules and external dependencies
+clob-client/
+builder-relayer-client/
+landing-page/

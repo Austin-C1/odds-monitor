@@ -1,0 +1,368 @@
+.odds-monitor-page.light-mode {
+  margin: -24px;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #f4f7fb;
+  color: #162033;
+}
+
+.odds-monitor-topbar {
+  height: 52px;
+  padding: 0 18px;
+  border-bottom: 1px solid #dbe3ee;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.topbar-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.page-title {
+  color: #1766c2;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.odds-monitor-workspace {
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.match-panel {
+  border-right: 1px solid #dbe3ee;
+  background: #ffffff;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.match-panel-header {
+  height: 44px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.match-search-bar {
+  padding: 10px 12px;
+  background: #ffffff;
+  border-bottom: 1px solid #edf1f6;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+.match-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.match-search-empty {
+  margin: 28px 10px;
+}
+
+.league-group {
+  border-bottom: 1px solid #edf1f6;
+}
+
+.league-heading {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 34px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #f7fbff;
+  border-bottom: 1px solid #e5edf7;
+}
+
+.league-heading strong {
+  color: #1766c2;
+}
+
+.match-item {
+  padding: 0 !important;
+  border-block-end: 1px solid #edf1f6 !important;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.match-item:hover {
+  background: #f7fbff;
+}
+
+.match-item.active {
+  background: #eaf4ff;
+  box-shadow: inset 3px 0 0 #1677ff;
+}
+
+.match-card-content {
+  width: 100%;
+  padding: 13px 14px 12px;
+}
+
+.match-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.change-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  flex: 0 0 auto;
+}
+
+.change-dot.has-change {
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+}
+
+.match-title {
+  display: block;
+  min-width: 0;
+  color: #162033;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.match-meta {
+  display: block;
+  margin: 5px 0 8px 16px;
+  font-size: 12px;
+}
+
+.platform-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-left: 16px;
+}
+
+.platform-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  background: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.monitor-main {
+  padding: 20px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.match-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.match-heading h2,
+.section-heading h4 {
+  margin: 0;
+  color: #102033;
+}
+
+.source-legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  color: #46576d;
+  font-weight: 700;
+}
+
+.source-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.source-legend i {
+  width: 22px;
+  height: 3px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.status-strip span {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid #dbe3ee;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #46576d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.market-section {
+  background: #ffffff;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.market-collapse-title {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.market-platforms {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.market-panel-body {
+  display: grid;
+  gap: 14px;
+}
+
+.market-table {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.market-table-head,
+.market-table-row {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr repeat(3, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.market-table-head {
+  background: #f7f9fc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 9px 12px;
+}
+
+.market-table-row {
+  min-height: 38px;
+  padding: 8px 12px;
+  border-top: 1px solid #edf1f6;
+}
+
+.market-table-row .pinnacle {
+  color: #ef4444;
+  font-weight: 800;
+}
+
+.market-table-row .crown {
+  color: #16a34a;
+  font-weight: 800;
+}
+
+.market-table-row .polymarket {
+  color: #2563eb;
+  font-weight: 800;
+}
+
+.market-chart {
+  height: 310px;
+  width: 100%;
+}
+
+@media (max-width: 1180px) {
+  .odds-monitor-workspace {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+
+  .market-table-head,
+  .market-table-row {
+    grid-template-columns: 0.8fr 1fr repeat(3, 0.9fr);
+  }
+
+}
+
+@media (max-width: 860px) {
+  .odds-monitor-topbar,
+  .match-heading,
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    height: auto;
+  }
+
+  .odds-monitor-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .match-panel {
+    border-right: none;
+    border-bottom: 1px solid #dbe3ee;
+    max-height: 330px;
+    overflow: auto;
+  }
+
+  .market-collapse-title {
+    grid-template-columns: 1fr;
+  }
+
+  .market-table {
+    overflow-x: auto;
+  }
+
+  .market-table-head,
+  .market-table-row {
+    min-width: 620px;
+  }
+}
