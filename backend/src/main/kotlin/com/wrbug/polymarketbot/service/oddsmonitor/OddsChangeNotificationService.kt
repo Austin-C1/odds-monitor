@@ -7,10 +7,12 @@ import com.wrbug.polymarketbot.entity.OddsMarket
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
 import com.wrbug.polymarketbot.repository.OddsMarketRepository
+import com.wrbug.polymarketbot.repository.OddsMatchRepository
 import com.wrbug.polymarketbot.repository.OddsSnapshotRepository
 import com.wrbug.polymarketbot.service.system.NotificationConfigService
 import com.wrbug.polymarketbot.service.system.TelegramNotificationService
 import com.wrbug.polymarketbot.util.DateUtils
+import com.wrbug.polymarketbot.util.TextEncodingUtils
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -25,7 +27,8 @@ class OddsChangeNotificationService(
     private val telegramNotificationService: TelegramNotificationService,
     private val notificationConfigService: NotificationConfigService,
     private val marketRepository: OddsMarketRepository,
-    private val snapshotRepository: OddsSnapshotRepository
+    private val snapshotRepository: OddsSnapshotRepository,
+    private val matchRepository: OddsMatchRepository? = null
 ) {
     private val logger = LoggerFactory.getLogger(OddsChangeNotificationService::class.java)
     private val expectedSources = listOf("pinnacle", "crown", "polymarket")
@@ -43,24 +46,37 @@ class OddsChangeNotificationService(
         if (!hasOddsChanged(previousOdds, currentOdds)) {
             return
         }
-        if (shouldSuppressByOddsMove(market, previousOdds, currentOdds)) {
+        val configs = loadActiveMonitorTelegramConfigs() ?: return
+        if (configs.isEmpty()) {
             return
         }
-        if (shouldSuppressByCombinedWater(market, currentOdds)) {
+        val standardMatch = matchRepository?.findById(market.matchId)?.orElse(null)
+        val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch)
+        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase) }
+        if (phaseConfigs.isEmpty()) {
+            return
+        }
+        if (shouldSuppressByOddsMove(market, previousOdds, currentOdds, phaseConfigs)) {
+            return
+        }
+        if (shouldSuppressByCombinedWater(market, currentOdds, phaseConfigs)) {
             return
         }
 
-        enqueueMergedNotification(match, market, previousOdds ?: BigDecimal.ZERO, currentOdds)
+        enqueueMergedNotification(match, market, previousOdds ?: BigDecimal.ZERO, currentOdds, phaseConfigs)
     }
 
     private fun enqueueMergedNotification(
         match: OddsPlatformMatch,
         market: OddsMarket,
         previousOdds: BigDecimal,
-        currentOdds: BigDecimal
+        currentOdds: BigDecimal,
+        configs: List<NotificationConfigDto>
     ) {
         val key = OddsChangeNotificationKey(
-            standardMatchId = market.matchId,
+            standardMatchId = market.matchId
+        )
+        val marketKey = OddsChangeNotificationMarketKey(
             marketType = market.marketType,
             lineValue = market.lineValue,
             selectionName = market.selectionName
@@ -69,23 +85,60 @@ class OddsChangeNotificationService(
             val base = existing ?: PendingOddsChangeNotification(
                 matchName = "${match.rawHomeTeam} vs ${match.rawAwayTeam}",
                 leagueName = match.rawLeagueName,
-                marketLabel = market.displayLabel(),
                 matchId = market.matchId,
-                changes = linkedMapOf()
+                configs = configs,
+                markets = linkedMapOf()
             )
-            base.changes[market.sourceKey] = OddsChangeNotificationItem(market.sourceKey, previousOdds, currentOdds)
-            base
+            val updatedBase = base.copy(configs = mergeNotificationConfigs(base.configs, configs))
+            val pendingMarket = base.markets.getOrPut(marketKey) {
+                PendingOddsChangeMarketNotification(
+                    marketType = market.marketType,
+                    marketLabel = market.displayLabel(),
+                    changes = linkedMapOf()
+                )
+            }
+            val existingChange = pendingMarket.changes[market.sourceKey]
+            val updatedChange = if (existingChange == null) {
+                OddsChangeNotificationItem(market.sourceKey, previousOdds, currentOdds)
+            } else {
+                existingChange.copy(currentOdds = currentOdds)
+            }
+            if (
+                hasOddsChanged(updatedChange.previousOdds, updatedChange.currentOdds) &&
+                !shouldSuppressOddsChangeByMove(
+                    marketType = market.marketType,
+                    previousOdds = updatedChange.previousOdds,
+                    currentOdds = updatedChange.currentOdds,
+                    configs = configs
+                )
+            ) {
+                pendingMarket.changes[market.sourceKey] = updatedChange
+            } else {
+                pendingMarket.changes.remove(market.sourceKey)
+            }
+            if (pendingMarket.changes.isEmpty()) {
+                base.markets.remove(marketKey)
+            }
+            updatedBase.takeIf { it.markets.isNotEmpty() }
         }
         scheduler.schedule({ flushNotification(key) }, 1500, TimeUnit.MILLISECONDS)
     }
 
     private fun flushNotification(key: OddsChangeNotificationKey) {
         val pending = pendingAlerts.remove(key) ?: return
+        if (pending.markets.isEmpty()) {
+            return
+        }
         val message = buildMergedOddsChangeAlertMessage(
             matchName = pending.matchName,
             leagueName = pending.leagueName,
-            marketLabel = pending.marketLabel,
-            changes = pending.changes.values.toList(),
+            markets = pending.markets.values.map { market ->
+                OddsChangeNotificationMarketItem(
+                    marketType = market.marketType,
+                    marketLabel = market.marketLabel,
+                    changes = market.changes.values.toList()
+                )
+            },
             expectedSources = expectedSources,
             timestampText = DateUtils.formatDateTime()
         )
@@ -95,7 +148,7 @@ class OddsChangeNotificationService(
                 severity = "info",
                 matchId = pending.matchId,
                 sourceKey = null,
-                title = "赔率变动：${pending.matchName}",
+                title = "赔率变动：${TextEncodingUtils.repairMojibake(pending.matchName)}",
                 message = message,
                 createdAt = System.currentTimeMillis()
             )
@@ -103,7 +156,7 @@ class OddsChangeNotificationService(
 
         runCatching {
             runBlocking {
-                telegramNotificationService.sendMonitorMessage(message)
+                telegramNotificationService.sendMonitorMessageToConfigs(message, pending.configs)
             }
         }.onFailure { error ->
             logger.warn("Failed to send odds change Telegram notification: {}", error.message)
@@ -113,25 +166,18 @@ class OddsChangeNotificationService(
     private fun shouldSuppressByOddsMove(
         market: OddsMarket,
         previousOdds: BigDecimal?,
-        currentOdds: BigDecimal
+        currentOdds: BigDecimal,
+        configs: List<NotificationConfigDto>
     ): Boolean {
-        val configs = runCatching {
-            runBlocking { notificationConfigService.getEnabledConfigsByType("telegram") }
-        }.getOrElse { error ->
-            logger.warn("Failed to load Telegram odds move filters: {}", error.message)
-            return false
-        }
         return shouldSuppressOddsChangeByMove(market.marketType, previousOdds, currentOdds, configs)
     }
 
-    private fun shouldSuppressByCombinedWater(market: OddsMarket, currentOdds: BigDecimal): Boolean {
+    private fun shouldSuppressByCombinedWater(
+        market: OddsMarket,
+        currentOdds: BigDecimal,
+        configs: List<NotificationConfigDto>
+    ): Boolean {
         val pairSelectionName = pairSelectionName(market.marketType, market.selectionName) ?: return false
-        val configs = runCatching {
-            runBlocking { notificationConfigService.getEnabledConfigsByType("telegram") }
-        }.getOrElse { error ->
-            logger.warn("Failed to load Telegram water limits: {}", error.message)
-            return false
-        }
         val activeLimits = activeCombinedWaterLimits(market.marketType, configs)
         if (activeLimits.isEmpty()) {
             return false
@@ -149,10 +195,21 @@ class OddsChangeNotificationService(
 
         return shouldSuppressOddsChangeByCombinedWater(
             marketType = market.marketType,
-            currentOdds = currentOdds,
-            pairedOdds = pairOdds,
+            currentOdds = asianWaterOdds(market.sourceKey, market.marketType, currentOdds),
+            pairedOdds = asianWaterOdds(pairMarket.sourceKey, pairMarket.marketType, pairOdds),
             configs = configs
         )
+    }
+
+    private fun loadActiveMonitorTelegramConfigs(): List<NotificationConfigDto>? {
+        return runCatching {
+            runBlocking { notificationConfigService.getEnabledConfigsByType("telegram") }
+        }.map { configs ->
+            activeMonitorTelegramConfigs(configs)
+        }.getOrElse { error ->
+            logger.warn("Failed to load Telegram monitor filters: {}", error.message)
+            null
+        }
     }
 }
 
@@ -162,8 +219,17 @@ data class OddsChangeNotificationItem(
     val currentOdds: BigDecimal
 )
 
+data class OddsChangeNotificationMarketItem(
+    val marketType: String? = null,
+    val marketLabel: String,
+    val changes: List<OddsChangeNotificationItem>
+)
+
 private data class OddsChangeNotificationKey(
-    val standardMatchId: Long,
+    val standardMatchId: Long
+)
+
+private data class OddsChangeNotificationMarketKey(
     val marketType: String,
     val lineValue: String?,
     val selectionName: String
@@ -172,8 +238,14 @@ private data class OddsChangeNotificationKey(
 private data class PendingOddsChangeNotification(
     val matchName: String,
     val leagueName: String,
-    val marketLabel: String,
     val matchId: Long,
+    val configs: List<NotificationConfigDto>,
+    val markets: LinkedHashMap<OddsChangeNotificationMarketKey, PendingOddsChangeMarketNotification>
+)
+
+private data class PendingOddsChangeMarketNotification(
+    val marketType: String,
+    val marketLabel: String,
     val changes: LinkedHashMap<String, OddsChangeNotificationItem>
 )
 
@@ -209,6 +281,19 @@ fun shouldSuppressOddsChangeByMove(
     val previous = previousOdds ?: return true
     val move = currentOdds.subtract(previous).abs()
     return limits.none { move >= it }
+}
+
+fun activeMonitorTelegramConfigs(configs: List<NotificationConfigDto>): List<NotificationConfigDto> {
+    return configs.filter { config ->
+        config.enabled && (config.config as? NotificationConfigData.Telegram)?.data?.monitorModeEnabled == true
+    }
+}
+
+private fun mergeNotificationConfigs(
+    existing: List<NotificationConfigDto>,
+    incoming: List<NotificationConfigDto>
+): List<NotificationConfigDto> {
+    return (existing + incoming).distinctBy { config -> config.id?.toString() ?: config.name }
 }
 
 private fun activeCombinedWaterLimits(marketType: String, configs: List<NotificationConfigDto>): List<BigDecimal> {
@@ -265,7 +350,7 @@ private fun pairSelectionName(marketType: String, selectionName: String): String
 }
 
 fun buildOddsChangeAlertTitle(match: OddsPlatformMatch): String {
-    return "赔率变动：${match.rawHomeTeam} vs ${match.rawAwayTeam}"
+    return "赔率变动：${TextEncodingUtils.repairMojibake(match.rawHomeTeam)} vs ${TextEncodingUtils.repairMojibake(match.rawAwayTeam)}"
 }
 
 fun buildOddsChangeAlertMessage(
@@ -282,11 +367,11 @@ fun buildOddsChangeAlertMessage(
 
     return """<b>${escapeHtml(buildOddsChangeAlertTitle(match))}</b>
 
-联赛: ${escapeHtml(match.rawLeagueName)}
-比赛: ${escapeHtml(match.rawHomeTeam)} vs ${escapeHtml(match.rawAwayTeam)}
+联赛: ${escapeHtml(TextEncodingUtils.repairMojibake(match.rawLeagueName))}
+比赛: ${escapeHtml(TextEncodingUtils.repairMojibake(match.rawHomeTeam))} vs ${escapeHtml(TextEncodingUtils.repairMojibake(match.rawAwayTeam))}
 盘口: ${escapeHtml(marketLabel)}
 平台: ${escapeHtml(market.sourceKey)}
-变化: <code>${formatOdds(previousOdds)} -> ${formatOdds(currentOdds)}</code>
+变化: <code>${formatOdds(previousOdds, market.sourceKey, market.marketType)} -> ${formatOdds(currentOdds, market.sourceKey, market.marketType)}</code>
 时间: <code>${DateUtils.formatDateTime()}</code>"""
 }
 
@@ -298,19 +383,42 @@ fun buildMergedOddsChangeAlertMessage(
     expectedSources: List<String>,
     timestampText: String
 ): String {
-    val changesBySource = changes.associateBy { it.sourceKey }
+    return buildMergedOddsChangeAlertMessage(
+        matchName = matchName,
+        leagueName = leagueName,
+        markets = listOf(OddsChangeNotificationMarketItem(marketLabel = marketLabel, changes = changes)),
+        expectedSources = expectedSources,
+        timestampText = timestampText
+    )
+}
+
+fun buildMergedOddsChangeAlertMessage(
+    matchName: String,
+    leagueName: String,
+    markets: List<OddsChangeNotificationMarketItem>,
+    expectedSources: List<String>,
+    timestampText: String
+): String {
+    val displayMatchName = TextEncodingUtils.repairMojibake(matchName)
+    val displayLeagueName = TextEncodingUtils.repairMojibake(leagueName)
     return buildString {
-        appendLine("<b>${escapeHtml("赔率变动：$matchName")}</b>")
+        appendLine("<b>${escapeHtml("赔率变动：$displayMatchName")}</b>")
         appendLine()
-        appendLine("联赛：${escapeHtml(leagueName)}")
-        appendLine("盘口：${escapeHtml(marketLabel)}")
+        appendLine("联赛：${escapeHtml(displayLeagueName)}")
         appendLine()
-        expectedSources.forEach { sourceKey ->
-            val change = changesBySource[sourceKey]
-            if (change == null) {
-                appendLine("${platformLabel(sourceKey)}：无对应盘口")
-            } else {
-                appendLine("${platformLabel(sourceKey)}：${formatMergedOdds(change.previousOdds)} -> ${formatMergedOdds(change.currentOdds)}")
+        markets.forEachIndexed { index, market ->
+            if (index > 0) {
+                appendLine()
+            }
+            appendLine("盘口：${escapeHtml(TextEncodingUtils.repairMojibake(market.marketLabel))}")
+            val changesBySource = market.changes.associateBy { it.sourceKey }
+            expectedSources.forEach { sourceKey ->
+                val change = changesBySource[sourceKey]
+                if (change == null) {
+                    appendLine("${platformLabel(sourceKey)}：无对应盘口")
+                } else {
+                    appendLine("${platformLabel(sourceKey)}：${formatMergedOdds(change.previousOdds, change.sourceKey, market.marketType)} -> ${formatMergedOdds(change.currentOdds, change.sourceKey, market.marketType)}")
+                }
             }
         }
         appendLine()
@@ -352,13 +460,29 @@ private fun formatOdds(value: BigDecimal): String {
     return value.stripTrailingZeros().toPlainString()
 }
 
-private fun formatMergedOdds(value: BigDecimal): String {
-    val normalized = value.stripTrailingZeros()
+private fun formatMergedOdds(value: BigDecimal, sourceKey: String, marketType: String?): String {
+    val displayValue = asianWaterOdds(sourceKey, marketType, value)
+    val normalized = displayValue.stripTrailingZeros()
     return if (normalized.scale() < 2) {
-        value.setScale(2).toPlainString()
+        displayValue.setScale(2).toPlainString()
     } else {
         normalized.toPlainString()
     }
+}
+
+private fun formatOdds(value: BigDecimal, sourceKey: String, marketType: String): String {
+    return asianWaterOdds(sourceKey, marketType, value).stripTrailingZeros().toPlainString()
+}
+
+private fun asianWaterOdds(sourceKey: String, marketType: String?, value: BigDecimal): BigDecimal {
+    if (
+        sourceKey != "pinnacle" ||
+        marketType?.lowercase() !in setOf("handicap", "total") ||
+        value < BigDecimal.ONE
+    ) {
+        return value
+    }
+    return value - BigDecimal.ONE
 }
 
 private fun escapeHtml(value: String): String {

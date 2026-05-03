@@ -1,5 +1,6 @@
 package com.wrbug.polymarketbot.service.oddsmonitor.collector.crown
 
+import com.wrbug.polymarketbot.service.oddsmonitor.OddsLineDisplayFormatter
 import org.springframework.stereotype.Component
 
 @Component
@@ -8,13 +9,15 @@ class CrownOddsMapper {
         val rows = mutableListOf<CrownMappedOddsRow>()
 
         match.handicaps.forEach { market ->
-            rows += CrownMappedOddsRow(platformMatchId, "handicap", market.line, "home", market.homeOdds, capturedAt, match.rawPayload)
-            rows += CrownMappedOddsRow(platformMatchId, "handicap", market.line, "away", market.awayOdds, capturedAt, match.rawPayload)
+            val line = OddsLineDisplayFormatter.format("handicap", market.line)
+            rows += CrownMappedOddsRow(platformMatchId, "handicap", line, "home", market.homeOdds, capturedAt, match.rawPayload)
+            rows += CrownMappedOddsRow(platformMatchId, "handicap", line, "away", market.awayOdds, capturedAt, match.rawPayload)
         }
 
         match.totals.forEach { market ->
-            rows += CrownMappedOddsRow(platformMatchId, "total", market.line, "over", market.overOdds, capturedAt, match.rawPayload)
-            rows += CrownMappedOddsRow(platformMatchId, "total", market.line, "under", market.underOdds, capturedAt, match.rawPayload)
+            val line = OddsLineDisplayFormatter.format("total", market.line)
+            rows += CrownMappedOddsRow(platformMatchId, "total", line, "over", market.overOdds, capturedAt, match.rawPayload)
+            rows += CrownMappedOddsRow(platformMatchId, "total", line, "under", market.underOdds, capturedAt, match.rawPayload)
         }
 
         return rows

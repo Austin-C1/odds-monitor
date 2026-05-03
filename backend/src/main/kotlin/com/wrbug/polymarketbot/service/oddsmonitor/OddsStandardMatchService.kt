@@ -21,7 +21,9 @@ class OddsStandardMatchService(
         val platformMatchId = platformMatch.id ?: return createStandardMatch(platformMatch)
         val existingLink = linkRepository.findByPlatformMatchId(platformMatchId)
         if (existingLink != null) {
-            matchRepository.findById(existingLink.matchId).orElse(null)?.let { return it }
+            matchRepository.findById(existingLink.matchId).orElse(null)?.let {
+                return refreshStandardMatchStatus(it, platformMatch)
+            }
         }
 
         val incoming = platformMatch.toCandidate()
@@ -31,7 +33,7 @@ class OddsStandardMatchService(
             .maxByOrNull { (_, score) -> score.score }
 
         val standardMatch = if (best != null && OddsMatchMatcher.shouldMerge(best.second)) {
-            best.first
+            refreshStandardMatchStatus(best.first, platformMatch)
         } else {
             createStandardMatch(platformMatch)
         }
@@ -54,9 +56,22 @@ class OddsStandardMatchService(
                 homeTeam = TextEncodingUtils.repairMojibake(platformMatch.rawHomeTeam),
                 awayTeam = TextEncodingUtils.repairMojibake(platformMatch.rawAwayTeam),
                 startTime = platformMatch.rawStartTime,
-                status = "scheduled",
+                status = oddsMonitorStatusForPlatformMatch(platformMatch, now),
                 createdAt = now,
                 updatedAt = now
+            )
+        )
+    }
+
+    private fun refreshStandardMatchStatus(match: OddsMatch, platformMatch: OddsPlatformMatch): OddsMatch {
+        val nextStatus = oddsMonitorStatusForPlatformMatch(platformMatch)
+        if (match.status == nextStatus || (match.status == "live" && nextStatus == "scheduled")) {
+            return match
+        }
+        return matchRepository.save(
+            match.copy(
+                status = nextStatus,
+                updatedAt = System.currentTimeMillis()
             )
         )
     }

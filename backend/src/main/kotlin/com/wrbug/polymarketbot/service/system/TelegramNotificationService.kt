@@ -913,6 +913,14 @@ class TelegramNotificationService(
         sendMessage(message, TelegramNotificationAudience.MONITOR_ONLY)
     }
 
+    suspend fun sendMonitorMessageToConfigs(message: String, configs: List<NotificationConfigDto>) {
+        val excludedConfigIds = largeBetAssignedTelegramConfigIds()
+        sendMessageToConfigs(
+            message,
+            configs.filter { config -> config.id == null || config.id !in excludedConfigIds }
+        )
+    }
+
     suspend fun sendLargeBetMonitorMessage(message: String, configId: Long?): Boolean {
         if (configId != null) {
             return sendTestMessage(message, configId)
@@ -1235,6 +1243,21 @@ class TelegramNotificationService(
                 }
                 val updates = root.get("result")?.mapNotNull { node ->
                     val updateId = node.get("update_id")?.asLong() ?: return@mapNotNull null
+                    val callbackQuery = node.get("callback_query")
+                    if (callbackQuery != null && !callbackQuery.isNull) {
+                        val message = callbackQuery.get("message") ?: return@mapNotNull null
+                        val chatId = message.get("chat")?.get("id")?.asText() ?: return@mapNotNull null
+                        val messageThreadId = message.get("message_thread_id")?.asInt()
+                        val data = callbackQuery.get("data")?.asText() ?: return@mapNotNull null
+                        return@mapNotNull TelegramIncomingUpdate(
+                            updateId = updateId,
+                            chatId = chatId,
+                            text = data,
+                            messageThreadId = messageThreadId,
+                            callbackQueryId = callbackQuery.get("id")?.asText(),
+                            callbackData = data
+                        )
+                    }
                     val message = node.get("message") ?: node.get("edited_message") ?: return@mapNotNull null
                     val chatId = message.get("chat")?.get("id")?.asText() ?: return@mapNotNull null
                     val messageThreadId = message.get("message_thread_id")?.asInt()
@@ -1258,11 +1281,49 @@ class TelegramNotificationService(
         return sendToSingleChat(botToken, chatId, message, disableWebPagePreview)
     }
 
+    suspend fun sendMonitorPhaseControlMessage(
+        botToken: String,
+        chatId: String,
+        liveOnlyModeEnabled: Boolean
+    ): Boolean {
+        return sendToSingleChat(
+            botToken = botToken,
+            chatId = chatId,
+            message = buildMonitorPhaseControlMessage(liveOnlyModeEnabled),
+            replyMarkup = buildMonitorPhaseControlKeyboard(liveOnlyModeEnabled)
+        )
+    }
+
+    suspend fun answerCallbackQuery(
+        botToken: String,
+        callbackQueryId: String,
+        message: String
+    ): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val payload = mapOf(
+                    "callback_query_id" to callbackQueryId,
+                    "text" to message,
+                    "show_alert" to false
+                )
+                val request = Request.Builder()
+                    .url("$apiBaseUrl$botToken/answerCallbackQuery")
+                    .post(objectMapper.writeValueAsString(payload).toRequestBody("application/json".toMediaType()))
+                    .build()
+                okHttpClient.newCall(request).execute().use { it.isSuccessful }
+            } catch (e: Exception) {
+                logger.warn("Telegram callback answer failed: {}", e.message)
+                false
+            }
+        }
+    }
+
     private suspend fun sendToSingleChat(
         botToken: String,
         chatId: String,
         message: String,
-        disableWebPagePreview: Boolean = false
+        disableWebPagePreview: Boolean = false,
+        replyMarkup: Map<String, Any>? = null
     ): Boolean {
         return try {
             val url = "$apiBaseUrl$botToken/sendMessage"
@@ -1275,6 +1336,7 @@ class TelegramNotificationService(
                 "disable_web_page_preview" to disableWebPagePreview
             )
             target.messageThreadId?.let { payload["message_thread_id"] = it }
+            replyMarkup?.let { payload["reply_markup"] = it }
 
             val requestBody = objectMapper.writeValueAsString(payload)
 

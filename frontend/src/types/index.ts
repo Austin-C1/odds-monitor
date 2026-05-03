@@ -1039,6 +1039,7 @@ export interface NotificationConfig {
     botToken?: string  // Telegram Bot Token
       chatIds?: string[]  // Telegram Chat IDs
       monitorModeEnabled?: boolean
+      liveOnlyModeEnabled?: boolean
       marketBettingQueryEnabled?: boolean
       marketBettingDailyReportEnabled?: boolean
       marketBettingDailyReportTime?: string
@@ -1067,6 +1068,7 @@ export interface NotificationConfigRequest {
     botToken?: string
     chatIds?: string[] | string  // 支持数组或逗号分隔的字符串
       monitorModeEnabled?: boolean
+      liveOnlyModeEnabled?: boolean
       marketBettingQueryEnabled?: boolean
       marketBettingDailyReportEnabled?: boolean
       marketBettingDailyReportTime?: string

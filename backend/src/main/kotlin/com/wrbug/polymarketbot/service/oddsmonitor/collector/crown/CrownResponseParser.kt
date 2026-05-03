@@ -65,7 +65,7 @@ class CrownResponseParser {
                 handicaps = parseHandicaps(fields, isLive),
                 totals = parseTotals(fields, isLive),
                 moneyline = parseMoneyline(fields, isLive),
-                rawPayload = fields
+                rawPayload = fields + mapOf("is_live" to isLive)
             )
         }
     }

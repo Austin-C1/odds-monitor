@@ -135,6 +135,41 @@ class NotificationConfigService(
         }
     }
 
+    @Transactional
+    suspend fun updateTelegramLiveOnlyMode(id: Long, liveOnlyModeEnabled: Boolean): Result<NotificationConfigDto> {
+        return try {
+            val existing = withContext(Dispatchers.IO) {
+                notificationConfigRepository.findById(id).orElse(null)
+            } ?: return Result.failure(IllegalArgumentException("Config not found"))
+
+            require(existing.type.equals("telegram", ignoreCase = true)) {
+                "Config is not a Telegram config"
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            val configMap = try {
+                objectMapper.readValue(existing.configJson, MutableMap::class.java) as MutableMap<String, Any>
+            } catch (e: Exception) {
+                mutableMapOf()
+            }
+            configMap["liveOnlyModeEnabled"] = liveOnlyModeEnabled
+
+            val updated = existing.copy(
+                configJson = objectMapper.writeValueAsString(configMap),
+                updatedAt = System.currentTimeMillis()
+            )
+
+            val saved = withContext(Dispatchers.IO) {
+                notificationConfigRepository.save(updated)
+            }
+
+            Result.success(entityToDto(saved))
+        } catch (e: Exception) {
+            logger.error("Failed to update Telegram live-only mode: {}", e.message, e)
+            Result.failure(e)
+        }
+    }
+
     private fun validateConfig(type: String, config: Map<String, Any>) {
         when (type.lowercase()) {
             "telegram" -> validateTelegramConfig(config)
@@ -159,6 +194,10 @@ class NotificationConfigService(
         val monitorModeEnabled = config["monitorModeEnabled"]
         require(monitorModeEnabled == null || monitorModeEnabled is Boolean) {
             "monitorModeEnabled must be a boolean"
+        }
+        val liveOnlyModeEnabled = config["liveOnlyModeEnabled"]
+        require(liveOnlyModeEnabled == null || liveOnlyModeEnabled is Boolean) {
+            "liveOnlyModeEnabled must be a boolean"
         }
         val marketBettingQueryEnabled = config["marketBettingQueryEnabled"]
         require(marketBettingQueryEnabled == null || marketBettingQueryEnabled is Boolean) {
@@ -229,6 +268,11 @@ class NotificationConfigService(
                     is String -> raw.equals("true", ignoreCase = true)
                     else -> false
                 }
+                val liveOnlyModeEnabled = when (val raw = configMap["liveOnlyModeEnabled"]) {
+                    is Boolean -> raw
+                    is String -> raw.equals("true", ignoreCase = true)
+                    else -> false
+                }
                 val marketBettingQueryEnabled = when (val raw = configMap["marketBettingQueryEnabled"]) {
                     is Boolean -> raw
                     is String -> raw.equals("true", ignoreCase = true)
@@ -253,6 +297,7 @@ class NotificationConfigService(
                         botToken = botToken,
                         chatIds = chatIds,
                         monitorModeEnabled = monitorModeEnabled,
+                        liveOnlyModeEnabled = liveOnlyModeEnabled,
                         marketBettingQueryEnabled = marketBettingQueryEnabled,
                         marketBettingDailyReportEnabled = marketBettingDailyReportEnabled,
                         marketBettingDailyReportTime = marketBettingDailyReportTime,

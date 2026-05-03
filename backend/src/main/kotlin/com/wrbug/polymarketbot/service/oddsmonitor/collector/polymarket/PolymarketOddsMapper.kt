@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.service.oddsmonitor.collector.polymarket
 import com.wrbug.polymarketbot.dto.MarketBettingEventDetail
 import com.wrbug.polymarketbot.dto.MarketBettingMarketDetail
 import com.wrbug.polymarketbot.dto.MarketBettingOutcomeDetail
+import com.wrbug.polymarketbot.service.oddsmonitor.OddsLineDisplayFormatter
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.time.Instant
@@ -46,23 +47,25 @@ class PolymarketOddsMapper {
         if (rows.isEmpty()) {
             return null
         }
+        val startTime = parseEventTime(
+            slug = detail.event.slug,
+            title = detail.event.title,
+            apiTime = detail.event.startDate ?: detail.event.endDate
+        )
         return PolymarketMappedEvent(
             match = PolymarketFootballMatch(
                 sourceMatchId = detail.event.slug.ifBlank { detail.event.id },
                 leagueName = detail.event.category ?: "Polymarket",
                 homeTeam = teams.first,
                 awayTeam = teams.second,
-                startTime = parseEventTime(
-                    slug = detail.event.slug,
-                    title = detail.event.title,
-                    apiTime = detail.event.startDate ?: detail.event.endDate
-                ),
+                startTime = startTime,
                 rawPayload = mapOf(
                     "event_id" to detail.event.id,
                     "slug" to detail.event.slug,
                     "title" to detail.event.title,
                     "category" to detail.event.category,
-                    "url" to detail.event.url
+                    "url" to detail.event.url,
+                    "is_live" to (startTime != null && startTime <= capturedAt)
                 )
             ),
             rows = rows
@@ -107,7 +110,7 @@ class PolymarketOddsMapper {
         val odds = odds.toBigDecimalOrNull() ?: return null
         return PolymarketMappedOddsRow(
             marketType = marketType,
-            lineValue = lineValue,
+            lineValue = OddsLineDisplayFormatter.format(marketType, lineValue),
             selectionName = selectionName,
             oddsValue = odds,
             capturedAt = capturedAt,

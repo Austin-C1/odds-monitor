@@ -89,6 +89,7 @@ const TEST_NOTIFICATION_MESSAGE = '这是一条测试消息'
 
 type RobotConfigOverrides = {
   monitorModeEnabled?: boolean
+  liveOnlyModeEnabled?: boolean
   handicapCombinedWaterMin?: number | null
   totalCombinedWaterMin?: number | null
   handicapOddsMoveMin?: number | null
@@ -163,6 +164,10 @@ const NotificationSettingsPage: React.FC = () => {
 
   const getMonitorModeEnabled = useCallback((config: NotificationConfig) => {
     return Boolean(extractTelegramConfig(config).monitorModeEnabled)
+  }, [])
+
+  const getLiveOnlyModeEnabled = useCallback((config: NotificationConfig) => {
+    return Boolean(extractTelegramConfig(config).liveOnlyModeEnabled)
   }, [])
 
   const isConfigReadyForTest = useCallback((config: NotificationConfig) => isTelegramConfigReadyForTest(config), [])
@@ -258,6 +263,7 @@ const NotificationSettingsPage: React.FC = () => {
         botToken: '',
         chatIds: '',
         monitorModeEnabled: false,
+        liveOnlyModeEnabled: false,
         marketBettingQueryEnabled: false,
         handicapCombinedWaterMin: null,
         totalCombinedWaterMin: null,
@@ -282,6 +288,7 @@ const NotificationSettingsPage: React.FC = () => {
         botToken: telegramConfig.botToken || '',
         chatIds,
         monitorModeEnabled: Boolean(telegramConfig.monitorModeEnabled),
+        liveOnlyModeEnabled: Boolean(telegramConfig.liveOnlyModeEnabled),
         marketBettingQueryEnabled: Boolean(telegramConfig.marketBettingQueryEnabled),
         handicapCombinedWaterMin: normalizeWaterLimit(telegramConfig.handicapCombinedWaterMin),
         totalCombinedWaterMin: normalizeWaterLimit(telegramConfig.totalCombinedWaterMin),
@@ -308,6 +315,7 @@ const NotificationSettingsPage: React.FC = () => {
         botToken: telegramConfig.botToken || '',
         chatIds: normalizeChatIds(telegramConfig.chatIds),
         monitorModeEnabled: overrides.monitorModeEnabled ?? Boolean(telegramConfig.monitorModeEnabled),
+        liveOnlyModeEnabled: overrides.liveOnlyModeEnabled ?? Boolean(telegramConfig.liveOnlyModeEnabled),
         marketBettingQueryEnabled: Boolean(telegramConfig.marketBettingQueryEnabled),
         marketBettingDailyReportEnabled: Boolean(telegramConfig.marketBettingDailyReportEnabled),
         marketBettingDailyReportTime: telegramConfig.marketBettingDailyReportTime || '02:00',
@@ -316,6 +324,7 @@ const NotificationSettingsPage: React.FC = () => {
         handicapOddsMoveMin: overrides.handicapOddsMoveMin ?? normalizeWaterLimit(telegramConfig.handicapOddsMoveMin),
         totalOddsMoveMin: overrides.totalOddsMoveMin ?? normalizeWaterLimit(telegramConfig.totalOddsMoveMin),
         moneylineOddsMoveMin: overrides.moneylineOddsMoveMin ?? normalizeWaterLimit(telegramConfig.moneylineOddsMoveMin),
+        copyTradingLeaderGroups: telegramConfig.copyTradingLeaderGroups || [],
         copyTradingCategories: telegramConfig.copyTradingCategories || [],
         copyTradingNotificationTypes: telegramConfig.copyTradingNotificationTypes || [],
       },
@@ -365,6 +374,20 @@ const NotificationSettingsPage: React.FC = () => {
       }
     } catch (error) {
       showApiError(error, t('notificationSettings.monitorModeUpdateFailed'))
+    }
+  }
+
+  const handleToggleLiveOnlyMode = async (config: NotificationConfig, liveOnlyModeEnabled: boolean) => {
+    try {
+      const response = await apiService.notifications.update(buildConfigPayload(config, { liveOnlyModeEnabled }))
+      if (response.data.code === 0) {
+        message.success(liveOnlyModeEnabled ? '已切换为滚球模式' : '已切换为赛前模式')
+        fetchConfigs()
+      } else {
+        message.error(response.data.msg || t('notificationSettings.updateFailed'))
+      }
+    } catch (error) {
+      showApiError(error, t('notificationSettings.updateFailed'))
     }
   }
 
@@ -466,6 +489,7 @@ const NotificationSettingsPage: React.FC = () => {
           botToken: values.config.botToken,
           chatIds: normalizeChatIds(values.config.chatIds),
           monitorModeEnabled: Boolean(values.config.monitorModeEnabled),
+          liveOnlyModeEnabled: Boolean(values.config.liveOnlyModeEnabled),
           marketBettingQueryEnabled: editingConfig ? Boolean(extractTelegramConfig(editingConfig).marketBettingQueryEnabled) : false,
           marketBettingDailyReportEnabled: editingConfig ? Boolean(extractTelegramConfig(editingConfig).marketBettingDailyReportEnabled) : false,
           marketBettingDailyReportTime: editingConfig ? extractTelegramConfig(editingConfig).marketBettingDailyReportTime || '02:00' : '02:00',
@@ -474,6 +498,7 @@ const NotificationSettingsPage: React.FC = () => {
           handicapOddsMoveMin: normalizeWaterLimit(values.config.handicapOddsMoveMin),
           totalOddsMoveMin: normalizeWaterLimit(values.config.totalOddsMoveMin),
           moneylineOddsMoveMin: normalizeWaterLimit(values.config.moneylineOddsMoveMin),
+          copyTradingLeaderGroups: editingConfig ? extractTelegramConfig(editingConfig).copyTradingLeaderGroups || [] : [],
           copyTradingCategories: editingConfig ? extractTelegramConfig(editingConfig).copyTradingCategories || [] : [],
           copyTradingNotificationTypes: editingConfig ? extractTelegramConfig(editingConfig).copyTradingNotificationTypes || [] : [],
         },
@@ -813,6 +838,18 @@ const NotificationSettingsPage: React.FC = () => {
                 onChange={(checked) => handleToggleMonitorMode(record, checked)}
               />
             </Tooltip>
+            <Space size={6}>
+              <Text type="secondary" style={{ fontSize: 12 }}>滚球</Text>
+              <Switch
+                checked={getLiveOnlyModeEnabled(record)}
+                size="small"
+                disabled={!getMonitorModeEnabled(record)}
+                onChange={(checked) => handleToggleLiveOnlyMode(record, checked)}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {getLiveOnlyModeEnabled(record) ? '只看滚球' : '只看赛前'}
+              </Text>
+            </Space>
             <Text type="secondary" style={{ fontSize: 12 }}>
               {formatWaterLimitSummary(record)}
             </Text>
@@ -1035,6 +1072,9 @@ const NotificationSettingsPage: React.FC = () => {
             <Switch />
           </Form.Item>
           <Form.Item name={['config', 'monitorModeEnabled']} hidden>
+            <Input />
+          </Form.Item>
+          <Form.Item name={['config', 'liveOnlyModeEnabled']} hidden>
             <Input />
           </Form.Item>
           <Form.Item name={['config', 'handicapCombinedWaterMin']} hidden>

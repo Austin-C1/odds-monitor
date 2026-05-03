@@ -168,6 +168,31 @@ class TelegramNotificationServiceTest {
     }
 
     @Test
+    fun `monitor phase control command should open mode buttons`() {
+        assertTrue(isMonitorPhaseControlCommand("/monitor"))
+        assertTrue(isMonitorPhaseControlCommand("/mode"))
+        assertTrue(isMonitorPhaseControlCommand("/start"))
+        assertTrue(isMonitorPhaseControlCommand("滚球"))
+        assertFalse(isMonitorPhaseControlCommand("/market arsenal"))
+    }
+
+    @Test
+    fun `monitor phase callback should parse live and prematch buttons`() {
+        assertEquals(true, monitorPhaseCallbackMode("odds-monitor:phase:live"))
+        assertEquals(false, monitorPhaseCallbackMode("odds-monitor:phase:prematch"))
+        assertEquals(null, monitorPhaseCallbackMode("unknown"))
+    }
+
+    @Test
+    fun `monitor phase control message should show current mode`() {
+        val liveMessage = buildMonitorPhaseControlMessage(liveOnlyModeEnabled = true)
+        val prematchMessage = buildMonitorPhaseControlMessage(liveOnlyModeEnabled = false)
+
+        assertTrue(liveMessage.contains("当前模式：滚球"))
+        assertTrue(prematchMessage.contains("当前模式：赛前"))
+    }
+
+    @Test
     fun `signal source display should include config name before leader name`() {
         assertEquals("crocodile-main / 3crocodile3", buildSignalSourceDisplay("crocodile-main", "3crocodile3"))
     }

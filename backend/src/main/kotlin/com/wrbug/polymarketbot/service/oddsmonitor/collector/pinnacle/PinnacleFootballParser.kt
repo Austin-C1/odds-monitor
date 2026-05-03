@@ -119,6 +119,7 @@ class PinnacleFootballParser {
                 "home_team" to teams[0],
                 "away_team" to teams[1],
                 "start_time" to startTime,
+                "is_live" to isLive,
                 "score" to score,
                 "handicaps" to handicaps,
                 "totals" to totals,
