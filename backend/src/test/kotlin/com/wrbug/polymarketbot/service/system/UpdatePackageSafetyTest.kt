@@ -40,6 +40,14 @@ class UpdatePackageSafetyTest {
     }
 
     @Test
+    fun `default update repository points to odds monitor releases`() {
+        assertTrue(
+            GitHubReleaseApiUrlBuilder.latestReleaseApiUrl(OddsMonitorUpdateDefaults.GITHUB_REPO)
+                .endsWith("/Austin-C1/odds-monitor/releases/latest")
+        )
+    }
+
+    @Test
     fun `github release api url encodes unicode repository names`() {
         assertTrue(
             GitHubReleaseApiUrlBuilder.latestReleaseApiUrl("Austin-C1/全平台赔率监控")

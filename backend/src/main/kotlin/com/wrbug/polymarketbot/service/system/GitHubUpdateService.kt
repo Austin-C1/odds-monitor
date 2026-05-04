@@ -115,6 +115,10 @@ object GitHubReleaseApiUrlBuilder {
     }
 }
 
+object OddsMonitorUpdateDefaults {
+    const val GITHUB_REPO = "Austin-C1/odds-monitor"
+}
+
 object UpdateApplyScriptBuilder {
     fun render(
         appRoot: Path,
@@ -298,7 +302,7 @@ class GitHubUpdateService(
         updateConfig()?.get("releaseApiUrl")?.asText()?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
         val repo = System.getenv("ODDS_MONITOR_GITHUB_REPO")?.trim()?.takeIf { it.isNotBlank() }
             ?: updateConfig()?.get("githubRepo")?.asText()?.trim()?.takeIf { it.isNotBlank() }
-            ?: return null
+            ?: OddsMonitorUpdateDefaults.GITHUB_REPO
         return GitHubReleaseApiUrlBuilder.latestReleaseApiUrl(repo)
     }
 
