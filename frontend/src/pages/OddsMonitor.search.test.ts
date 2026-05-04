@@ -5,11 +5,11 @@ describe('odds monitor match search', () => {
   const matches = [
     {
       id: 1,
-      leagueName: '法国 - 乙级联赛',
+      leagueName: '法国乙组联赛',
       homeTeam: '亚眠',
       awayTeam: '红星',
       startTime: 1777752000000,
-      status: 'scheduled',
+      status: '赛前',
       sourceCount: 2,
       alertCount: 0,
       matchedPlatforms: ['pinnacle', 'crown'],
@@ -20,7 +20,7 @@ describe('odds monitor match search', () => {
       homeTeam: '劳顿联',
       awayTeam: '奥克兰根',
       startTime: 1777741200000,
-      status: 'scheduled',
+      status: '赛前',
       sourceCount: 1,
       alertCount: 0,
       matchedPlatforms: ['crown'],

@@ -11,6 +11,7 @@ import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
 import com.wrbug.polymarketbot.repository.OddsMarketRepository
 import com.wrbug.polymarketbot.repository.OddsMatchRepository
 import com.wrbug.polymarketbot.repository.OddsSnapshotRepository
+import com.wrbug.polymarketbot.repository.SystemConfigRepository
 import com.wrbug.polymarketbot.service.system.NotificationConfigService
 import com.wrbug.polymarketbot.service.system.TelegramNotificationService
 import kotlinx.coroutines.runBlocking
@@ -192,6 +193,45 @@ class OddsChangeNotificationServiceTest {
         Thread.sleep(1_800)
 
         verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
+    fun `league filter suppresses telegram odds changes outside selected leagues`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val leagueConfigRepository = mock(SystemConfigRepository::class.java)
+        val leagueFilterService = OddsLeagueFilterService(leagueConfigRepository)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            leagueFilterService = leagueFilterService
+        )
+
+        `when`(leagueConfigRepository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
+            com.wrbug.polymarketbot.entity.SystemConfig(
+                configKey = OddsLeagueFilterService.CONFIG_KEY,
+                configValue = """["日本J1百年构想联赛"]"""
+            )
+        )
+
+        service.notifyIfChanged(
+            platformMatch(rawLeagueName = "英格兰 - 北部超级联赛"),
+            oddsMarket(),
+            BigDecimal("0.88"),
+            BigDecimal("0.98")
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+        runBlocking {
+            verify(notificationConfigService, never()).getEnabledConfigsByType("telegram")
+        }
     }
 
     @Test

@@ -74,6 +74,7 @@ const marketTitleLabels: Record<string, string> = {
   handicap: '让球盘',
   total: '大小球',
   moneyline: '胜平负',
+  winner: '胜平负',
   odds: '赔率',
 }
 
@@ -85,13 +86,6 @@ const selectionLabels: Record<string, string> = {
   draw: '平局',
 }
 
-const fallbackPlatformSets: PlatformKey[][] = [
-  ['pinnacle', 'crown', 'polymarket'],
-  ['pinnacle', 'crown'],
-  ['crown', 'polymarket'],
-  ['pinnacle'],
-]
-
 const matchFilterLabels: Record<MatchFilterKey, string> = {
   all: '全部',
   three: '三平台都有',
@@ -100,6 +94,53 @@ const matchFilterLabels: Record<MatchFilterKey, string> = {
   'match-risk': '疑似匹配失败',
   'market-risk': '疑似盘口缺失',
 }
+
+const teamNameAliases: Record<string, string> = {
+  arsenal: '阿森纳',
+  chelsea: '切尔西',
+  'real madrid': '皇家马德里',
+  barcelona: '巴塞罗那',
+  inter: '国际米兰',
+  'inter milan': '国际米兰',
+  'bayern munich': '拜仁慕尼黑',
+  'fc bayern munich': '拜仁慕尼黑',
+}
+
+const leagueNameAliases: Record<string, string> = {
+  '英超': '英格兰超级联赛',
+  '西甲': '西班牙甲组联赛',
+  '欧冠': '欧洲冠军联赛',
+  'england premier league': '英格兰超级联赛',
+  'spanish la liga': '西班牙甲组联赛',
+  'uefa champions league': '欧洲冠军联赛',
+}
+
+const statusLabels: Record<string, string> = {
+  scheduled: '赛前',
+  prematch: '赛前',
+  not_started: '赛前',
+  live: '滚球',
+  inplay: '滚球',
+  in_play: '滚球',
+  finished: '完场',
+  closed: '完场',
+  模拟: '模拟',
+  赛前: '赛前',
+  滚球: '滚球',
+}
+
+const fallbackPlatformSets: PlatformKey[][] = [
+  ['pinnacle', 'crown', 'polymarket'],
+  ['pinnacle', 'crown'],
+  ['crown', 'polymarket'],
+  ['pinnacle'],
+]
+
+const localizeTeamName = (value: string) => teamNameAliases[value.trim().toLowerCase()] || value
+const localizeLeagueName = (value: string) => leagueNameAliases[value.trim().toLowerCase()] || value || '未分类联赛'
+const localizeStatus = (value: string) => statusLabels[value.trim().toLowerCase()] || statusLabels[value] || value
+const matchName = (match: Pick<MatchItem, 'homeTeam' | 'awayTeam'>) =>
+  `${localizeTeamName(match.homeTeam)} 对 ${localizeTeamName(match.awayTeam)}`
 
 const formatAxisTime = (timestamp: number | string) =>
   new Date(Number(timestamp)).toLocaleTimeString('zh-CN', {
@@ -154,18 +195,9 @@ const ensureChartHistory = (history: MatchDetail['oddsHistory']) =>
   history.length > 0 ? history : createFallbackHistory()
 
 const getMatchedPlatforms = (match: MatchItem, index: number): PlatformKey[] => {
-  if (match.matchedPlatforms?.length) {
-    return match.matchedPlatforms
-  }
-
-  if (match.sourceCount >= 3) {
-    return ['pinnacle', 'crown', 'polymarket']
-  }
-
-  if (match.sourceCount === 2) {
-    return index % 2 === 0 ? ['pinnacle', 'crown'] : ['crown', 'polymarket']
-  }
-
+  if (match.matchedPlatforms?.length) return match.matchedPlatforms
+  if (match.sourceCount >= 3) return ['pinnacle', 'crown', 'polymarket']
+  if (match.sourceCount === 2) return index % 2 === 0 ? ['pinnacle', 'crown'] : ['crown', 'polymarket']
   return fallbackPlatformSets[index % fallbackPlatformSets.length].slice(0, 1)
 }
 
@@ -175,14 +207,12 @@ const buildChartPoints = (timestamps: number[], values: number[]) =>
 const getChartXRange = (timestamps: number[]) => {
   const values = timestamps.filter((value) => Number.isFinite(value))
   if (values.length === 0) return {}
-
   const minValue = Math.min(...values)
   const maxValue = Math.max(...values)
   if (minValue === maxValue) {
     const padding = 5 * 60 * 1000
     return { min: minValue - padding, max: maxValue + padding }
   }
-
   return { min: minValue, max: maxValue }
 }
 
@@ -191,12 +221,10 @@ const getChartYRange = (series: MarketSeries[]) => {
     item.values.filter((value) => typeof value === 'number' && Number.isFinite(value)),
   )
   if (values.length === 0) return {}
-
   const minValue = Math.min(...values)
   const maxValue = Math.max(...values)
   const spread = maxValue - minValue
   const padding = spread > 0 ? spread * 0.2 : Math.max(Math.abs(maxValue) * 0.05, 0.05)
-
   return {
     min: Math.max(0, Number((minValue - padding).toFixed(3))),
     max: Number((maxValue + padding).toFixed(3)),
@@ -218,7 +246,6 @@ const createSeriesWithLatestLabel = (
   const lastIndex = series.values.length - 1
   const lastValue = series.values[lastIndex]
   const labelOffset = (seriesIndex - (seriesCount - 1) / 2) * 0.018
-
   return {
     name: `${platformLabels[series.platform]} ${series.label}`,
     type: 'line',
@@ -260,59 +287,6 @@ const parseMetricLabel = (label: string) => {
   }
 }
 
-const buildCollectedMarketGroups = (
-  selected: MatchDetail,
-  history: MatchDetail['oddsHistory'],
-): MarketGroup[] => {
-  void buildCollectedMarketGroupsByReference
-  return buildCollectedMarketGroupsUnion(selected, history)
-
-  const groups = new Map<string, MarketGroup>()
-
-  selected.metrics.forEach((metric) => {
-    const oddsValue = Number(metric.value)
-    if (!Number.isFinite(oddsValue)) return
-
-    const platform = metric.sourceKey || selected.match.matchedPlatforms?.[0] || 'crown'
-    const parsed = parseMetricLabel(metric.label)
-    const key = parsed.marketType || 'odds'
-    const group = groups.get(key) || {
-      key,
-      title: marketTitleLabels[key] || key,
-      description: `${platformLabels[platform]} 后端采集返回的真实盘口。`,
-      platformKeys: [],
-      rows: [],
-      series: [],
-    }
-    group.description = '后端采集返回的真实盘口。'
-    if (!group.platformKeys.includes(platform)) {
-      group.platformKeys.push(platform)
-    }
-
-    const selection = selectionLabels[parsed.selection] || parsed.selection
-    const rowLabel = parsed.line ? `${selection} ${parsed.line}` : selection
-    const row = group.rows.find((item) => item.selection === selection && item.line === parsed.line)
-    if (row) {
-      row.odds[platform] = oddsValue
-    } else {
-      group.rows.push({
-        selection,
-        line: parsed.line,
-        odds: { [platform]: oddsValue },
-      })
-    }
-    group.series.push({
-      platform,
-      label: rowLabel,
-      values: history.map(() => toAsianOdd(oddsValue) ?? oddsValue),
-      latestText: formatAsianOdd(oddsValue),
-    })
-    groups.set(key, group)
-  })
-
-  return Array.from(groups.values())
-}
-
 type CollectedMetricItem = {
   platform: PlatformKey
   marketType: string
@@ -321,103 +295,13 @@ type CollectedMetricItem = {
   oddsValue: number
 }
 
-const getReferencePlatform = (selected: MatchDetail, items: CollectedMetricItem[]): PlatformKey => {
-  const platformCounts = items.reduce((counts, item) => {
-    counts[item.platform] = (counts[item.platform] || 0) + 1
-    return counts
-  }, {} as Record<PlatformKey, number>)
-
-  return (selected.match.matchedPlatforms || [])
-    .filter((platform) => platformCounts[platform])
-    .sort((left, right) => (platformCounts[right] || 0) - (platformCounts[left] || 0))[0]
-    || items[0]?.platform
-    || 'crown'
-}
-
-const metricRowKey = (item: Pick<CollectedMetricItem, 'marketType' | 'selection' | 'line'>) =>
-  `${item.marketType}|${item.selection}|${item.line || ''}`
-
-const buildCollectedMarketGroupsByReference = (
-  selected: MatchDetail,
-  history: MatchDetail['oddsHistory'],
-): MarketGroup[] => {
-  const items = selected.metrics.reduce<CollectedMetricItem[]>((result, metric) => {
-      const oddsValue = Number(metric.value)
-      if (!Number.isFinite(oddsValue)) return result
-
-      const parsed = parseMetricLabel(metric.label)
-      result.push({
-        platform: metric.sourceKey || selected.match.matchedPlatforms?.[0] || 'crown',
-        marketType: parsed.marketType || 'odds',
-        selection: selectionLabels[parsed.selection] || parsed.selection,
-        line: parsed.line,
-        oddsValue,
-      })
-      return result
-    }, [])
-
-  const referencePlatform = getReferencePlatform(selected, items)
-  const groups = new Map<string, MarketGroup>()
-  const referenceRows = new Set<string>()
-
-  items
-    .filter((item) => item.platform === referencePlatform)
-    .forEach((item) => {
-      const group = groups.get(item.marketType) || {
-        key: item.marketType,
-        title: marketTitleLabels[item.marketType] || item.marketType,
-        description: `${platformLabels[referencePlatform]} 后端采集返回的真实盘口。`,
-        platformKeys: [referencePlatform],
-        rows: [],
-        series: [],
-      }
-      referenceRows.add(metricRowKey(item))
-      group.rows.push({
-        selection: item.selection,
-        line: item.line,
-        odds: { [referencePlatform]: item.oddsValue },
-      })
-      group.series.push({
-        platform: referencePlatform,
-        label: item.line ? `${item.selection} ${item.line}` : item.selection,
-        values: history.map(() => toAsianOdd(item.oddsValue) ?? item.oddsValue),
-        latestText: formatAsianOdd(item.oddsValue),
-      })
-      groups.set(item.marketType, group)
-    })
-
-  items
-    .filter((item) => item.platform !== referencePlatform)
-    .forEach((item) => {
-      if (!referenceRows.has(metricRowKey(item))) return
-
-      const group = groups.get(item.marketType)
-      const row = group?.rows.find((target) => target.selection === item.selection && target.line === item.line)
-      if (!group || !row) return
-
-      row.odds[item.platform] = item.oddsValue
-      if (!group.platformKeys.includes(item.platform)) {
-        group.platformKeys.push(item.platform)
-      }
-      group.series.push({
-        platform: item.platform,
-        label: item.line ? `${item.selection} ${item.line}` : item.selection,
-        values: history.map(() => toAsianOdd(item.oddsValue) ?? item.oddsValue),
-        latestText: formatAsianOdd(item.oddsValue),
-      })
-    })
-
-  return Array.from(groups.values())
-}
-
-const buildCollectedMarketGroupsUnion = (
+const buildCollectedMarketGroups = (
   selected: MatchDetail,
   history: MatchDetail['oddsHistory'],
 ): MarketGroup[] => {
   const items = selected.metrics.reduce<CollectedMetricItem[]>((result, metric) => {
     const oddsValue = Number(metric.value)
     if (!Number.isFinite(oddsValue)) return result
-
     const parsed = parseMetricLabel(metric.label)
     result.push({
       platform: metric.sourceKey || selected.match.matchedPlatforms?.[0] || 'crown',
@@ -439,20 +323,13 @@ const buildCollectedMarketGroupsUnion = (
       rows: [],
       series: [],
     }
-
     const row = group.rows.find((target) => target.selection === item.selection && target.line === item.line)
     if (row) {
       row.odds[item.platform] = item.oddsValue
     } else {
-      group.rows.push({
-        selection: item.selection,
-        line: item.line,
-        odds: { [item.platform]: item.oddsValue },
-      })
+      group.rows.push({ selection: item.selection, line: item.line, odds: { [item.platform]: item.oddsValue } })
     }
-    if (!group.platformKeys.includes(item.platform)) {
-      group.platformKeys.push(item.platform)
-    }
+    if (!group.platformKeys.includes(item.platform)) group.platformKeys.push(item.platform)
     group.series.push({
       platform: item.platform,
       label: item.line ? `${item.selection} ${item.line}` : item.selection,
@@ -477,9 +354,7 @@ const buildCollectedMarketGroupsUnion = (
 const buildMarketGroups = (history: MatchDetail['oddsHistory'], selected?: MatchDetail): MarketGroup[] => {
   if (selected?.metrics.length) {
     const collectedGroups = buildCollectedMarketGroups(selected, history)
-    if (collectedGroups.length > 0) {
-      return collectedGroups
-    }
+    if (collectedGroups.length > 0) return collectedGroups
   }
 
   const pinnacle = history.map((item) => item.pinnacle)
@@ -506,24 +381,9 @@ const buildMarketGroups = (history: MatchDetail['oddsHistory'], selected?: Match
         { selection: '主队', line: '-0.25', odds: { pinnacle: 1.94, crown: 1.96, polymarket: 0.524 } },
       ],
       series: [
-        {
-          platform: 'pinnacle',
-          label: '主队 -0.5',
-          values: toAsianSeries(pinnacle.map((value, index) => value + index * 0.002)),
-          latestText: formatAsianOdd(pinnacle[pinnacle.length - 1] + 0.02),
-        },
-        {
-          platform: 'crown',
-          label: '主队 -0.5',
-          values: toAsianSeries(crown.map((value, index) => value + 0.03 - index * 0.001)),
-          latestText: formatAsianOdd(crown[crown.length - 1] + 0.03),
-        },
-        {
-          platform: 'polymarket',
-          label: '主队 -0.5',
-          values: toPolymarketAsianSeries(handicapPolymarket),
-          latestText: formatPolymarketAsianOdd(handicapPolymarket[handicapPolymarket.length - 1]),
-        },
+        { platform: 'pinnacle', label: '主队 -0.5', values: toAsianSeries(pinnacle.map((value, index) => value + index * 0.002)), latestText: formatAsianOdd(pinnacle[pinnacle.length - 1] + 0.02) },
+        { platform: 'crown', label: '主队 -0.5', values: toAsianSeries(crown.map((value, index) => value + 0.03 - index * 0.001)), latestText: formatAsianOdd(crown[crown.length - 1] + 0.03) },
+        { platform: 'polymarket', label: '主队 -0.5', values: toPolymarketAsianSeries(handicapPolymarket), latestText: formatPolymarketAsianOdd(handicapPolymarket[handicapPolymarket.length - 1]) },
       ],
     },
     {
@@ -537,24 +397,9 @@ const buildMarketGroups = (history: MatchDetail['oddsHistory'], selected?: Match
         { selection: '大球', line: '2.75', odds: { pinnacle: 2.45, crown: 2.48 } },
       ],
       series: [
-        {
-          platform: 'pinnacle',
-          label: '大球 2.5',
-          values: toAsianSeries(pinnacle.map((value, index) => value + 0.7 + index * 0.006)),
-          latestText: formatAsianOdd(pinnacle[pinnacle.length - 1] + 0.76),
-        },
-        {
-          platform: 'crown',
-          label: '大球 2.5',
-          values: toAsianSeries(crown.map((value, index) => value + 0.72 + index * 0.004)),
-          latestText: formatAsianOdd(crown[crown.length - 1] + 0.76),
-        },
-        {
-          platform: 'polymarket',
-          label: '大球 2.5',
-          values: toPolymarketAsianSeries(totalPolymarket),
-          latestText: formatPolymarketAsianOdd(totalPolymarket[totalPolymarket.length - 1]),
-        },
+        { platform: 'pinnacle', label: '大球 2.5', values: toAsianSeries(pinnacle.map((value, index) => value + 0.7 + index * 0.006)), latestText: formatAsianOdd(pinnacle[pinnacle.length - 1] + 0.76) },
+        { platform: 'crown', label: '大球 2.5', values: toAsianSeries(crown.map((value, index) => value + 0.72 + index * 0.004)), latestText: formatAsianOdd(crown[crown.length - 1] + 0.76) },
+        { platform: 'polymarket', label: '大球 2.5', values: toPolymarketAsianSeries(totalPolymarket), latestText: formatPolymarketAsianOdd(totalPolymarket[totalPolymarket.length - 1]) },
       ],
     },
     {
@@ -568,18 +413,8 @@ const buildMarketGroups = (history: MatchDetail['oddsHistory'], selected?: Match
         { selection: '客胜', odds: { pinnacle: 4.1, crown: 4.0 } },
       ],
       series: [
-        {
-          platform: 'pinnacle',
-          label: '主胜',
-          values: toAsianSeries(pinnacle.map((value, index) => value + 0.09 + index * 0.003)),
-          latestText: formatAsianOdd(pinnacle[pinnacle.length - 1] + 0.12),
-        },
-        {
-          platform: 'crown',
-          label: '主胜',
-          values: toAsianSeries(crown.map((value, index) => value + 0.1 + index * 0.004)),
-          latestText: formatAsianOdd(crown[crown.length - 1] + 0.14),
-        },
+        { platform: 'pinnacle', label: '主胜', values: toAsianSeries(pinnacle.map((value, index) => value + 0.09 + index * 0.003)), latestText: formatAsianOdd(pinnacle[pinnacle.length - 1] + 0.12) },
+        { platform: 'crown', label: '主胜', values: toAsianSeries(crown.map((value, index) => value + 0.1 + index * 0.004)), latestText: formatAsianOdd(crown[crown.length - 1] + 0.14) },
       ],
     },
     {
@@ -592,18 +427,12 @@ const buildMarketGroups = (history: MatchDetail['oddsHistory'], selected?: Match
         { selection: '客队获胜', odds: { polymarket: 0.286 } },
       ],
       series: [
-        {
-          platform: 'polymarket',
-          label: '主队概率',
-          values: polymarket.map((value) => value * 100),
-          latestText: formatPolymarketProbability(polymarket[polymarket.length - 1]),
-        },
+        { platform: 'polymarket', label: '主队概率', values: polymarket.map((value) => value * 100), latestText: formatPolymarketProbability(polymarket[polymarket.length - 1]) },
       ],
     },
   ]
 
   if (!selectedPlatforms?.length) return fallbackGroups
-
   return fallbackGroups
     .map((group) => ({
       ...group,
@@ -643,12 +472,15 @@ const OddsMonitor = () => {
   const matches = useMemo(() => {
     return (data?.matches || []).map((match, index) => ({
       ...match,
+      leagueName: localizeLeagueName(match.leagueName),
+      homeTeam: localizeTeamName(match.homeTeam),
+      awayTeam: localizeTeamName(match.awayTeam),
+      status: localizeStatus(match.status),
       matchedPlatforms: getMatchedPlatforms(match, index),
     }))
   }, [data?.matches])
 
   const matchViews = useMemo(() => createPlatformMatchViews(matches), [matches])
-
   const filteredByPlatform = useMemo(() => {
     return matchViews.filter((match) => {
       const platforms = match.matchedPlatforms || []
@@ -660,7 +492,6 @@ const OddsMonitor = () => {
       return true
     })
   }, [matchFilter, matchViews])
-
   const filteredMatches = useMemo(
     () => filterMatchesBySearchQuery(filteredByPlatform, matchSearchQuery),
     [filteredByPlatform, matchSearchQuery],
@@ -687,7 +518,7 @@ const OddsMonitor = () => {
   const groupedMatches = useMemo(() => {
     const groups = new Map<string, OddsMonitorPlatformMatchView[]>()
     filteredMatches.forEach((match) => {
-      const leagueName = match.leagueName || '未分类联赛'
+      const leagueName = localizeLeagueName(match.leagueName)
       groups.set(leagueName, [...(groups.get(leagueName) || []), match])
     })
     return Array.from(groups.entries()).map(([leagueName, leagueMatches]) => ({
@@ -701,7 +532,6 @@ const OddsMonitor = () => {
       if (!matchSearchQuery.trim()) lastAutoJumpQuery.current = ''
       return
     }
-
     const jumpMatch = getSearchJumpMatch(matchViews, matchSearchQuery)
     if (jumpMatch) {
       lastAutoJumpQuery.current = matchSearchQuery
@@ -714,13 +544,10 @@ const OddsMonitor = () => {
   useEffect(() => {
     if (!activeMatch?.id) return undefined
     if (selectedDetail?.match.id === activeMatch.id) return undefined
-
     let cancelled = false
     apiClient.post<ApiResponse<MatchDetail | null>>('/odds-monitor/match-detail', { matchId: activeMatch.id })
       .then((response) => {
-        if (!cancelled && response.data.data) {
-          setSelectedDetail(response.data.data)
-        }
+        if (!cancelled && response.data.data) setSelectedDetail(response.data.data)
       })
     return () => {
       cancelled = true
@@ -730,21 +557,31 @@ const OddsMonitor = () => {
   const selected = useMemo(() => {
     if (!activeMatch) return selectedDetail || data?.selectedMatch
     if (selectedDetail?.match.id === activeMatch.id) return selectPlatformDetail(selectedDetail, activeMatch)
-    return {
-      match: activeMatch,
-      metrics: [],
-      oddsHistory: [],
-    }
+    return { match: activeMatch, metrics: [], oddsHistory: [] }
   }, [activeMatch, data?.selectedMatch, selectedDetail])
 
+  const localizedSelected = useMemo(() => {
+    if (!selected) return selected
+    return {
+      ...selected,
+      match: {
+        ...selected.match,
+        leagueName: localizeLeagueName(selected.match.leagueName),
+        homeTeam: localizeTeamName(selected.match.homeTeam),
+        awayTeam: localizeTeamName(selected.match.awayTeam),
+        status: localizeStatus(selected.match.status),
+      },
+    }
+  }, [selected])
+
   const chartHistory = useMemo(
-    () => (selected ? ensureChartHistory(selected.oddsHistory) : []),
-    [selected],
+    () => (localizedSelected ? ensureChartHistory(localizedSelected.oddsHistory) : []),
+    [localizedSelected],
   )
   const chartTimestamps = chartHistory.map((item) => item.timestamp)
   const marketGroups = useMemo(
-    () => (selected ? buildMarketGroups(chartHistory, selected) : []),
-    [chartHistory, selected],
+    () => (localizedSelected ? buildMarketGroups(chartHistory, localizedSelected) : []),
+    [chartHistory, localizedSelected],
   )
 
   const chartOptions = useMemo(() => {
@@ -762,11 +599,7 @@ const OddsMonitor = () => {
           borderColor: '#d6dee8',
           textStyle: { color: '#152033' },
         },
-        legend: {
-          top: 0,
-          right: 16,
-          textStyle: { color: '#5f6f86' },
-        },
+        legend: { top: 0, right: 16, textStyle: { color: '#5f6f86' } },
         grid: { left: 46, right: 102, top: 48, bottom: 34 },
         xAxis: {
           type: 'time',
@@ -797,7 +630,6 @@ const OddsMonitor = () => {
   const renderChartIntoElement = (key: string, element: HTMLDivElement | null) => {
     const option = chartOptions[key]
     if (!element || !option) return
-
     const chart = chartInstances.current[key] || echarts.init(element, undefined, {
       renderer: 'canvas',
       useDirtyRect: true,
@@ -809,10 +641,7 @@ const OddsMonitor = () => {
 
   useEffect(() => {
     const activeKeys = new Set(activeMarketKeys)
-    activeMarketKeys.forEach((key) => {
-      renderChartIntoElement(key, chartRefs.current[key])
-    })
-
+    activeMarketKeys.forEach((key) => renderChartIntoElement(key, chartRefs.current[key]))
     Object.entries(chartInstances.current).forEach(([key, chart]) => {
       if (!activeKeys.has(key)) {
         chart.dispose()
@@ -823,20 +652,15 @@ const OddsMonitor = () => {
 
   useEffect(() => {
     if (!('ResizeObserver' in window)) return undefined
-
     const observers = activeMarketKeys.map((key) => {
       const element = chartRefs.current[key]
       const chart = chartInstances.current[key]
       if (!element || !chart) return undefined
-
       const observer = new ResizeObserver(() => scheduleChartResize(chart))
       observer.observe(element)
       return observer
     })
-
-    return () => {
-      observers.forEach((observer) => observer?.disconnect())
-    }
+    return () => observers.forEach((observer) => observer?.disconnect())
   }, [activeMarketKeys])
 
   useEffect(() => {
@@ -849,13 +673,8 @@ const OddsMonitor = () => {
     }
   }, [])
 
-  if (loading) {
-    return <Spin />
-  }
-
-  if (!data || !selected || !activeMatch) {
-    return <Empty description="暂无比赛数据" />
-  }
+  if (loading) return <Spin />
+  if (!data || !localizedSelected || !activeMatch) return <Empty description="暂无比赛数据" />
 
   const renderMatchItem = (item: OddsMonitorPlatformMatchView) => (
     <List.Item
@@ -865,11 +684,9 @@ const OddsMonitor = () => {
       <div className="match-card-content">
         <div className="match-title-row">
           <span className={item.alertCount > 0 ? 'change-dot has-change' : 'change-dot'} />
-          <Text strong className="match-title">{item.homeTeam} vs {item.awayTeam}</Text>
+          <Text strong className="match-title">{matchName(item)}</Text>
         </div>
-        <Text type="secondary" className="match-meta">
-          {formatDateTime(item.startTime)}
-        </Text>
+        <Text type="secondary" className="match-meta">{formatDateTime(item.startTime)}</Text>
         <div className="platform-row">
           {item.matchedPlatforms?.map((platform) => (
             <span
@@ -895,9 +712,7 @@ const OddsMonitor = () => {
         </Space>
         <Space align="center" wrap className="topbar-actions">
           {['1小时', '2小时', '6小时', '全天'].map((label) => (
-            <Button key={label} size="small" type={label === '全天' ? 'primary' : 'default'}>
-              {label}
-            </Button>
+            <Button key={label} size="small" type={label === '全天' ? 'primary' : 'default'}>{label}</Button>
           ))}
           <Checkbox checked>自动刷新</Checkbox>
           <Text type="secondary">更新：{new Date().toLocaleString('zh-CN')}</Text>
@@ -910,8 +725,8 @@ const OddsMonitor = () => {
             <Text strong>比赛列表</Text>
             <Text type="secondary">
               {matchSearchQuery.trim()
-                ? `${filteredMatches.length} / ${matchViews.length} 页`
-                : `${matchViews.length} 页`}
+                ? `${filteredMatches.length} / ${matchViews.length} 项`
+                : `${matchViews.length} 项`}
             </Text>
           </div>
           <div className="match-search-bar">
@@ -960,13 +775,13 @@ const OddsMonitor = () => {
         <main className="monitor-main">
           <section className="match-heading">
             <div>
-              <Title level={2}>{selected.match.homeTeam} vs {selected.match.awayTeam}</Title>
+              <Title level={2}>{matchName(localizedSelected.match)}</Title>
               <Text type="secondary">
-                {selected.match.leagueName} · {formatDateTime(selected.match.startTime)} · {selected.match.status}
+                {localizedSelected.match.leagueName} · {formatDateTime(localizedSelected.match.startTime)} · {localizedSelected.match.status}
               </Text>
             </div>
             <div className="source-legend">
-              {(selected.match.matchedPlatforms || []).map((platform) => (
+              {(localizedSelected.match.matchedPlatforms || []).map((platform) => (
                 <span key={platform}>
                   <i style={{ background: platformColors[platform] }} />
                   {platformLabels[platform]}

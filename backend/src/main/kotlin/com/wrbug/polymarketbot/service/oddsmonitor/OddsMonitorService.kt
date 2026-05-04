@@ -53,9 +53,9 @@ class OddsMonitorService(
 
         val now = System.currentTimeMillis()
         val matches = listOf(
-            OddsMonitorMatchDto(1, "英超", "Arsenal", "Chelsea", now + 3_600_000, "模拟", 3, 0, listOf("pinnacle", "crown", "polymarket")),
-            OddsMonitorMatchDto(2, "西甲", "Real Madrid", "Barcelona", now + 7_200_000, "模拟", 3, 0, listOf("pinnacle", "crown", "polymarket")),
-            OddsMonitorMatchDto(3, "欧冠", "Inter", "Bayern Munich", now + 10_800_000, "模拟", 2, 0, listOf("pinnacle", "crown"))
+            OddsMonitorMatchDto(1, "英格兰超级联赛", "阿森纳", "切尔西", now + 3_600_000, "模拟", 3, 0, listOf("pinnacle", "crown", "polymarket")),
+            OddsMonitorMatchDto(2, "西班牙甲组联赛", "皇家马德里", "巴塞罗那", now + 7_200_000, "模拟", 3, 0, listOf("pinnacle", "crown", "polymarket")),
+            OddsMonitorMatchDto(3, "欧洲冠军联赛", "国际米兰", "拜仁慕尼黑", now + 10_800_000, "模拟", 2, 0, listOf("pinnacle", "crown"))
         )
         val selected = matches.first()
         val history = (0..11).map { index ->
@@ -73,10 +73,9 @@ class OddsMonitorService(
             selectedMatch = OddsMonitorMatchDetailDto(
                 match = selected,
                 metrics = listOf(
-                    OddsMetricDto("让球主队", "1.93", "+0.04"),
-                    OddsMetricDto("大小球 2.5", "1.87", "-0.02"),
-                    OddsMetricDto("平台差异", "3.1%", "观察"),
-                    OddsMetricDto("Polymarket", "57.4%", "+1.6%")
+                    OddsMetricDto("handicap home 0.5", "1.93", "+0.04", "pinnacle"),
+                    OddsMetricDto("total over 2.5", "1.87", "-0.02", "crown"),
+                    OddsMetricDto("Polymarket", "57.4%", "+1.6%", "polymarket")
                 ),
                 oddsHistory = history
             )
@@ -119,7 +118,6 @@ class OddsMonitorService(
         standardCollectedSnapshot(sourceKeys, sourceMatchesBySource)?.let { return it }
 
         val buckets = linkedMapOf<CollectedMatchKey, MutableMap<String, OddsPlatformMatch>>()
-
         sourceKeys.forEach { sourceKey ->
             sourceMatchesBySource[sourceKey].orEmpty().forEach { match ->
                 val key = match.collectedMatchKey()
@@ -131,27 +129,26 @@ class OddsMonitorService(
             return null
         }
 
-        val matches = buckets.values.map { sourceMap ->
+        val rows = buckets.values.map { sourceMap ->
             val matchedPlatforms = sourceKeys.filter { sourceMap.containsKey(it) }
             val match = matchedPlatforms.firstNotNullOf { sourceMap[it] }
-            val dto = OddsMonitorMatchDto(
-                id = match.id ?: 0,
-                leagueName = TextEncodingUtils.repairMojibake(match.rawLeagueName),
-                homeTeam = TextEncodingUtils.repairMojibake(match.rawHomeTeam),
-                awayTeam = TextEncodingUtils.repairMojibake(match.rawAwayTeam),
-                startTime = match.rawStartTime ?: match.updatedAt,
-                status = "scheduled",
-                sourceCount = matchedPlatforms.size,
-                alertCount = 0,
-                matchedPlatforms = matchedPlatforms
-            )
             CollectedMatchRow(
-                match = dto,
+                match = OddsMonitorMatchDto(
+                    id = match.id ?: 0,
+                    leagueName = localizeLeagueName(match.rawLeagueName),
+                    homeTeam = localizeTeamName(match.rawHomeTeam),
+                    awayTeam = localizeTeamName(match.rawAwayTeam),
+                    startTime = match.rawStartTime ?: match.updatedAt,
+                    status = localizeMatchStatus("scheduled"),
+                    sourceCount = matchedPlatforms.size,
+                    alertCount = 0,
+                    matchedPlatforms = matchedPlatforms
+                ),
                 sourceMatches = matchedPlatforms.associateWith { sourceMap.getValue(it) }
             )
         }.sortedBy { it.match.startTime }
 
-        return CollectedDashboardSnapshot(matches)
+        return CollectedDashboardSnapshot(rows)
     }
 
     private fun standardCollectedSnapshot(
@@ -191,11 +188,11 @@ class OddsMonitorService(
             CollectedMatchRow(
                 match = OddsMonitorMatchDto(
                     id = standardMatchId,
-                    leagueName = TextEncodingUtils.repairMojibake(standardMatch.leagueName),
-                    homeTeam = TextEncodingUtils.repairMojibake(standardMatch.homeTeam),
-                    awayTeam = TextEncodingUtils.repairMojibake(standardMatch.awayTeam),
+                    leagueName = localizeLeagueName(standardMatch.leagueName),
+                    homeTeam = localizeTeamName(standardMatch.homeTeam),
+                    awayTeam = localizeTeamName(standardMatch.awayTeam),
                     startTime = standardMatch.startTime ?: sourceMap.values.first().updatedAt,
-                    status = standardMatch.status,
+                    status = localizeMatchStatus(standardMatch.status),
                     sourceCount = matchedPlatforms.size,
                     alertCount = 0,
                     matchedPlatforms = matchedPlatforms
@@ -284,7 +281,7 @@ class OddsMonitorService(
                     displayName = normalized.displayName,
                     enabled = normalized.enabled,
                     username = normalized.username?.takeIf { it.isNotBlank() },
-                    password = normalized.password?.takeIf { it.isNotBlank() },
+                    password = passwordValue(normalized.password),
                     queryKeyword = normalized.queryKeyword?.takeIf { it.isNotBlank() },
                     intervalSeconds = normalized.intervalSeconds.coerceAtLeast(10),
                     createdAt = existing?.createdAt ?: System.currentTimeMillis(),
@@ -322,8 +319,8 @@ class OddsMonitorService(
                 severity = it.severity,
                 matchName = it.matchId?.toString(),
                 sourceKey = it.sourceKey,
-                title = it.title,
-                message = it.message,
+                title = TextEncodingUtils.repairMojibake(it.title),
+                message = TextEncodingUtils.repairMojibake(it.message),
                 createdAt = it.createdAt,
                 acknowledged = it.acknowledged
             )
@@ -336,14 +333,14 @@ class OddsMonitorService(
                 id = it.id ?: 0,
                 sourceKey = it.sourceKey,
                 status = it.status,
-                message = it.message,
+                message = it.message?.let(TextEncodingUtils::repairMojibake),
                 startedAt = it.startedAt,
                 finishedAt = it.finishedAt,
                 recordsCount = it.recordsCount,
                 matchCount = it.matchCount,
                 marketCount = it.marketCount,
                 emptyMarketCount = it.emptyMarketCount,
-                failureReason = it.failureReason
+                failureReason = it.failureReason?.let(TextEncodingUtils::repairMojibake)
             )
         }
     }
@@ -354,6 +351,10 @@ class OddsMonitorService(
             displayName = config.displayName.ifBlank { default?.displayName ?: config.sourceKey },
             intervalSeconds = config.intervalSeconds.coerceAtLeast(10)
         )
+    }
+
+    private fun passwordValue(value: String?): String? {
+        return value?.takeIf { it.isNotBlank() }
     }
 
     private fun OddsDataSourceConfig.toDto(): OddsDataSourceConfigDto {
@@ -394,6 +395,39 @@ class OddsMonitorService(
         return marketType.lowercase(Locale.ROOT) != "moneyline" || sourceKey == "polymarket"
     }
 
+    private fun OddsPlatformMatch.toDto(): OddsPlatformMatchDto {
+        return OddsPlatformMatchDto(
+            sourceKey = sourceKey,
+            sourceMatchId = sourceMatchId,
+            rawLeagueName = localizeLeagueName(rawLeagueName),
+            rawHomeTeam = localizeTeamName(rawHomeTeam),
+            rawAwayTeam = localizeTeamName(rawAwayTeam),
+            rawStartTime = rawStartTime
+        )
+    }
+
+    private fun localizeLeagueName(value: String): String {
+        val repaired = TextEncodingUtils.repairMojibake(value).trim()
+        return leagueNameAliases[repaired.lowercase(Locale.ROOT)]
+            ?: canonicalOddsLeagueName(repaired)
+            ?: repaired
+    }
+
+    private fun localizeTeamName(value: String): String {
+        val repaired = TextEncodingUtils.repairMojibake(value).trim()
+        return teamNameAliases[repaired.lowercase(Locale.ROOT)] ?: repaired
+    }
+
+    private fun localizeMatchStatus(value: String): String {
+        return when (TextEncodingUtils.repairMojibake(value).lowercase(Locale.ROOT)) {
+            "scheduled", "prematch", "not_started" -> "赛前"
+            "live", "inplay", "in_play" -> "滚球"
+            "finished", "closed" -> "完场"
+            "cancelled", "canceled" -> "取消"
+            else -> TextEncodingUtils.repairMojibake(value)
+        }
+    }
+
     private data class CollectedMatchKey(
         val homeTeam: String,
         val awayTeam: String
@@ -409,14 +443,31 @@ class OddsMonitorService(
         val rows: List<CollectedMatchRow>
     )
 
-    private fun OddsPlatformMatch.toDto(): OddsPlatformMatchDto {
-        return OddsPlatformMatchDto(
-            sourceKey = sourceKey,
-            sourceMatchId = sourceMatchId,
-            rawLeagueName = TextEncodingUtils.repairMojibake(rawLeagueName),
-            rawHomeTeam = TextEncodingUtils.repairMojibake(rawHomeTeam),
-            rawAwayTeam = TextEncodingUtils.repairMojibake(rawAwayTeam),
-            rawStartTime = rawStartTime
-        )
-    }
+    private val teamNameAliases = mapOf(
+        "arsenal" to "阿森纳",
+        "chelsea" to "切尔西",
+        "real madrid" to "皇家马德里",
+        "barcelona" to "巴塞罗那",
+        "inter" to "国际米兰",
+        "inter milan" to "国际米兰",
+        "bayern munich" to "拜仁慕尼黑",
+        "fc bayern munich" to "拜仁慕尼黑",
+        "fc tokyo" to "东京FC",
+        "kawasaki frontale" to "川崎前锋",
+        "okayama" to "冈山绿雉",
+        "hiroshima" to "广岛三箭",
+        "volendam" to "沃伦丹",
+        "roda jc" to "罗达JC",
+        "roda-jc" to "罗达JC",
+        "toronto international" to "多伦多国际",
+        "vancouver fc" to "温哥华FC",
+        "hfx wanderers" to "哈利法克斯流浪者",
+        "forge" to "弗尔格"
+    )
+
+    private val leagueNameAliases = mapOf(
+        "canada premier league" to "加拿大超级联赛",
+        "netherlands eerste divisie" to "荷兰乙组联赛",
+        "soccer" to "足球"
+    )
 }

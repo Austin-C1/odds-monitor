@@ -29,7 +29,8 @@ class OddsChangeNotificationService(
     private val notificationConfigService: NotificationConfigService,
     private val marketRepository: OddsMarketRepository,
     private val snapshotRepository: OddsSnapshotRepository,
-    private val matchRepository: OddsMatchRepository? = null
+    private val matchRepository: OddsMatchRepository? = null,
+    private val leagueFilterService: OddsLeagueFilterService? = null
 ) {
     private val logger = LoggerFactory.getLogger(OddsChangeNotificationService::class.java)
     private val expectedSources = listOf("pinnacle", "crown", "polymarket")
@@ -47,11 +48,14 @@ class OddsChangeNotificationService(
         if (!hasOddsChanged(previousOdds, currentOdds)) {
             return
         }
+        val standardMatch = matchRepository?.findById(market.matchId)?.orElse(null)
+        if (!shouldNotifyLeague(match, standardMatch)) {
+            return
+        }
         val configs = loadActiveMonitorTelegramConfigs() ?: return
         if (configs.isEmpty()) {
             return
         }
-        val standardMatch = matchRepository?.findById(market.matchId)?.orElse(null)
         val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch)
         val eligibleConfigs = configs
             .filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase) }
@@ -231,6 +235,15 @@ class OddsChangeNotificationService(
             logger.warn("Failed to load Telegram monitor filters: {}", error.message)
             null
         }
+    }
+
+    private fun shouldNotifyLeague(match: OddsPlatformMatch, standardMatch: OddsMatch?): Boolean {
+        val filter = leagueFilterService ?: return true
+        if (isSpecialBettingLeague(match.rawLeagueName)) {
+            return false
+        }
+        return standardMatch?.leagueName?.let { filter.shouldIncludeLeague(it) }
+            ?: filter.shouldIncludeLeague(match.rawLeagueName)
     }
 }
 

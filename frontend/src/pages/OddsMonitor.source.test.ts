@@ -16,6 +16,27 @@ describe('odds monitor dashboard source', () => {
     expect(source).toContain('platformLabels[platform]')
   })
 
+  it('keeps visible monitor labels in Chinese', () => {
+    ;[
+      '全平台赔率监控',
+      '比赛列表',
+      '搜索比赛、联赛或平台',
+      '让球盘',
+      '大小球',
+      '胜平负',
+      '无盘口',
+      '最新赔率显示在走势图最右侧',
+      '三平台都有',
+      '疑似盘口缺失',
+      '平博',
+      '皇冠',
+    ].forEach((label) => expect(source).toContain(label))
+    expect(source).not.toContain('Real Madrid')
+    expect(source).not.toContain('Barcelona')
+    expect(source).not.toContain('Arsenal')
+    expect(source).not.toContain('Chelsea')
+  })
+
   it('groups markets into collapsible panels instead of rendering every market at once', () => {
     expect(source).toContain('Collapse')
     expect(source).toContain('marketGroups')
@@ -38,9 +59,9 @@ describe('odds monitor dashboard source', () => {
   })
 
   it('keeps the required platform chart colors and latest value labels', () => {
-    expect(source).toContain('pinnacle: \'#ef4444\'')
-    expect(source).toContain('crown: \'#16a34a\'')
-    expect(source).toContain('polymarket: \'#2563eb\'')
+    expect(source).toContain("pinnacle: '#ef4444'")
+    expect(source).toContain("crown: '#16a34a'")
+    expect(source).toContain("polymarket: '#2563eb'")
     expect(source).toContain('createSeriesWithLatestLabel')
     expect(source).toContain('toAsianOdd')
     expect(source).toContain('formatAsianOdd')

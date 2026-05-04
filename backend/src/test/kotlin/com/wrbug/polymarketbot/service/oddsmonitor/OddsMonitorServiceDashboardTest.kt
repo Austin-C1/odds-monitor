@@ -73,9 +73,9 @@ class OddsMonitorServiceDashboardTest {
         ).getDashboard()
 
         assertEquals(1, dashboard.matches.size)
-        assertEquals("England - Premier League", dashboard.matches.single().leagueName)
-        assertEquals("Arsenal", dashboard.matches.single().homeTeam)
-        assertEquals("Chelsea", dashboard.matches.single().awayTeam)
+        assertEquals("英格兰超级联赛", dashboard.matches.single().leagueName)
+        assertEquals("阿森纳", dashboard.matches.single().homeTeam)
+        assertEquals("切尔西", dashboard.matches.single().awayTeam)
         assertEquals(listOf("pinnacle"), dashboard.matches.single().matchedPlatforms)
         assertTrue(dashboard.selectedMatch?.metrics?.any { it.label == "handicap home -0.5" && it.value == "1.93" } == true)
     }
@@ -135,9 +135,9 @@ class OddsMonitorServiceDashboardTest {
         ).getDashboard()
 
         assertEquals(1, dashboard.matches.size)
-        assertEquals("Japan J1 League", dashboard.matches.single().leagueName)
-        assertEquals("Okayama", dashboard.matches.single().homeTeam)
-        assertEquals("Hiroshima", dashboard.matches.single().awayTeam)
+        assertEquals("日本J1百年构想联赛", dashboard.matches.single().leagueName)
+        assertEquals("冈山绿雉", dashboard.matches.single().homeTeam)
+        assertEquals("广岛三箭", dashboard.matches.single().awayTeam)
         assertEquals(listOf("crown"), dashboard.matches.single().matchedPlatforms)
         assertTrue(dashboard.selectedMatch?.metrics?.any { it.label == "total over 2.5" && it.value == "0.94" } == true)
     }
@@ -293,8 +293,8 @@ class OddsMonitorServiceDashboardTest {
 
         assertEquals(2, dashboard.matches.size)
         assertTrue(dashboard.matches.any {
-            it.homeTeam == "HFX Wanderers" &&
-                it.awayTeam == "Forge" &&
+            it.homeTeam == "哈利法克斯流浪者" &&
+                it.awayTeam == "弗尔格" &&
                 it.matchedPlatforms == listOf("crown")
         })
     }
@@ -344,9 +344,9 @@ class OddsMonitorServiceDashboardTest {
         ).getDashboard()
 
         assertEquals(1, dashboard.matches.size)
-        assertEquals("Japan J1 League", dashboard.matches.single().leagueName)
-        assertEquals("Okayama", dashboard.matches.single().homeTeam)
-        assertEquals("Hiroshima", dashboard.matches.single().awayTeam)
+        assertEquals("日本J1百年构想联赛", dashboard.matches.single().leagueName)
+        assertEquals("冈山绿雉", dashboard.matches.single().homeTeam)
+        assertEquals("广岛三箭", dashboard.matches.single().awayTeam)
     }
 
     @Test
@@ -405,7 +405,9 @@ class OddsMonitorServiceDashboardTest {
             snapshotRepository
         ).getDashboard()
 
-        assertEquals("Canada Premier League", dashboard.matches.single().leagueName)
+        assertEquals("加拿大超级联赛", dashboard.matches.single().leagueName)
+        assertEquals("多伦多国际", dashboard.matches.single().homeTeam)
+        assertEquals("温哥华FC", dashboard.matches.single().awayTeam)
         assertEquals(listOf("crown"), dashboard.matches.single().matchedPlatforms)
     }
 
