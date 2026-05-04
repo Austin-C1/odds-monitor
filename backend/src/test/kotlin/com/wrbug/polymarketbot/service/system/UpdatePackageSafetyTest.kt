@@ -16,7 +16,7 @@ class UpdatePackageSafetyTest {
         assertTrue(UpdatePackageSafety.isAllowedProgramPath("launch-odds-monitor.ps1"))
         assertTrue(UpdatePackageSafety.isAllowedProgramPath("launch-odds-monitor.cmd"))
         assertTrue(UpdatePackageSafety.isAllowedProgramPath("start-odds-backend.ps1"))
-        assertTrue(UpdatePackageSafety.isAllowedProgramPath(".tools/jdk-17.0.18+8/bin/java.exe"))
+        assertFalse(UpdatePackageSafety.isAllowedProgramPath(".tools/jdk-17.0.18+8/bin/java.exe"))
     }
 
     @Test
@@ -75,5 +75,8 @@ class UpdatePackageSafetyTest {
         assertTrue(script.contains("'frontend/dist/index.html'"))
         assertTrue(script.contains("Stop-Process -Id 12345"))
         assertTrue(script.contains("launch-odds-monitor.ps1"))
+        assertTrue(script.contains("update-apply.log"))
+        assertTrue(script.contains("更新失败"))
+        assertTrue(script.contains("finally"))
     }
 }

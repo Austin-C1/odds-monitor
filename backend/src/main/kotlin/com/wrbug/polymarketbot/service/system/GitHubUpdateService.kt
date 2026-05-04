@@ -33,8 +33,7 @@ object UpdatePackageSafety {
     private val allowedPrefixes = listOf(
         "backend/build/libs/",
         "frontend/dist/",
-        "scripts/",
-        ".tools/"
+        "scripts/"
     )
 
     private val protectedPrefixes = listOf(
@@ -137,40 +136,62 @@ object UpdateApplyScriptBuilder {
             ${'$'}packageRoot = Decode-Text '${encode(packageRoot.toAbsolutePath().toString())}'
             ${'$'}backupRoot = Decode-Text '${encode(backupRoot.toAbsolutePath().toString())}'
             ${'$'}statusPath = Join-Path ${'$'}appRoot 'updates\update-status.json'
+            ${'$'}logPath = Join-Path ${'$'}appRoot 'updates\update-apply.log'
             ${'$'}files = @(
             $fileList
             )
-            function Write-Status([int]${'$'}Progress, [string]${'$'}Message, [string]${'$'}ErrorMessage = ${'$'}null) {
-              ${'$'}json = @{ updating = ${'$'}true; progress = ${'$'}Progress; message = ${'$'}Message; error = ${'$'}ErrorMessage } | ConvertTo-Json -Compress
+            function Write-Log([string]${'$'}Message) {
+              ${'$'}line = ('{0} {1}' -f (Get-Date).ToString('s'), ${'$'}Message)
+              Add-Content -Path ${'$'}logPath -Value ${'$'}line -Encoding UTF8
+            }
+            function Write-Status([bool]${'$'}Updating, [int]${'$'}Progress, [string]${'$'}Message, [string]${'$'}ErrorMessage = ${'$'}null) {
+              ${'$'}json = @{ updating = ${'$'}Updating; progress = ${'$'}Progress; message = ${'$'}Message; error = ${'$'}ErrorMessage } | ConvertTo-Json -Compress
               Set-Content -Path ${'$'}statusPath -Value ${'$'}json -Encoding UTF8
+              Write-Log ${'$'}Message
             }
-            Start-Sleep -Seconds 2
-            Write-Status 82 'Stopping old backend'
-            Stop-Process -Id $backendPid -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
-            New-Item -ItemType Directory -Path ${'$'}backupRoot -Force | Out-Null
-            Write-Status 88 'Backing up old files'
-            foreach (${'$'}relative in ${'$'}files) {
-              ${'$'}src = Join-Path ${'$'}packageRoot ${'$'}relative
-              ${'$'}dst = Join-Path ${'$'}appRoot ${'$'}relative
-              if (Test-Path ${'$'}dst) {
-                ${'$'}backup = Join-Path ${'$'}backupRoot ${'$'}relative
-                New-Item -ItemType Directory -Path (Split-Path -Parent ${'$'}backup) -Force | Out-Null
-                Copy-Item -LiteralPath ${'$'}dst -Destination ${'$'}backup -Recurse -Force
+            function Stop-MatchingProcesses([string]${'$'}Pattern) {
+              ${'$'}items = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { ${'$'}_.CommandLine -like ${'$'}Pattern }
+              foreach (${'$'}item in ${'$'}items) {
+                Stop-Process -Id ${'$'}item.ProcessId -Force -ErrorAction SilentlyContinue
               }
+              if (${'$'}items) { Start-Sleep -Seconds 3 }
             }
-            Write-Status 94 'Copying new files'
-            foreach (${'$'}relative in ${'$'}files) {
-              ${'$'}src = Join-Path ${'$'}packageRoot ${'$'}relative
-              ${'$'}dst = Join-Path ${'$'}appRoot ${'$'}relative
-              New-Item -ItemType Directory -Path (Split-Path -Parent ${'$'}dst) -Force | Out-Null
-              Copy-Item -LiteralPath ${'$'}src -Destination ${'$'}dst -Recurse -Force
-            }
-            ${'$'}json = @{ updating = ${'$'}false; progress = 100; message = 'Update completed'; error = ${'$'}null } | ConvertTo-Json -Compress
-            Set-Content -Path ${'$'}statusPath -Value ${'$'}json -Encoding UTF8
             ${'$'}launcher = Join-Path ${'$'}appRoot 'launch-odds-monitor.ps1'
-            if (Test-Path ${'$'}launcher) {
-              Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',${'$'}launcher) -WorkingDirectory ${'$'}appRoot -WindowStyle Hidden
+            try {
+              Start-Sleep -Seconds 2
+              Write-Status ${'$'}true 82 '停止旧程序'
+              Stop-Process -Id $backendPid -Force -ErrorAction SilentlyContinue
+              Stop-MatchingProcesses '*odds-monitor-backend*'
+              Stop-MatchingProcesses '*serve-odds-frontend.ps1*'
+              New-Item -ItemType Directory -Path ${'$'}backupRoot -Force | Out-Null
+              Write-Status ${'$'}true 88 '备份旧文件'
+              foreach (${'$'}relative in ${'$'}files) {
+                ${'$'}src = Join-Path ${'$'}packageRoot ${'$'}relative
+                ${'$'}dst = Join-Path ${'$'}appRoot ${'$'}relative
+                if (Test-Path ${'$'}dst) {
+                  ${'$'}backup = Join-Path ${'$'}backupRoot ${'$'}relative
+                  New-Item -ItemType Directory -Path (Split-Path -Parent ${'$'}backup) -Force | Out-Null
+                  Copy-Item -LiteralPath ${'$'}dst -Destination ${'$'}backup -Recurse -Force
+                }
+              }
+              Write-Status ${'$'}true 94 '复制新文件'
+              foreach (${'$'}relative in ${'$'}files) {
+                ${'$'}src = Join-Path ${'$'}packageRoot ${'$'}relative
+                ${'$'}dst = Join-Path ${'$'}appRoot ${'$'}relative
+                New-Item -ItemType Directory -Path (Split-Path -Parent ${'$'}dst) -Force | Out-Null
+                Copy-Item -LiteralPath ${'$'}src -Destination ${'$'}dst -Recurse -Force
+              }
+              Write-Status ${'$'}false 100 '更新完成'
+            }
+            catch {
+              ${'$'}message = ${'$'}_.Exception.Message
+              Write-Status ${'$'}false 0 '更新失败' ${'$'}message
+              Write-Log ('更新失败: {0}' -f ${'$'}message)
+            }
+            finally {
+              if (Test-Path ${'$'}launcher) {
+                Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',${'$'}launcher) -WorkingDirectory ${'$'}appRoot -WindowStyle Hidden
+              }
             }
         """.trimIndent()
     }
