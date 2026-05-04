@@ -17,10 +17,21 @@ class OddsFootballMatchFilterTest {
     }
 
     @Test
+    fun `ignores special betting leagues`() {
+        assertTrue(
+            OddsFootballMatchFilter.shouldIgnore(
+                leagueName = "意大利甲组联赛-特别投注",
+                homeTeam = "主场",
+                awayTeam = "客场"
+            )
+        )
+    }
+
+    @Test
     fun `keeps regular football matches`() {
         assertFalse(
             OddsFootballMatchFilter.shouldIgnore(
-                leagueName = "日本J1",
+                leagueName = "日本J1百年构想联赛",
                 homeTeam = "东京",
                 awayTeam = "川崎前锋"
             )

@@ -12,71 +12,70 @@ import org.mockito.Mockito.`when`
 
 class OddsLeagueFilterServiceTest {
     @Test
-    fun `league filter stores selected league names and filters dashboard rows`() {
+    fun `missing config uses built in default tracked leagues`() {
         val repository = mock(SystemConfigRepository::class.java)
-        `when`(repository.findByConfigKey("odds_monitor.selected_leagues")).thenReturn(
-            SystemConfig(configKey = "odds_monitor.selected_leagues", configValue = """["日本J1","英超"]""")
+        `when`(repository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(null)
+
+        val filter = OddsLeagueFilterService(repository)
+
+        assertTrue(filter.getSelectedLeagues().contains("英格兰超级联赛"))
+        assertTrue(filter.shouldIncludeLeague("英格兰 - 超级联赛"))
+        assertTrue(filter.shouldIncludeLeague("England Premier League"))
+        assertFalse(filter.shouldIncludeLeague("英格兰 - 北部超级联赛"))
+    }
+
+    @Test
+    fun `saved empty list tracks no leagues`() {
+        val repository = mock(SystemConfigRepository::class.java)
+        `when`(repository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
+            SystemConfig(configKey = OddsLeagueFilterService.CONFIG_KEY, configValue = "[]")
         )
 
         val filter = OddsLeagueFilterService(repository)
 
-        assertEquals(listOf("日本J1", "英格兰超级联赛"), filter.getSelectedLeagues())
-        assertTrue(filter.shouldIncludeLeague("日本J1"))
-        assertFalse(filter.shouldIncludeLeague("西甲"))
+        assertEquals(emptyList<String>(), filter.getSelectedLeagues())
+        assertFalse(filter.shouldIncludeLeague("英格兰超级联赛"))
     }
 
     @Test
-    fun `empty league filter includes every league`() {
+    fun `saved selected league names are canonicalized`() {
         val repository = mock(SystemConfigRepository::class.java)
-        `when`(repository.findByConfigKey("odds_monitor.selected_leagues")).thenReturn(null)
+        `when`(repository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
+            SystemConfig(configKey = OddsLeagueFilterService.CONFIG_KEY, configValue = """["日本 - J联赛","英格兰 - 超级联赛"]""")
+        )
 
         val filter = OddsLeagueFilterService(repository)
 
-        assertTrue(filter.shouldIncludeLeague("日本J1"))
-        assertTrue(filter.shouldIncludeLeague("英超"))
+        assertEquals(listOf("日本J1百年构想联赛", "英格兰超级联赛"), filter.getSelectedLeagues())
+        assertTrue(filter.shouldIncludeLeague("Japan - J1 League"))
+        assertFalse(filter.shouldIncludeLeague("日本 - J联赛 - 特别投注"))
     }
 
     @Test
-    fun `available leagues are normalized and sorted from collected matches`() {
-        val leagues = availableOddsLeagueNames(
-            listOf(
-                OddsPlatformMatch(rawLeagueName = "日本J1"),
-                OddsPlatformMatch(rawLeagueName = " 英超 "),
-                OddsPlatformMatch(rawLeagueName = "日本J1"),
-                OddsPlatformMatch(rawLeagueName = "")
-            )
-        )
-
-        assertEquals(listOf("英格兰超级联赛", "日本J1"), leagues)
-    }
-
-    @Test
-    fun `available leagues merge raw variants into one canonical league`() {
+    fun `available leagues merge raw translation variants into canonical leagues`() {
         val leagues = availableOddsLeagueNames(
             listOf(
                 OddsPlatformMatch(rawLeagueName = "英格兰 - 超级联赛"),
                 OddsPlatformMatch(rawLeagueName = "英格兰超级联赛"),
-                OddsPlatformMatch(rawLeagueName = "英格兰超级联赛-特别投注"),
                 OddsPlatformMatch(rawLeagueName = "England Premier League"),
-                OddsPlatformMatch(rawLeagueName = "英格兰 - 北部超级联赛")
+                OddsPlatformMatch(rawLeagueName = "Japan - J2/J3 League"),
+                OddsPlatformMatch(rawLeagueName = "日本J2 J3百年构想联赛"),
+                OddsPlatformMatch(rawLeagueName = "英格兰 - 北部超级联赛"),
+                OddsPlatformMatch(rawLeagueName = "意大利甲组联赛-特别投注")
             )
         )
 
-        assertEquals(listOf("英格兰北部超级联赛", "英格兰超级联赛"), leagues)
+        assertEquals(
+            listOf("英格兰北部超级联赛", "英格兰超级联赛", "日本J2 J3百年构想联赛"),
+            leagues
+        )
     }
 
     @Test
-    fun `selected canonical league includes raw variants`() {
-        val repository = mock(SystemConfigRepository::class.java)
-        `when`(repository.findByConfigKey("odds_monitor.selected_leagues")).thenReturn(
-            SystemConfig(configKey = "odds_monitor.selected_leagues", configValue = """["英格兰 - 超级联赛"]""")
-        )
+    fun `default tracked leagues are always available even before collection`() {
+        val leagues = availableOddsLeagueNames(emptyList())
 
-        val filter = OddsLeagueFilterService(repository)
-
-        assertEquals(listOf("英格兰超级联赛"), filter.getSelectedLeagues())
-        assertTrue(filter.shouldIncludeLeague("英格兰超级联赛-特别投注"))
-        assertTrue(filter.shouldIncludeLeague("England Premier League"))
-        assertFalse(filter.shouldIncludeLeague("英格兰 - 北部超级联赛"))
+        assertTrue(defaultTrackedLeagueNames().contains("世界杯2026(美加墨)"))
+        assertTrue(leagues.isEmpty())
     }
 }

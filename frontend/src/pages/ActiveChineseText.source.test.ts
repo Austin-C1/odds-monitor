@@ -12,9 +12,10 @@ const activeFiles = [
   'src/pages/RuntimeLogs.tsx',
   'src/pages/NotificationSettingsPage.tsx',
   'src/pages/LeagueFilter.tsx',
+  'src/pages/DefaultTracking.tsx',
 ]
 
-const mojibakeMarkers = ['閸', '閺', '鏉', '閻', '鐎', '鐠', '濡', '缁', '鎼', '璁', '澶', '婊', '绛']
+const mojibakeMarkers = ['闁', '閺', '閻', '婵', '缂', '閹', '鐠', '婢', '濠', '缁', '鑱', '绛涢', '鍏ㄥ', '姣旇']
 
 describe('active page Chinese text', () => {
   it('does not contain mojibake in active odds-monitor pages', () => {
@@ -35,6 +36,7 @@ describe('active page Chinese text', () => {
     ;[
       '全平台赔率监控',
       '比赛监控',
+      '默认追踪',
       '联赛筛选',
       '数据源设置',
       '数据源状态',

@@ -12,7 +12,11 @@ object OddsFootballMatchFilter {
         "efootball",
         "e-football",
         "h2h gg",
-        "gt体育"
+        "gt体育",
+        "特别投注",
+        "特別投注",
+        "special betting",
+        "specials"
     )
 
     fun shouldIgnore(leagueName: String?, homeTeam: String?, awayTeam: String?): Boolean {

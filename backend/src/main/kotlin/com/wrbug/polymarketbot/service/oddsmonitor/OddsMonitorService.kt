@@ -249,7 +249,7 @@ class OddsMonitorService(
 
     fun listLeagueFilter(): OddsLeagueFilterDto {
         val platformRepository = platformMatchRepository
-        val available = if (platformRepository == null) {
+        val collected = if (platformRepository == null) {
             emptyList()
         } else {
             availableOddsLeagueNames(
@@ -258,6 +258,9 @@ class OddsMonitorService(
                 }
             )
         }
+        val available = (defaultTrackedLeagueNames() + collected + leagueFilterService?.getSelectedLeagues().orEmpty())
+            .distinct()
+            .sortedWith(compareBy<String> { it.any { char -> char.code < 128 } }.thenBy { it })
         return OddsLeagueFilterDto(
             availableLeagues = available,
             selectedLeagues = leagueFilterService?.getSelectedLeagues().orEmpty()

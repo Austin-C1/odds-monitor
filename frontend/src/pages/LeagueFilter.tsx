@@ -11,12 +11,22 @@ type ApiResponse<T> = {
   msg?: string
 }
 
-type LeagueFilterData = {
+export type LeagueFilterData = {
   availableLeagues: string[]
   selectedLeagues: string[]
 }
 
-const LeagueFilter = () => {
+type LeagueSelectorPageProps = {
+  title?: string
+  cardTitle?: string
+  description?: string
+}
+
+const LeagueSelectorPage: React.FC<LeagueSelectorPageProps> = ({
+  title = '联赛筛选',
+  cardTitle = '关注联赛',
+  description = '勾选后，比赛监控和 TG 只追踪这些联赛；不在名单内的比赛不会进入监控。',
+}) => {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [availableLeagues, setAvailableLeagues] = useState<string[]>([])
@@ -93,12 +103,12 @@ const LeagueFilter = () => {
   return (
     <div>
       <Space align="center" style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Title level={2} style={{ margin: 0 }}>联赛筛选</Title>
+        <Title level={2} style={{ margin: 0 }}>{title}</Title>
         <Button icon={<ReloadOutlined />} onClick={loadLeagues} loading={loading}>刷新</Button>
       </Space>
 
       <Card
-        title="关注联赛"
+        title={cardTitle}
         extra={
           <Space wrap>
             <Input
@@ -122,9 +132,7 @@ const LeagueFilter = () => {
         }
       >
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Text type="secondary">
-            不勾选时显示全部比赛；勾选后，比赛监控页面只显示这些联赛。
-          </Text>
+          <Text type="secondary">{description}</Text>
           <Space wrap>
             <Tag color="blue">已选 {selectedLeagues.length}</Tag>
             <Tag>可选 {allLeagues.length}</Tag>
@@ -151,4 +159,7 @@ const LeagueFilter = () => {
   )
 }
 
+const LeagueFilter = () => <LeagueSelectorPage />
+
 export default LeagueFilter
+export { LeagueSelectorPage }

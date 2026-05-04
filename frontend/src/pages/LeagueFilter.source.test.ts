@@ -5,17 +5,21 @@ import path from 'node:path'
 const root = path.resolve(__dirname, '..')
 
 describe('league filter page source', () => {
-  it('adds a dedicated league filter route and menu item', () => {
+  it('adds league filter and default tracking routes and menu items', () => {
     const appSource = fs.readFileSync(path.join(root, 'App.tsx'), 'utf8')
     const layoutSource = fs.readFileSync(path.join(root, 'components', 'Layout.tsx'), 'utf8')
 
     expect(appSource).toContain('const LeagueFilter')
+    expect(appSource).toContain('const DefaultTracking')
     expect(appSource).toContain('path="/league-filter"')
+    expect(appSource).toContain('path="/default-tracking"')
     expect(layoutSource).toContain("key: '/league-filter'")
+    expect(layoutSource).toContain("key: '/default-tracking'")
     expect(layoutSource).toContain("label: '联赛筛选'")
+    expect(layoutSource).toContain("label: '默认追踪'")
   })
 
-  it('league filter page loads available leagues and saves selected names', () => {
+  it('league selector loads available leagues and saves selected names', () => {
     const pageSource = fs.readFileSync(path.join(root, 'pages', 'LeagueFilter.tsx'), 'utf8')
 
     expect(pageSource).toContain('/odds-monitor/leagues/list')
@@ -25,7 +29,7 @@ describe('league filter page source', () => {
     expect(pageSource).toContain('保存筛选')
   })
 
-  it('league filter page can search leagues locally', () => {
+  it('league selector can search leagues locally', () => {
     const pageSource = fs.readFileSync(path.join(root, 'pages', 'LeagueFilter.tsx'), 'utf8')
 
     expect(pageSource).toContain('searchQuery')
