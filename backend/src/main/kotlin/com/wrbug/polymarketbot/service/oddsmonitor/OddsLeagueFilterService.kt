@@ -64,8 +64,45 @@ fun availableOddsLeagueNames(matches: List<OddsPlatformMatch>): List<String> {
 }
 
 private fun normalizeLeagueName(value: String?): String? {
-    return TextEncodingUtils.repairMojibake(value.orEmpty())
+    val repaired = TextEncodingUtils.repairMojibake(value.orEmpty())
         .replace(Regex("\\s+"), " ")
         .trim()
         .takeIf { it.isNotBlank() }
+        ?: return null
+
+    return canonicalLeagueAliases[leagueAliasKey(repaired)]
+        ?: repaired
+            .replace('－', '-')
+            .replace('–', '-')
+            .replace('—', '-')
+            .replace(Regex("\\s*-\\s*"), "-")
+            .replace(Regex("-(特别投注|附加赛|赛中盘|滚球|优胜冠军)$"), "")
+            .replace(Regex("([\\p{IsHan}])\\s+([\\p{IsHan}A-Za-z0-9])"), "$1$2")
+            .replace(Regex("([A-Za-z0-9])\\s+([\\p{IsHan}])"), "$1$2")
+            .replace(Regex("^([\\p{IsHan}]{2,6})-(.+)$")) { match ->
+                val country = match.groupValues[1]
+                val league = match.groupValues[2]
+                if (league.any { it.code > 127 }) "$country$league" else match.value
+            }
+            .let { canonicalLeagueAliases[leagueAliasKey(it)] ?: it }
+            .trim()
+            .takeIf { it.isNotBlank() }
 }
+
+private fun leagueAliasKey(value: String): String {
+    return value
+        .lowercase()
+        .replace(Regex("[\\s\\-_/()（）·.]+"), "")
+}
+
+private val canonicalLeagueAliases = mapOf(
+    "英超" to "英格兰超级联赛",
+    "英格兰超级联赛" to "英格兰超级联赛",
+    "englandpremierleague" to "英格兰超级联赛",
+    "englishpremierleague" to "英格兰超级联赛",
+    "premierleague" to "英格兰超级联赛",
+    "日本j1" to "日本J1",
+    "日本j1联赛" to "日本J1",
+    "japanj1league" to "日本J1",
+    "j1league" to "日本J1"
+)

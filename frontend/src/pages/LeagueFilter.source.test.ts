@@ -9,7 +9,7 @@ describe('league filter page source', () => {
     const appSource = fs.readFileSync(path.join(root, 'App.tsx'), 'utf8')
     const layoutSource = fs.readFileSync(path.join(root, 'components', 'Layout.tsx'), 'utf8')
 
-    expect(appSource).toContain("const LeagueFilter")
+    expect(appSource).toContain('const LeagueFilter')
     expect(appSource).toContain('path="/league-filter"')
     expect(layoutSource).toContain("key: '/league-filter'")
     expect(layoutSource).toContain("label: '联赛筛选'")

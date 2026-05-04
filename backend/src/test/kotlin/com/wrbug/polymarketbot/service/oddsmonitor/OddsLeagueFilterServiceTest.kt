@@ -20,7 +20,7 @@ class OddsLeagueFilterServiceTest {
 
         val filter = OddsLeagueFilterService(repository)
 
-        assertEquals(listOf("日本J1", "英超"), filter.getSelectedLeagues())
+        assertEquals(listOf("日本J1", "英格兰超级联赛"), filter.getSelectedLeagues())
         assertTrue(filter.shouldIncludeLeague("日本J1"))
         assertFalse(filter.shouldIncludeLeague("西甲"))
     }
@@ -47,6 +47,36 @@ class OddsLeagueFilterServiceTest {
             )
         )
 
-        assertEquals(listOf("英超", "日本J1"), leagues)
+        assertEquals(listOf("英格兰超级联赛", "日本J1"), leagues)
+    }
+
+    @Test
+    fun `available leagues merge raw variants into one canonical league`() {
+        val leagues = availableOddsLeagueNames(
+            listOf(
+                OddsPlatformMatch(rawLeagueName = "英格兰 - 超级联赛"),
+                OddsPlatformMatch(rawLeagueName = "英格兰超级联赛"),
+                OddsPlatformMatch(rawLeagueName = "英格兰超级联赛-特别投注"),
+                OddsPlatformMatch(rawLeagueName = "England Premier League"),
+                OddsPlatformMatch(rawLeagueName = "英格兰 - 北部超级联赛")
+            )
+        )
+
+        assertEquals(listOf("英格兰北部超级联赛", "英格兰超级联赛"), leagues)
+    }
+
+    @Test
+    fun `selected canonical league includes raw variants`() {
+        val repository = mock(SystemConfigRepository::class.java)
+        `when`(repository.findByConfigKey("odds_monitor.selected_leagues")).thenReturn(
+            SystemConfig(configKey = "odds_monitor.selected_leagues", configValue = """["英格兰 - 超级联赛"]""")
+        )
+
+        val filter = OddsLeagueFilterService(repository)
+
+        assertEquals(listOf("英格兰超级联赛"), filter.getSelectedLeagues())
+        assertTrue(filter.shouldIncludeLeague("英格兰超级联赛-特别投注"))
+        assertTrue(filter.shouldIncludeLeague("England Premier League"))
+        assertFalse(filter.shouldIncludeLeague("英格兰 - 北部超级联赛"))
     }
 }
