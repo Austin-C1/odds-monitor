@@ -7,7 +7,6 @@ import com.wrbug.polymarketbot.entity.OddsAlertRecord
 import com.wrbug.polymarketbot.entity.OddsMarket
 import com.wrbug.polymarketbot.entity.OddsMatch
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
-import com.wrbug.polymarketbot.entity.OddsSnapshot
 import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
 import com.wrbug.polymarketbot.repository.OddsMarketRepository
 import com.wrbug.polymarketbot.repository.OddsMatchRepository
@@ -146,8 +145,6 @@ class OddsChangeNotificationServiceTest {
             snapshotRepository,
             matchRepository
         )
-        val match = platformMatch(startTime = now + 3_600_000)
-        val market = oddsMarket()
 
         runBlocking {
             `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
@@ -158,7 +155,7 @@ class OddsChangeNotificationServiceTest {
             Optional.of(OddsMatch(id = 100, startTime = now + 3_600_000, status = "scheduled"))
         )
 
-        service.notifyIfChanged(match, market, BigDecimal("0.88"), BigDecimal("0.98"))
+        service.notifyIfChanged(platformMatch(startTime = now + 3_600_000), oddsMarket(), BigDecimal("0.88"), BigDecimal("0.98"))
         Thread.sleep(1_800)
 
         verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
@@ -230,6 +227,59 @@ class OddsChangeNotificationServiceTest {
         assertTrue(captor.value.message.contains("Polymarket：无对应盘口"))
     }
 
+    @Test
+    fun `uses standard match name when platform special bet names are generic`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository
+        )
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(liveOnlyModeEnabled = true, handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(matchRepository.findById(100)).thenReturn(
+            Optional.of(
+                OddsMatch(
+                    id = 100,
+                    leagueName = "意大利甲组联赛",
+                    homeTeam = "国际米兰",
+                    awayTeam = "尤文图斯",
+                    status = "live"
+                )
+            )
+        )
+
+        service.notifyIfChanged(
+            platformMatch(
+                rawLeagueName = "意大利甲组联赛-特别投注",
+                rawHomeTeam = "主场",
+                rawAwayTeam = "客场"
+            ),
+            oddsMarket(),
+            BigDecimal("0.88"),
+            BigDecimal("0.96")
+        )
+        Thread.sleep(1_800)
+
+        val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
+        verify(alertRepository, times(1)).save(captor.capture())
+        assertTrue(captor.value.message.contains("赔率变动：国际米兰 vs 尤文图斯"))
+        assertFalse(captor.value.message.contains("赔率变动：主场 vs 客场"))
+        assertTrue(captor.value.message.contains("联赛：意大利甲组联赛"))
+    }
+
     private fun telegramMonitorConfig(
         monitorModeEnabled: Boolean = true,
         liveOnlyModeEnabled: Boolean = false,
@@ -258,13 +308,19 @@ class OddsChangeNotificationServiceTest {
         )
     )
 
-    private fun platformMatch(sourceKey: String = "crown", startTime: Long? = null) = OddsPlatformMatch(
+    private fun platformMatch(
+        sourceKey: String = "crown",
+        startTime: Long? = null,
+        rawLeagueName: String = "日本J1",
+        rawHomeTeam: String = "东京",
+        rawAwayTeam: String = "川崎前锋"
+    ) = OddsPlatformMatch(
         id = 10,
         sourceKey = sourceKey,
         sourceMatchId = "m1",
-        rawLeagueName = "日本J1",
-        rawHomeTeam = "东京",
-        rawAwayTeam = "川崎前锋",
+        rawLeagueName = rawLeagueName,
+        rawHomeTeam = rawHomeTeam,
+        rawAwayTeam = rawAwayTeam,
         rawStartTime = startTime
     )
 

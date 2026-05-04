@@ -4,6 +4,7 @@ import com.wrbug.polymarketbot.dto.NotificationConfigData
 import com.wrbug.polymarketbot.dto.NotificationConfigDto
 import com.wrbug.polymarketbot.entity.OddsAlertRecord
 import com.wrbug.polymarketbot.entity.OddsMarket
+import com.wrbug.polymarketbot.entity.OddsMatch
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
 import com.wrbug.polymarketbot.repository.OddsMarketRepository
@@ -60,17 +61,27 @@ class OddsChangeNotificationService(
             return
         }
 
-        enqueueMergedNotification(match, market, previousOdds ?: BigDecimal.ZERO, currentOdds, eligibleConfigs)
+        enqueueMergedNotification(
+            matchName = notificationMatchName(match, standardMatch),
+            leagueName = notificationLeagueName(match, standardMatch),
+            matchId = market.matchId,
+            market = market,
+            previousOdds = previousOdds ?: BigDecimal.ZERO,
+            currentOdds = currentOdds,
+            configs = eligibleConfigs
+        )
     }
 
     private fun enqueueMergedNotification(
-        match: OddsPlatformMatch,
+        matchName: String,
+        leagueName: String,
+        matchId: Long,
         market: OddsMarket,
         previousOdds: BigDecimal,
         currentOdds: BigDecimal,
         configs: List<NotificationConfigDto>
     ) {
-        val key = OddsChangeNotificationKey(standardMatchId = market.matchId)
+        val key = OddsChangeNotificationKey(standardMatchId = matchId)
         val marketKey = OddsChangeNotificationMarketKey(
             marketType = market.marketType,
             lineValue = market.lineValue,
@@ -78,13 +89,17 @@ class OddsChangeNotificationService(
         )
         pendingAlerts.compute(key) { _, existing ->
             val base = existing ?: PendingOddsChangeNotification(
-                matchName = "${match.rawHomeTeam} vs ${match.rawAwayTeam}",
-                leagueName = match.rawLeagueName,
-                matchId = market.matchId,
+                matchName = matchName,
+                leagueName = leagueName,
+                matchId = matchId,
                 configs = configs,
                 markets = linkedMapOf()
             )
-            val updatedBase = base.copy(configs = mergeNotificationConfigs(base.configs, configs))
+            val updatedBase = base.copy(
+                matchName = bestNotificationText(base.matchName, matchName),
+                leagueName = bestNotificationText(base.leagueName, leagueName),
+                configs = mergeNotificationConfigs(base.configs, configs)
+            )
             val pendingMarket = updatedBase.markets.getOrPut(marketKey) {
                 PendingOddsChangeMarketNotification(
                     marketType = market.marketType,
@@ -460,6 +475,33 @@ private fun platformLabel(sourceKey: String): String {
         "polymarket" -> "Polymarket"
         else -> sourceKey
     }
+}
+
+private fun notificationMatchName(platformMatch: OddsPlatformMatch, standardMatch: OddsMatch?): String {
+    val standardName = standardMatch?.let { "${it.homeTeam} vs ${it.awayTeam}" }
+    val platformName = "${platformMatch.rawHomeTeam} vs ${platformMatch.rawAwayTeam}"
+    return bestNotificationText(platformName, standardName)
+}
+
+private fun notificationLeagueName(platformMatch: OddsPlatformMatch, standardMatch: OddsMatch?): String {
+    return bestNotificationText(platformMatch.rawLeagueName, standardMatch?.leagueName)
+}
+
+private fun bestNotificationText(current: String, candidate: String?): String {
+    val normalizedCurrent = TextEncodingUtils.repairMojibake(current).trim()
+    val normalizedCandidate = TextEncodingUtils.repairMojibake(candidate.orEmpty()).trim()
+    return when {
+        normalizedCandidate.isBlank() -> normalizedCurrent
+        normalizedCurrent.isBlank() -> normalizedCandidate
+        isGenericMatchName(normalizedCurrent) -> normalizedCandidate
+        normalizedCurrent.contains("特别投注") && !normalizedCandidate.contains("特别投注") -> normalizedCandidate
+        else -> normalizedCurrent
+    }
+}
+
+private fun isGenericMatchName(value: String): Boolean {
+    val normalized = value.replace(" ", "")
+    return normalized in setOf("主场vs客场", "主队vs客队", "homevsaway", "hometeamvsawayteam")
 }
 
 private fun formatMergedOdds(value: BigDecimal, sourceKey: String, marketType: String?): String {

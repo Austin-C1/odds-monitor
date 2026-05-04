@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Card, Checkbox, Empty, Input, Space, Tag, Typography, message } from 'antd'
-import { PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons'
+import { PlusOutlined, ReloadOutlined, SaveOutlined, SearchOutlined } from '@ant-design/icons'
 import { apiClient } from '../services/api'
 
 const { Text, Title } = Typography
@@ -22,12 +22,22 @@ const LeagueFilter = () => {
   const [availableLeagues, setAvailableLeagues] = useState<string[]>([])
   const [selectedLeagues, setSelectedLeagues] = useState<string[]>([])
   const [manualLeagueName, setManualLeagueName] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const allLeagues = useMemo(() => {
     return Array.from(new Set([...availableLeagues, ...selectedLeagues]))
-      .filter((item) => item.trim())
+      .map((item) => item.trim())
+      .filter(Boolean)
       .sort((a, b) => a.localeCompare(b, 'zh-CN'))
   }, [availableLeagues, selectedLeagues])
+
+  const filteredLeagues = useMemo(() => {
+    const keyword = searchQuery.trim().toLowerCase()
+    if (!keyword) {
+      return allLeagues
+    }
+    return allLeagues.filter((league) => league.toLowerCase().includes(keyword))
+  }, [allLeagues, searchQuery])
 
   const loadLeagues = async () => {
     setLoading(true)
@@ -92,6 +102,14 @@ const LeagueFilter = () => {
         extra={
           <Space wrap>
             <Input
+              prefix={<SearchOutlined />}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索联赛"
+              allowClear
+              style={{ width: 220 }}
+            />
+            <Input
               value={manualLeagueName}
               onChange={(event) => setManualLeagueName(event.target.value)}
               onPressEnter={addManualLeague}
@@ -110,16 +128,17 @@ const LeagueFilter = () => {
           <Space wrap>
             <Tag color="blue">已选 {selectedLeagues.length}</Tag>
             <Tag>可选 {allLeagues.length}</Tag>
+            {searchQuery.trim() && <Tag color="processing">搜索结果 {filteredLeagues.length}</Tag>}
           </Space>
-          {allLeagues.length === 0 ? (
-            <Empty description="暂无联赛，等待采集后刷新" />
+          {filteredLeagues.length === 0 ? (
+            <Empty description={searchQuery.trim() ? '没有找到联赛' : '暂无联赛，等待采集后刷新'} />
           ) : (
             <Checkbox.Group
               value={selectedLeagues}
               onChange={(values) => setSelectedLeagues(values.map(String))}
               style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}
             >
-              {allLeagues.map((league) => (
+              {filteredLeagues.map((league) => (
                 <Checkbox key={league} value={league}>
                   {league}
                 </Checkbox>

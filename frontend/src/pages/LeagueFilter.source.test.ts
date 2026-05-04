@@ -24,4 +24,13 @@ describe('league filter page source', () => {
     expect(pageSource).toContain('手动增加联赛')
     expect(pageSource).toContain('保存筛选')
   })
+
+  it('league filter page can search leagues locally', () => {
+    const pageSource = fs.readFileSync(path.join(root, 'pages', 'LeagueFilter.tsx'), 'utf8')
+
+    expect(pageSource).toContain('searchQuery')
+    expect(pageSource).toContain('filteredLeagues')
+    expect(pageSource).toContain('placeholder="搜索联赛"')
+    expect(pageSource).toContain('搜索结果')
+  })
 })
