@@ -56,9 +56,11 @@ class OddsChangeNotificationService(
         if (configs.isEmpty()) {
             return
         }
-        val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch)
+        val now = System.currentTimeMillis()
+        val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch, now)
+        val startTime = standardMatch?.startTime ?: match.rawStartTime
         val eligibleConfigs = configs
-            .filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase) }
+            .filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase, startTime, now) }
             .let { filterConfigsByOddsMove(market, previousOdds, currentOdds, it) }
             .let { filterConfigsByCombinedWater(market, currentOdds, it) }
         if (eligibleConfigs.isEmpty()) {

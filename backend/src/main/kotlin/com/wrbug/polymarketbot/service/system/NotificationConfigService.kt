@@ -199,6 +199,7 @@ class NotificationConfigService(
         require(liveOnlyModeEnabled == null || liveOnlyModeEnabled is Boolean) {
             "liveOnlyModeEnabled must be a boolean"
         }
+        requireOptionalPrematchWindow(config["prematchWindowMinutes"], "prematchWindowMinutes")
         val marketBettingQueryEnabled = config["marketBettingQueryEnabled"]
         require(marketBettingQueryEnabled == null || marketBettingQueryEnabled is Boolean) {
             "marketBettingQueryEnabled must be a boolean"
@@ -240,6 +241,14 @@ class NotificationConfigService(
         require(numericValue <= MAX_COMBINED_WATER) { "$fieldName cannot exceed 2" }
     }
 
+    private fun requireOptionalPrematchWindow(value: Any?, fieldName: String) {
+        if (value == null || value == "") return
+        val numericValue = value.toString().toIntOrNull()
+        require(numericValue != null) { "$fieldName must be an integer" }
+        require(numericValue > 0) { "$fieldName must be greater than 0" }
+        require(numericValue <= 7 * 24 * 60) { "$fieldName cannot exceed 10080" }
+    }
+
     private fun requireConfigStringList(value: Any?, fieldName: String) {
         require(value == null || value is List<*> || value is String) {
             "$fieldName must be a list or a comma-separated string"
@@ -273,6 +282,7 @@ class NotificationConfigService(
                     is String -> raw.equals("true", ignoreCase = true)
                     else -> false
                 }
+                val prematchWindowMinutes = normalizePrematchWindow(configMap["prematchWindowMinutes"])
                 val marketBettingQueryEnabled = when (val raw = configMap["marketBettingQueryEnabled"]) {
                     is Boolean -> raw
                     is String -> raw.equals("true", ignoreCase = true)
@@ -298,6 +308,7 @@ class NotificationConfigService(
                         chatIds = chatIds,
                         monitorModeEnabled = monitorModeEnabled,
                         liveOnlyModeEnabled = liveOnlyModeEnabled,
+                        prematchWindowMinutes = prematchWindowMinutes,
                         marketBettingQueryEnabled = marketBettingQueryEnabled,
                         marketBettingDailyReportEnabled = marketBettingDailyReportEnabled,
                         marketBettingDailyReportTime = marketBettingDailyReportTime,
@@ -344,6 +355,11 @@ class NotificationConfigService(
         if (value == null || value == "") return null
         val normalized = value.toString().trim().toBigDecimalOrNull() ?: return null
         return normalized.stripTrailingZeros().toPlainString()
+    }
+
+    private fun normalizePrematchWindow(value: Any?): Int? {
+        if (value == null || value == "") return null
+        return value.toString().trim().toIntOrNull()?.takeIf { it > 0 }
     }
 
     private fun isValidDailyReportTime(value: Any?): Boolean {

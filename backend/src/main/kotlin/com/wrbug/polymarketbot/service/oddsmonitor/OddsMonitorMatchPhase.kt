@@ -47,12 +47,22 @@ fun oddsMonitorStatusForPlatformMatch(
 
 fun telegramConfigMatchesOddsMonitorPhase(
     config: NotificationConfigDto,
-    phase: OddsMonitorMatchPhase
+    phase: OddsMonitorMatchPhase,
+    startTime: Long? = null,
+    now: Long = System.currentTimeMillis()
 ): Boolean {
     val telegram = config.config as? NotificationConfigData.Telegram ?: return false
     return when (phase) {
         OddsMonitorMatchPhase.LIVE -> telegram.data.liveOnlyModeEnabled
-        OddsMonitorMatchPhase.PREMATCH -> !telegram.data.liveOnlyModeEnabled
+        OddsMonitorMatchPhase.PREMATCH -> {
+            if (telegram.data.liveOnlyModeEnabled) {
+                return false
+            }
+            val windowMinutes = telegram.data.prematchWindowMinutes?.takeIf { it > 0 } ?: return true
+            val kickoffTime = startTime ?: return false
+            val remainingMillis = kickoffTime - now
+            remainingMillis in 0..(windowMinutes * 60_000L)
+        }
     }
 }
 

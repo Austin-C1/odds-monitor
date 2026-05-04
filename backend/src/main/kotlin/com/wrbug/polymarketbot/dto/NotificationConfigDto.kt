@@ -15,6 +15,7 @@ data class TelegramConfigData(
     val chatIds: List<String>,
     val monitorModeEnabled: Boolean = false,
     val liveOnlyModeEnabled: Boolean = false,
+    val prematchWindowMinutes: Int? = null,
     val marketBettingQueryEnabled: Boolean = false,
     val marketBettingDailyReportEnabled: Boolean = false,
     val marketBettingDailyReportTime: String = "02:00",

@@ -5,6 +5,7 @@ type TelegramConfigShape = {
   chatIds?: string[] | string
   monitorModeEnabled?: boolean
   liveOnlyModeEnabled?: boolean
+  prematchWindowMinutes?: number | string | null
   marketBettingQueryEnabled?: boolean
   marketBettingDailyReportEnabled?: boolean
   marketBettingDailyReportTime?: string
