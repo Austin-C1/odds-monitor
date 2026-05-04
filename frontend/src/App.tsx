@@ -10,6 +10,7 @@ import { hasToken } from './utils'
 const Login = lazy(() => import('./pages/Login'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const OddsMonitor = lazy(() => import('./pages/OddsMonitor'))
+const LeagueFilter = lazy(() => import('./pages/LeagueFilter'))
 const DataSourceSettings = lazy(() => import('./pages/DataSourceSettings'))
 const DataSourceStatus = lazy(() => import('./pages/DataSourceStatus'))
 const AlertRecords = lazy(() => import('./pages/AlertRecords'))
@@ -104,6 +105,7 @@ function App() {
           <Route path="/reset-password" element={<LazyRoute><ResetPassword /></LazyRoute>} />
           <Route path="/" element={<ProtectedRoute><Navigate to="/odds-monitor" replace /></ProtectedRoute>} />
           <Route path="/odds-monitor" element={<ProtectedRoute><LazyRoute><OddsMonitor /></LazyRoute></ProtectedRoute>} />
+          <Route path="/league-filter" element={<ProtectedRoute><LazyRoute><LeagueFilter /></LazyRoute></ProtectedRoute>} />
           <Route path="/data-sources/settings" element={<ProtectedRoute><LazyRoute><DataSourceSettings /></LazyRoute></ProtectedRoute>} />
           <Route path="/data-sources/status" element={<ProtectedRoute><LazyRoute><DataSourceStatus /></LazyRoute></ProtectedRoute>} />
           <Route path="/alerts" element={<ProtectedRoute><LazyRoute><AlertRecords /></LazyRoute></ProtectedRoute>} />

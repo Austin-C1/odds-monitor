@@ -8,6 +8,7 @@ import {
   CloudUploadOutlined,
   CloudServerOutlined,
   DatabaseOutlined,
+  FilterOutlined,
   LogoutOutlined,
   MenuOutlined,
   NotificationOutlined,
@@ -26,6 +27,7 @@ interface LayoutProps {
 
 const menuItems: MenuProps['items'] = [
   { key: '/odds-monitor', icon: <BarChartOutlined />, label: '比赛监控' },
+  { key: '/league-filter', icon: <FilterOutlined />, label: '联赛筛选' },
   { key: '/data-sources/settings', icon: <SettingOutlined />, label: '数据源设置' },
   { key: '/data-sources/status', icon: <CloudServerOutlined />, label: '数据源状态' },
   { key: '/alerts', icon: <AlertOutlined />, label: '告警记录' },

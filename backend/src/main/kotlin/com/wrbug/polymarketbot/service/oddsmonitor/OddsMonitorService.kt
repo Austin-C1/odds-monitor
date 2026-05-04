@@ -5,6 +5,7 @@ import com.wrbug.polymarketbot.dto.OddsCollectionLogDto
 import com.wrbug.polymarketbot.dto.OddsDataSourceConfigDto
 import com.wrbug.polymarketbot.dto.OddsDataSourceStatusDto
 import com.wrbug.polymarketbot.dto.OddsHistoryPointDto
+import com.wrbug.polymarketbot.dto.OddsLeagueFilterDto
 import com.wrbug.polymarketbot.dto.OddsMetricDto
 import com.wrbug.polymarketbot.dto.OddsMonitorDashboardDto
 import com.wrbug.polymarketbot.dto.OddsMonitorMatchDetailDto
@@ -36,7 +37,8 @@ class OddsMonitorService(
     private val marketRepository: OddsMarketRepository? = null,
     private val snapshotRepository: OddsSnapshotRepository? = null,
     private val matchRepository: OddsMatchRepository? = null,
-    private val matchLinkRepository: OddsMatchLinkRepository? = null
+    private val matchLinkRepository: OddsMatchLinkRepository? = null,
+    private val leagueFilterService: OddsLeagueFilterService? = null
 ) {
     private val collectedSourceKeys = listOf("pinnacle", "crown", "polymarket")
 
@@ -112,6 +114,7 @@ class OddsMonitorService(
                         it.rawAwayTeam
                     )
                 }
+                .filter { match -> leagueFilterService?.shouldIncludeLeague(match.rawLeagueName) ?: true }
         }
         standardCollectedSnapshot(sourceKeys, sourceMatchesBySource)?.let { return it }
 
@@ -180,6 +183,7 @@ class OddsMonitorService(
                 .groupBy { it.sourceKey }
                 .mapValues { (_, matches) -> matches.maxBy { it.updatedAt } }
                 .filterKeys { it in sourceKeys }
+                .filterValues { match -> leagueFilterService?.shouldIncludeLeague(match.rawLeagueName) ?: true }
             if (sourceMap.isEmpty()) {
                 return@mapNotNull null
             }
@@ -241,6 +245,28 @@ class OddsMonitorService(
         return defaultSources.map { default ->
             existing[default.sourceKey]?.toDto() ?: default.copy(updatedAt = System.currentTimeMillis())
         }
+    }
+
+    fun listLeagueFilter(): OddsLeagueFilterDto {
+        val platformRepository = platformMatchRepository
+        val available = if (platformRepository == null) {
+            emptyList()
+        } else {
+            availableOddsLeagueNames(
+                collectedSourceKeys.flatMap { sourceKey ->
+                    loadRecentPlatformMatches(platformRepository, sourceKey)
+                }
+            )
+        }
+        return OddsLeagueFilterDto(
+            availableLeagues = available,
+            selectedLeagues = leagueFilterService?.getSelectedLeagues().orEmpty()
+        )
+    }
+
+    fun saveLeagueFilter(selectedLeagues: List<String>): OddsLeagueFilterDto {
+        leagueFilterService?.saveSelectedLeagues(selectedLeagues)
+        return listLeagueFilter()
     }
 
     @Transactional

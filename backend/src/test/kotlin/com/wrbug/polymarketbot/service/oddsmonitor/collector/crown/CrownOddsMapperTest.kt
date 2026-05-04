@@ -43,17 +43,17 @@ class CrownOddsMapperTest {
 
         val rows = CrownOddsMapper().map(match, platformMatchId = 22, capturedAt = 2000L)
 
-        assertEquals(6, rows.size)
+        assertEquals(4, rows.size)
         assertEquals(
-            listOf("home", "away", "home", "away", "over", "under"),
+            listOf("home", "away", "over", "under"),
             rows.map { it.selectionName }
         )
         assertEquals(
-            listOf("handicap", "handicap", "handicap", "handicap", "total", "total"),
+            listOf("handicap", "handicap", "total", "total"),
             rows.map { it.marketType }
         )
-        assertEquals(listOf("0/0.5", "0/0.5", "0.5", "0.5", "2/2.5", "2/2.5"), rows.map { it.lineValue })
-        assertEquals(listOf("1.93", "1.97", "2.05", "1.85", "1.88", "2.02"), rows.map { it.oddsValue.toPlainString() })
+        assertEquals(listOf("0/0.5", "0/0.5", "2/2.5", "2/2.5"), rows.map { it.lineValue })
+        assertEquals(listOf("1.93", "1.97", "1.88", "2.02"), rows.map { it.oddsValue.toPlainString() })
         assertEquals(22, rows.first().platformMatchId)
         assertEquals(2000L, rows.first().capturedAt)
     }

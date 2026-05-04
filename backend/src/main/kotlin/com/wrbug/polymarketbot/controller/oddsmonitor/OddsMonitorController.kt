@@ -6,8 +6,10 @@ import com.wrbug.polymarketbot.dto.OddsCollectionLogDto
 import com.wrbug.polymarketbot.dto.OddsDataSourceConfigDto
 import com.wrbug.polymarketbot.dto.OddsDataSourceStatusDto
 import com.wrbug.polymarketbot.dto.OddsMonitorDashboardDto
+import com.wrbug.polymarketbot.dto.OddsLeagueFilterDto
 import com.wrbug.polymarketbot.dto.OddsMonitorMatchDetailDto
 import com.wrbug.polymarketbot.dto.OddsMonitorMatchDetailRequest
+import com.wrbug.polymarketbot.dto.SaveOddsLeagueFilterRequest
 import com.wrbug.polymarketbot.dto.SaveOddsDataSourceConfigsRequest
 import com.wrbug.polymarketbot.service.oddsmonitor.OddsMonitorService
 import org.springframework.http.ResponseEntity
@@ -43,6 +45,18 @@ class OddsMonitorController(
         @RequestBody request: SaveOddsDataSourceConfigsRequest
     ): ResponseEntity<ApiResponse<List<OddsDataSourceConfigDto>>> {
         return ResponseEntity.ok(ApiResponse.success(oddsMonitorService.saveDataSourceConfigs(request.configs)))
+    }
+
+    @PostMapping("/leagues/list")
+    fun listLeagues(): ResponseEntity<ApiResponse<OddsLeagueFilterDto>> {
+        return ResponseEntity.ok(ApiResponse.success(oddsMonitorService.listLeagueFilter()))
+    }
+
+    @PostMapping("/leagues/save")
+    fun saveLeagues(
+        @RequestBody request: SaveOddsLeagueFilterRequest
+    ): ResponseEntity<ApiResponse<OddsLeagueFilterDto>> {
+        return ResponseEntity.ok(ApiResponse.success(oddsMonitorService.saveLeagueFilter(request.selectedLeagues)))
     }
 
     @PostMapping("/data-sources/status/list")

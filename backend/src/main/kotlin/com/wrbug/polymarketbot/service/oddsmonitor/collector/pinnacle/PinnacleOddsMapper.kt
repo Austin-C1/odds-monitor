@@ -8,7 +8,7 @@ class PinnacleOddsMapper {
     fun map(match: PinnacleFootballMatch, platformMatchId: Long, capturedAt: Long): List<PinnacleMappedOddsRow> {
         val rows = mutableListOf<PinnacleMappedOddsRow>()
 
-        match.handicaps.forEach { market ->
+        match.handicaps.take(1).forEach { market ->
             rows += PinnacleMappedOddsRow(
                 platformMatchId = platformMatchId,
                 marketType = "handicap",
@@ -29,7 +29,7 @@ class PinnacleOddsMapper {
             )
         }
 
-        match.totals.forEach { market ->
+        match.totals.take(1).forEach { market ->
             rows += PinnacleMappedOddsRow(
                 platformMatchId = platformMatchId,
                 marketType = "total",

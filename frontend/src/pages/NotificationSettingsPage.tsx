@@ -758,7 +758,7 @@ const NotificationSettingsPage: React.FC = () => {
     const draft = getWaterLimitDraft(record)
     const handicap = draft.handicapCombinedWaterMin ?? '不限'
     const total = draft.totalCombinedWaterMin ?? '不限'
-    return `让球 ${handicap} / 大小球 ${total}`
+    return `合水限制：让球 ${handicap} / 大小球 ${total}`
   }
 
   const renderOddsMoveFilterControls = (record: NotificationConfig) => {
@@ -800,7 +800,7 @@ const NotificationSettingsPage: React.FC = () => {
     const handicap = draft.handicapOddsMoveMin ?? '不限'
     const total = draft.totalOddsMoveMin ?? '不限'
     const moneyline = draft.moneylineOddsMoveMin ?? '不限'
-    return `动水：让球 ${handicap} / 大小球 ${total} / 胜平负 ${moneyline}`
+    return `动水限制：让球 ${handicap} / 大小球 ${total} / 胜平负 ${moneyline}`
   }
 
   const configColumns = [
@@ -839,16 +839,12 @@ const NotificationSettingsPage: React.FC = () => {
               />
             </Tooltip>
             <Space size={6}>
-              <Text type="secondary" style={{ fontSize: 12 }}>滚球</Text>
               <Switch
                 checked={getLiveOnlyModeEnabled(record)}
                 size="small"
                 disabled={!getMonitorModeEnabled(record)}
                 onChange={(checked) => handleToggleLiveOnlyMode(record, checked)}
               />
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {getLiveOnlyModeEnabled(record) ? '只看滚球' : '只看赛前'}
-              </Text>
             </Space>
             <Text type="secondary" style={{ fontSize: 12 }}>
               {formatWaterLimitSummary(record)}
@@ -858,10 +854,10 @@ const NotificationSettingsPage: React.FC = () => {
             </Text>
           </Space>
           <Button size="small" onClick={() => openWaterLimitModal(record)}>
-            水位限制
+            {formatWaterLimitSummary(record)}
           </Button>
           <Button size="small" onClick={() => openOddsMoveFilterModal(record)}>
-            动水筛选
+            {formatOddsMoveFilterSummary(record)}
           </Button>
         </Space>
       ),

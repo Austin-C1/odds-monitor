@@ -66,6 +66,15 @@ data class SaveOddsDataSourceConfigsRequest(
     val configs: List<OddsDataSourceConfigDto>
 )
 
+data class OddsLeagueFilterDto(
+    val availableLeagues: List<String>,
+    val selectedLeagues: List<String>
+)
+
+data class SaveOddsLeagueFilterRequest(
+    val selectedLeagues: List<String>
+)
+
 data class OddsDataSourceStatusDto(
     val sourceKey: String,
     val displayName: String,

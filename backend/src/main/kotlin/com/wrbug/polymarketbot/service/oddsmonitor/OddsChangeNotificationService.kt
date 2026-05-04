@@ -52,18 +52,15 @@ class OddsChangeNotificationService(
         }
         val standardMatch = matchRepository?.findById(market.matchId)?.orElse(null)
         val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch)
-        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase) }
-        if (phaseConfigs.isEmpty()) {
-            return
-        }
-        if (shouldSuppressByOddsMove(market, previousOdds, currentOdds, phaseConfigs)) {
-            return
-        }
-        if (shouldSuppressByCombinedWater(market, currentOdds, phaseConfigs)) {
+        val eligibleConfigs = configs
+            .filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase) }
+            .let { filterConfigsByOddsMove(market, previousOdds, currentOdds, it) }
+            .let { filterConfigsByCombinedWater(market, currentOdds, it) }
+        if (eligibleConfigs.isEmpty()) {
             return
         }
 
-        enqueueMergedNotification(match, market, previousOdds ?: BigDecimal.ZERO, currentOdds, phaseConfigs)
+        enqueueMergedNotification(match, market, previousOdds ?: BigDecimal.ZERO, currentOdds, eligibleConfigs)
     }
 
     private fun enqueueMergedNotification(
@@ -73,9 +70,7 @@ class OddsChangeNotificationService(
         currentOdds: BigDecimal,
         configs: List<NotificationConfigDto>
     ) {
-        val key = OddsChangeNotificationKey(
-            standardMatchId = market.matchId
-        )
+        val key = OddsChangeNotificationKey(standardMatchId = market.matchId)
         val marketKey = OddsChangeNotificationMarketKey(
             marketType = market.marketType,
             lineValue = market.lineValue,
@@ -90,7 +85,7 @@ class OddsChangeNotificationService(
                 markets = linkedMapOf()
             )
             val updatedBase = base.copy(configs = mergeNotificationConfigs(base.configs, configs))
-            val pendingMarket = base.markets.getOrPut(marketKey) {
+            val pendingMarket = updatedBase.markets.getOrPut(marketKey) {
                 PendingOddsChangeMarketNotification(
                     marketType = market.marketType,
                     marketLabel = market.displayLabel(),
@@ -117,7 +112,7 @@ class OddsChangeNotificationService(
                 pendingMarket.changes.remove(market.sourceKey)
             }
             if (pendingMarket.changes.isEmpty()) {
-                base.markets.remove(marketKey)
+                updatedBase.markets.remove(marketKey)
             }
             updatedBase.takeIf { it.markets.isNotEmpty() }
         }
@@ -163,24 +158,25 @@ class OddsChangeNotificationService(
         }
     }
 
-    private fun shouldSuppressByOddsMove(
+    private fun filterConfigsByOddsMove(
         market: OddsMarket,
         previousOdds: BigDecimal?,
         currentOdds: BigDecimal,
         configs: List<NotificationConfigDto>
-    ): Boolean {
-        return shouldSuppressOddsChangeByMove(market.marketType, previousOdds, currentOdds, configs)
+    ): List<NotificationConfigDto> {
+        return configs.filter { config ->
+            !shouldSuppressOddsChangeByMove(market.marketType, previousOdds, currentOdds, listOf(config))
+        }
     }
 
-    private fun shouldSuppressByCombinedWater(
+    private fun filterConfigsByCombinedWater(
         market: OddsMarket,
         currentOdds: BigDecimal,
         configs: List<NotificationConfigDto>
-    ): Boolean {
-        val pairSelectionName = pairSelectionName(market.marketType, market.selectionName) ?: return false
-        val activeLimits = activeCombinedWaterLimits(market.marketType, configs)
-        if (activeLimits.isEmpty()) {
-            return false
+    ): List<NotificationConfigDto> {
+        val pairSelectionName = pairSelectionName(market.marketType, market.selectionName) ?: return configs
+        if (activeCombinedWaterLimits(market.marketType, configs).isEmpty()) {
+            return configs
         }
 
         val pairMarket = marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
@@ -189,16 +185,26 @@ class OddsChangeNotificationService(
             marketType = market.marketType,
             lineValue = market.lineValue,
             selectionName = pairSelectionName
-        ) ?: return true
-        val pairMarketId = pairMarket.id ?: return true
-        val pairOdds = snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(pairMarketId)?.oddsValue ?: return true
+        ) ?: return configsWithoutCombinedWaterLimit(market.marketType, configs)
+        val pairMarketId = pairMarket.id ?: return configsWithoutCombinedWaterLimit(market.marketType, configs)
+        val pairOdds = snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(pairMarketId)?.oddsValue
+            ?: return configsWithoutCombinedWaterLimit(market.marketType, configs)
 
-        return shouldSuppressOddsChangeByCombinedWater(
-            marketType = market.marketType,
-            currentOdds = asianWaterOdds(market.sourceKey, market.marketType, currentOdds),
-            pairedOdds = asianWaterOdds(pairMarket.sourceKey, pairMarket.marketType, pairOdds),
-            configs = configs
-        )
+        return configs.filter { config ->
+            !shouldSuppressOddsChangeByCombinedWater(
+                marketType = market.marketType,
+                currentOdds = asianWaterOdds(market.sourceKey, market.marketType, currentOdds),
+                pairedOdds = asianWaterOdds(pairMarket.sourceKey, pairMarket.marketType, pairOdds),
+                configs = listOf(config)
+            )
+        }
+    }
+
+    private fun configsWithoutCombinedWaterLimit(
+        marketType: String,
+        configs: List<NotificationConfigDto>
+    ): List<NotificationConfigDto> {
+        return configs.filter { config -> activeCombinedWaterLimits(marketType, listOf(config)).isEmpty() }
     }
 
     private fun loadActiveMonitorTelegramConfigs(): List<NotificationConfigDto>? {
@@ -454,10 +460,6 @@ private fun platformLabel(sourceKey: String): String {
         "polymarket" -> "Polymarket"
         else -> sourceKey
     }
-}
-
-private fun formatOdds(value: BigDecimal): String {
-    return value.stripTrailingZeros().toPlainString()
 }
 
 private fun formatMergedOdds(value: BigDecimal, sourceKey: String, marketType: String?): String {
