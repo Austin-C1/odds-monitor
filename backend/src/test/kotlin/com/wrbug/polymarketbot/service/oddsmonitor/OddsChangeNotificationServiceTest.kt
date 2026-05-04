@@ -235,6 +235,55 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
+    fun `league filter suppresses raw platform league even when standard match league is selected`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val leagueConfigRepository = mock(SystemConfigRepository::class.java)
+        val leagueFilterService = OddsLeagueFilterService(leagueConfigRepository)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository,
+            leagueFilterService
+        )
+
+        `when`(leagueConfigRepository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
+            com.wrbug.polymarketbot.entity.SystemConfig(
+                configKey = OddsLeagueFilterService.CONFIG_KEY,
+                configValue = """["阿根廷职业联赛"]"""
+            )
+        )
+        `when`(matchRepository.findById(100)).thenReturn(
+            Optional.of(OddsMatch(id = 100, leagueName = "阿根廷职业联赛", status = "live"))
+        )
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapOddsMoveMin = "0.08"))
+            )
+        }
+
+        service.notifyIfChanged(
+            platformMatch(rawLeagueName = "阿根廷全国联赛"),
+            oddsMarket(),
+            BigDecimal("0.88"),
+            BigDecimal("0.98")
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+        runBlocking {
+            verify(notificationConfigService, never()).getEnabledConfigsByType("telegram")
+        }
+    }
+
+    @Test
     fun `records one merged alert when multiple platforms change same match and market`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)

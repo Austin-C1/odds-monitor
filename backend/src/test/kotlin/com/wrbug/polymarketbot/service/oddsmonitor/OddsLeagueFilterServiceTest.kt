@@ -52,6 +52,11 @@ class OddsLeagueFilterServiceTest {
     }
 
     @Test
+    fun `canonicalizes platform league names with trailing source marker`() {
+        assertEquals("印尼超级联赛", canonicalOddsLeagueName("印度尼西亚 - 超级联赛 n"))
+    }
+
+    @Test
     fun `available leagues merge raw translation variants into canonical leagues`() {
         val leagues = availableOddsLeagueNames(
             listOf(

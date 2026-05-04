@@ -239,11 +239,11 @@ class OddsChangeNotificationService(
 
     private fun shouldNotifyLeague(match: OddsPlatformMatch, standardMatch: OddsMatch?): Boolean {
         val filter = leagueFilterService ?: return true
-        if (isSpecialBettingLeague(match.rawLeagueName)) {
-            return false
+        val rawLeagueName = TextEncodingUtils.repairMojibake(match.rawLeagueName).trim()
+        if (rawLeagueName.isNotBlank()) {
+            return filter.shouldIncludeLeague(rawLeagueName)
         }
-        return standardMatch?.leagueName?.let { filter.shouldIncludeLeague(it) }
-            ?: filter.shouldIncludeLeague(match.rawLeagueName)
+        return standardMatch?.leagueName?.let { filter.shouldIncludeLeague(it) } ?: false
     }
 }
 

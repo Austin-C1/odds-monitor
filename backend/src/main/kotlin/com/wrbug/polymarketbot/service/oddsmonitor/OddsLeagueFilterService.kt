@@ -82,6 +82,7 @@ fun canonicalOddsLeagueName(value: String?): String? {
         .replace('—', '-')
         .replace(Regex("\\s*-\\s*"), "-")
         .replace(Regex("-(特别投注|特別投注|Specials?|Special Betting)$", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("\\s+[a-z]$", RegexOption.IGNORE_CASE), "")
         .replace(Regex("([\\p{IsHan}])\\s+([\\p{IsHan}A-Za-z0-9])"), "$1$2")
         .replace(Regex("([A-Za-z0-9])\\s+([\\p{IsHan}])"), "$1$2")
         .replace(Regex("^([\\p{IsHan}]{2,8})-(.+)$")) { match ->
