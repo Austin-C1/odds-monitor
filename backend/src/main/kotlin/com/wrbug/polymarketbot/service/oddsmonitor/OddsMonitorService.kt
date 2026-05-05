@@ -323,7 +323,7 @@ class OddsMonitorService(
                 ?.takeIf { lastLog?.status != "success" }
             OddsDataSourceStatusDto(
                 sourceKey = config.sourceKey,
-                displayName = config.displayName,
+                displayName = oddsSourceDisplayName(config.sourceKey, config.displayName),
                 enabled = config.enabled,
                 currentStatus = if (!config.enabled) "disabled" else lastLog?.status ?: "waiting",
                 lastCollectTime = lastLog?.startedAt,
@@ -371,9 +371,18 @@ class OddsMonitorService(
     private fun normalizeConfig(config: OddsDataSourceConfigDto): OddsDataSourceConfigDto {
         val default = defaultSources.firstOrNull { it.sourceKey == config.sourceKey }
         return config.copy(
-            displayName = config.displayName.ifBlank { default?.displayName ?: config.sourceKey },
+            displayName = oddsSourceDisplayName(config.sourceKey, config.displayName.ifBlank { default?.displayName ?: config.sourceKey }),
             intervalSeconds = config.intervalSeconds.coerceAtLeast(10)
         )
+    }
+
+    private fun oddsSourceDisplayName(sourceKey: String, displayName: String): String {
+        return when (sourceKey.lowercase(Locale.ROOT)) {
+            "pinnacle" -> "平博"
+            "crown" -> "皇冠"
+            "polymarket" -> "Polymarket"
+            else -> TextEncodingUtils.repairMojibake(displayName).ifBlank { sourceKey }
+        }
     }
 
     private fun passwordValue(value: String?): String? {
@@ -383,7 +392,7 @@ class OddsMonitorService(
     private fun OddsDataSourceConfig.toDto(): OddsDataSourceConfigDto {
         return OddsDataSourceConfigDto(
             sourceKey = sourceKey,
-            displayName = TextEncodingUtils.repairMojibake(displayName),
+            displayName = oddsSourceDisplayName(sourceKey, displayName),
             enabled = enabled,
             username = username,
             password = password,

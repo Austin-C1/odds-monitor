@@ -28,6 +28,17 @@ class OddsFootballMatchFilterTest {
     }
 
     @Test
+    fun `ignores playoff leagues`() {
+        assertTrue(
+            OddsFootballMatchFilter.shouldIgnore(
+                leagueName = "埃及超级联赛-附加赛",
+                homeTeam = "索莫哈",
+                awayTeam = "扎马雷克"
+            )
+        )
+    }
+
+    @Test
     fun `keeps regular football matches`() {
         assertFalse(
             OddsFootballMatchFilter.shouldIgnore(

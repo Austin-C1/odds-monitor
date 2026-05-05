@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "com.wrbug"
-version = "3.0.24"
+version = "3.0.25"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17

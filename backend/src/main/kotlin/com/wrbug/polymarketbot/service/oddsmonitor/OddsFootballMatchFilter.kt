@@ -15,6 +15,11 @@ object OddsFootballMatchFilter {
         "gt体育",
         "特别投注",
         "特別投注",
+        "附加赛",
+        "附加賽",
+        "playoff",
+        "play-offs",
+        "play off",
         "special betting",
         "specials"
     )

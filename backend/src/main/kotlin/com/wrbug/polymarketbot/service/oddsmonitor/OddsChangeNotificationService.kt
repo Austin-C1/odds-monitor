@@ -45,6 +45,9 @@ class OddsChangeNotificationService(
         previousOdds: BigDecimal?,
         currentOdds: BigDecimal
     ) {
+        if (OddsFootballMatchFilter.shouldIgnore(match.rawLeagueName, match.rawHomeTeam, match.rawAwayTeam)) {
+            return
+        }
         if (!hasOddsChanged(previousOdds, currentOdds)) {
             return
         }
@@ -63,9 +66,7 @@ class OddsChangeNotificationService(
 
         val leagueMatched = shouldNotifyLeague(match, standardMatch)
         val eligibleConfigs = if (leagueMatched) {
-            phaseConfigs
-                .let { filterConfigsByOddsMove(market, previousOdds, currentOdds, it) }
-                .let { filterConfigsByCombinedWater(market, currentOdds, it) }
+            configsQualifiedBySelectedLeagueRules(market, previousOdds, currentOdds, phaseConfigs)
         } else {
             configsQualifiedByCombinedWater(market, currentOdds, phaseConfigs)
         }
@@ -240,6 +241,27 @@ class OddsChangeNotificationService(
         configs: List<NotificationConfigDto>
     ): List<NotificationConfigDto> {
         return configs.filter { config -> activeCombinedWaterLimits(marketType, listOf(config)).isEmpty() }
+    }
+
+    private fun configsQualifiedBySelectedLeagueRules(
+        market: OddsMarket,
+        previousOdds: BigDecimal?,
+        currentOdds: BigDecimal,
+        configs: List<NotificationConfigDto>
+    ): List<NotificationConfigDto> {
+        val unrestrictedConfigs = configs.filter { config ->
+            activeOddsMoveLimits(market.marketType, listOf(config)).isEmpty() &&
+                activeCombinedWaterLimits(market.marketType, listOf(config)).isEmpty()
+        }
+        val oddsMoveConfigs = configs
+            .filter { config -> activeOddsMoveLimits(market.marketType, listOf(config)).isNotEmpty() }
+            .let { filterConfigsByOddsMove(market, previousOdds, currentOdds, it) }
+        val combinedWaterConfigs = configs
+            .filter { config -> activeCombinedWaterLimits(market.marketType, listOf(config)).isNotEmpty() }
+            .let { configsQualifiedByCombinedWater(market, currentOdds, it) }
+
+        return (unrestrictedConfigs + oddsMoveConfigs + combinedWaterConfigs)
+            .distinctBy { config -> config.id?.toString() ?: config.name }
     }
 
     private fun configsQualifiedByCombinedWater(

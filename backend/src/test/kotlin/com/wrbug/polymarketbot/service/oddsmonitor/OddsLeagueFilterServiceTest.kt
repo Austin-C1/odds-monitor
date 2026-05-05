@@ -122,6 +122,30 @@ class OddsLeagueFilterServiceTest {
     }
 
     @Test
+    fun `league filter rejects playoff and special betting leagues`() {
+        val repository = mock(SystemConfigRepository::class.java)
+        `when`(repository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(null)
+
+        val filter = OddsLeagueFilterService(repository)
+
+        assertFalse(filter.shouldIncludeLeague("埃及超级联赛-附加赛"))
+        assertFalse(filter.shouldIncludeLeague("埃及超级联赛-特别投注"))
+        assertFalse(filter.shouldIncludeLeague("pinnacle", "埃及超级联赛-附加赛"))
+        assertFalse(filter.shouldIncludeLeague("pinnacle", "埃及超级联赛-特别投注"))
+        assertFalse(filter.shouldIncludeLeague("crown", "埃及超级联赛-附加赛"))
+        assertFalse(filter.shouldIncludeLeague("crown", "埃及超级联赛-特别投注"))
+        assertEquals(
+            emptyList<String>(),
+            availableOddsLeagueNames(
+                listOf(
+                    OddsPlatformMatch(rawLeagueName = "埃及超级联赛-附加赛"),
+                    OddsPlatformMatch(rawLeagueName = "埃及超级联赛-特别投注")
+                )
+            )
+        )
+    }
+
+    @Test
     fun `default tracked leagues are always available even before collection`() {
         val leagues = availableOddsLeagueNames(emptyList())
 

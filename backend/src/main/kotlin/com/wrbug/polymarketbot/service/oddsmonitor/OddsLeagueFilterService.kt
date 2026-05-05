@@ -153,7 +153,7 @@ fun canonicalOddsLeagueName(value: String?): String? {
         .replace('–', '-')
         .replace('—', '-')
         .replace(Regex("\\s*-\\s*"), "-")
-        .replace(Regex("-(特别投注|特別投注|Specials?|Special Betting)$", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("-(特别投注|特別投注|附加赛|附加賽|Specials?|Special Betting|Play-?offs?|Play\\s+offs?)$", RegexOption.IGNORE_CASE), "")
         .replace(Regex("\\s+[a-z]$", RegexOption.IGNORE_CASE), "")
         .replace(Regex("([\\p{IsHan}])\\s+([\\p{IsHan}A-Za-z0-9])"), "$1$2")
         .replace(Regex("([A-Za-z0-9])\\s+([\\p{IsHan}])"), "$1$2")
@@ -186,7 +186,17 @@ private fun sourceDisplayName(sourceKey: String): String {
 
 fun isSpecialBettingLeague(value: String?): Boolean {
     val text = TextEncodingUtils.repairMojibake(value.orEmpty()).lowercase()
-    return listOf("特别投注", "特別投注", "special betting", "specials").any { text.contains(it) }
+    return listOf(
+        "特别投注",
+        "特別投注",
+        "附加赛",
+        "附加賽",
+        "special betting",
+        "specials",
+        "playoff",
+        "play-offs",
+        "play off"
+    ).any { text.contains(it) }
 }
 
 private fun leagueAliasKey(value: String): String {
