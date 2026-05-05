@@ -7,6 +7,7 @@ import com.wrbug.polymarketbot.entity.OddsAlertRecord
 import com.wrbug.polymarketbot.entity.OddsMarket
 import com.wrbug.polymarketbot.entity.OddsMatch
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
+import com.wrbug.polymarketbot.entity.OddsSnapshot
 import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
 import com.wrbug.polymarketbot.repository.OddsMarketRepository
 import com.wrbug.polymarketbot.repository.OddsMatchRepository
@@ -318,6 +319,11 @@ class OddsChangeNotificationServiceTest {
                 configValue = """["日本J1百年构想联赛"]"""
             )
         )
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapOddsMoveMin = "0.08"))
+            )
+        }
 
         service.notifyIfChanged(
             platformMatch(rawLeagueName = "英格兰 - 北部超级联赛"),
@@ -328,9 +334,116 @@ class OddsChangeNotificationServiceTest {
         Thread.sleep(1_800)
 
         verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
+    fun `combined water qualified alert bypasses league filter`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val leagueConfigRepository = mock(SystemConfigRepository::class.java)
+        val leagueFilterService = OddsLeagueFilterService(leagueConfigRepository)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            leagueFilterService = leagueFilterService
+        )
+        val market = oddsMarket(sourceKey = "crown", matchId = 100).copy(id = 20, selectionName = "home")
+        val pairMarket = oddsMarket(sourceKey = "crown", matchId = 100).copy(id = 21, selectionName = "away")
+
+        `when`(leagueConfigRepository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
+            com.wrbug.polymarketbot.entity.SystemConfig(
+                configKey = OddsLeagueFilterService.CONFIG_KEY,
+                configValue = """["日本J1百年构想联赛"]"""
+            )
+        )
         runBlocking {
-            verify(notificationConfigService, never()).getEnabledConfigsByType("telegram")
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapCombinedWaterMin = "1.88", handicapOddsMoveMin = "0.08"))
+            )
         }
+        `when`(
+            marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+                100,
+                "crown",
+                "handicap",
+                "0",
+                "away"
+            )
+        ).thenReturn(pairMarket)
+        `when`(snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(21)).thenReturn(
+            OddsSnapshot(marketId = 21, sourceKey = "crown", oddsValue = BigDecimal("0.96"))
+        )
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown", rawLeagueName = "英格兰 - 北部超级联赛"),
+            market,
+            BigDecimal("0.90"),
+            BigDecimal("0.93")
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
+    fun `combined water below limit still respects league filter`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val leagueConfigRepository = mock(SystemConfigRepository::class.java)
+        val leagueFilterService = OddsLeagueFilterService(leagueConfigRepository)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            leagueFilterService = leagueFilterService
+        )
+        val market = oddsMarket(sourceKey = "crown", matchId = 100).copy(id = 20, selectionName = "home")
+        val pairMarket = oddsMarket(sourceKey = "crown", matchId = 100).copy(id = 21, selectionName = "away")
+
+        `when`(leagueConfigRepository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
+            com.wrbug.polymarketbot.entity.SystemConfig(
+                configKey = OddsLeagueFilterService.CONFIG_KEY,
+                configValue = """["日本J1百年构想联赛"]"""
+            )
+        )
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapCombinedWaterMin = "1.88", handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(
+            marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+                100,
+                "crown",
+                "handicap",
+                "0",
+                "away"
+            )
+        ).thenReturn(pairMarket)
+        `when`(snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(21)).thenReturn(
+            OddsSnapshot(marketId = 21, sourceKey = "crown", oddsValue = BigDecimal("0.94"))
+        )
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown", rawLeagueName = "英格兰 - 北部超级联赛"),
+            market,
+            BigDecimal("0.90"),
+            BigDecimal("0.93")
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
     }
 
     @Test
@@ -377,9 +490,6 @@ class OddsChangeNotificationServiceTest {
         Thread.sleep(1_800)
 
         verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
-        runBlocking {
-            verify(notificationConfigService, never()).getEnabledConfigsByType("telegram")
-        }
     }
 
     @Test
@@ -406,6 +516,11 @@ class OddsChangeNotificationServiceTest {
                 configValue = """["韩国K甲组联赛"]"""
             )
         )
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapOddsMoveMin = "0.08"))
+            )
+        }
 
         service.notifyIfChanged(
             platformMatch(sourceKey = "crown", rawLeagueName = "韩国 - K联赛1"),
@@ -416,9 +531,6 @@ class OddsChangeNotificationServiceTest {
         Thread.sleep(1_800)
 
         verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
-        runBlocking {
-            verify(notificationConfigService, never()).getEnabledConfigsByType("telegram")
-        }
     }
 
     @Test

@@ -49,9 +49,6 @@ class OddsChangeNotificationService(
             return
         }
         val standardMatch = matchRepository?.findById(market.matchId)?.orElse(null)
-        if (!shouldNotifyLeague(match, standardMatch)) {
-            return
-        }
         val configs = loadActiveMonitorTelegramConfigs() ?: return
         if (configs.isEmpty()) {
             return
@@ -59,10 +56,19 @@ class OddsChangeNotificationService(
         val now = System.currentTimeMillis()
         val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch, now)
         val startTime = standardMatch?.startTime ?: match.rawStartTime
-        val eligibleConfigs = configs
-            .filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase, startTime, now) }
-            .let { filterConfigsByOddsMove(market, previousOdds, currentOdds, it) }
-            .let { filterConfigsByCombinedWater(market, currentOdds, it) }
+        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase, startTime, now) }
+        if (phaseConfigs.isEmpty()) {
+            return
+        }
+
+        val leagueMatched = shouldNotifyLeague(match, standardMatch)
+        val eligibleConfigs = if (leagueMatched) {
+            phaseConfigs
+                .let { filterConfigsByOddsMove(market, previousOdds, currentOdds, it) }
+                .let { filterConfigsByCombinedWater(market, currentOdds, it) }
+        } else {
+            configsQualifiedByCombinedWater(market, currentOdds, phaseConfigs)
+        }
         if (eligibleConfigs.isEmpty()) {
             return
         }
@@ -76,7 +82,8 @@ class OddsChangeNotificationService(
             market = market,
             previousOdds = previousOdds ?: BigDecimal.ZERO,
             currentOdds = currentOdds,
-            configs = eligibleConfigs
+            configs = eligibleConfigs,
+            applyOddsMoveFilter = leagueMatched
         )
     }
 
@@ -89,7 +96,8 @@ class OddsChangeNotificationService(
         market: OddsMarket,
         previousOdds: BigDecimal,
         currentOdds: BigDecimal,
-        configs: List<NotificationConfigDto>
+        configs: List<NotificationConfigDto>,
+        applyOddsMoveFilter: Boolean = true
     ) {
         val candidate = notificationMergeCandidate(match, standardMatch)
         val key = notificationMergeKey(matchId, candidate)
@@ -127,12 +135,12 @@ class OddsChangeNotificationService(
             }
             if (
                 hasOddsChanged(updatedChange.previousOdds, updatedChange.currentOdds) &&
-                !shouldSuppressOddsChangeByMove(
+                (!applyOddsMoveFilter || !shouldSuppressOddsChangeByMove(
                     marketType = market.marketType,
                     previousOdds = updatedChange.previousOdds,
                     currentOdds = updatedChange.currentOdds,
                     configs = configs
-                )
+                ))
             ) {
                 pendingMarket.changes[market.sourceKey] = updatedChange
             } else {
@@ -232,6 +240,37 @@ class OddsChangeNotificationService(
         configs: List<NotificationConfigDto>
     ): List<NotificationConfigDto> {
         return configs.filter { config -> activeCombinedWaterLimits(marketType, listOf(config)).isEmpty() }
+    }
+
+    private fun configsQualifiedByCombinedWater(
+        market: OddsMarket,
+        currentOdds: BigDecimal,
+        configs: List<NotificationConfigDto>
+    ): List<NotificationConfigDto> {
+        val pairSelectionName = pairSelectionName(market.marketType, market.selectionName) ?: return emptyList()
+        if (activeCombinedWaterLimits(market.marketType, configs).isEmpty()) {
+            return emptyList()
+        }
+
+        val pairMarket = marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+            matchId = market.matchId,
+            sourceKey = market.sourceKey,
+            marketType = market.marketType,
+            lineValue = market.lineValue,
+            selectionName = pairSelectionName
+        ) ?: return emptyList()
+        val pairMarketId = pairMarket.id ?: return emptyList()
+        val pairOdds = snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(pairMarketId)?.oddsValue
+            ?: return emptyList()
+
+        return configs.filter { config ->
+            !shouldSuppressOddsChangeByCombinedWater(
+                marketType = market.marketType,
+                currentOdds = asianWaterOdds(market.sourceKey, market.marketType, currentOdds),
+                pairedOdds = asianWaterOdds(pairMarket.sourceKey, pairMarket.marketType, pairOdds),
+                configs = listOf(config)
+            )
+        }
     }
 
     private fun loadActiveMonitorTelegramConfigs(): List<NotificationConfigDto>? {

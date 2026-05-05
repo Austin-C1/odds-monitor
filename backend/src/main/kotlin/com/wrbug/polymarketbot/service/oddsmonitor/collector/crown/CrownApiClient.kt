@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.springframework.stereotype.Component
+import java.nio.charset.Charset
 import java.util.concurrent.TimeUnit
 
 @Component
@@ -124,8 +125,29 @@ class CrownApiClient(
             if (!response.isSuccessful) {
                 throw CrownCollectionException("failed_http", "crown http ${response.code}")
             }
-            return response.body?.string().orEmpty()
+            return decodeResponseBody(response)
         }
+    }
+
+    private fun decodeResponseBody(response: Response): String {
+        val body = response.body ?: return ""
+        val bytes = body.bytes()
+        if (bytes.isEmpty()) {
+            return ""
+        }
+        val declaredCharset = body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
+        val declaredText = String(bytes, declaredCharset)
+        val gbText = runCatching { String(bytes, Charset.forName("GB18030")) }.getOrNull()
+            ?: return declaredText
+        return if (isBetterDecodedText(gbText, declaredText)) gbText else declaredText
+    }
+
+    private fun isBetterDecodedText(candidate: String, current: String): Boolean {
+        val candidateCjk = candidate.count { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN }
+        val currentCjk = current.count { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN }
+        val candidateBroken = candidate.count { it == '\uFFFD' || it == '?' }
+        val currentBroken = current.count { it == '\uFFFD' || it == '?' }
+        return candidateCjk > currentCjk && candidateBroken <= currentBroken
     }
 
     private fun updateCookies(response: Response, cookies: MutableMap<String, String>) {
