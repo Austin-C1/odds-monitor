@@ -13,6 +13,8 @@ const activeFiles = [
   'src/pages/NotificationSettingsPage.tsx',
   'src/pages/LeagueFilter.tsx',
   'src/pages/DefaultTracking.tsx',
+  'src/pages/PinnacleLeagueFilter.tsx',
+  'src/pages/CrownLeagueFilter.tsx',
 ]
 
 const mojibakeMarkers = ['闁', '閺', '閻', '婵', '缂', '閹', '鐠', '婢', '濠', '缁', '鑱', '绛涢', '鍏ㄥ', '姣旇']
@@ -38,6 +40,8 @@ describe('active page Chinese text', () => {
       '比赛监控',
       '默认追踪',
       '联赛筛选',
+      '平博比赛选择',
+      '皇冠比赛选择',
       '数据源设置',
       '数据源状态',
       '告警记录',

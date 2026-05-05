@@ -52,6 +52,37 @@ class OddsLeagueFilterServiceTest {
     }
 
     @Test
+    fun `source selected league names keep platform raw names`() {
+        val repository = mock(SystemConfigRepository::class.java)
+        `when`(repository.findByConfigKey(OddsLeagueFilterService.PINNACLE_CONFIG_KEY)).thenReturn(
+            SystemConfig(configKey = OddsLeagueFilterService.PINNACLE_CONFIG_KEY, configValue = """["韩国 - K联赛1","芬兰 - 全国联赛"]""")
+        )
+        `when`(repository.findByConfigKey(OddsLeagueFilterService.CROWN_CONFIG_KEY)).thenReturn(
+            SystemConfig(configKey = OddsLeagueFilterService.CROWN_CONFIG_KEY, configValue = """["韩国K甲组联赛"]""")
+        )
+
+        val filter = OddsLeagueFilterService(repository)
+
+        assertEquals(listOf("韩国 - K联赛1", "芬兰 - 全国联赛"), filter.getSelectedLeagues("pinnacle"))
+        assertTrue(filter.shouldIncludeLeague("pinnacle", "韩国 - K联赛1"))
+        assertFalse(filter.shouldIncludeLeague("crown", "韩国 - K联赛1"))
+        assertTrue(filter.shouldIncludeLeague("crown", "韩国K甲组联赛"))
+    }
+
+    @Test
+    fun `source filter falls back to default list before source list is saved`() {
+        val repository = mock(SystemConfigRepository::class.java)
+        `when`(repository.findByConfigKey(OddsLeagueFilterService.PINNACLE_CONFIG_KEY)).thenReturn(null)
+        `when`(repository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
+            SystemConfig(configKey = OddsLeagueFilterService.CONFIG_KEY, configValue = """["英格兰超级联赛"]""")
+        )
+
+        val filter = OddsLeagueFilterService(repository)
+
+        assertTrue(filter.shouldIncludeLeague("pinnacle", "英格兰 - 超级联赛"))
+    }
+
+    @Test
     fun `canonicalizes platform league names with trailing source marker`() {
         assertEquals("印尼超级联赛", canonicalOddsLeagueName("印度尼西亚 - 超级联赛 n"))
     }
@@ -74,6 +105,20 @@ class OddsLeagueFilterServiceTest {
             listOf("英格兰北部超级联赛", "英格兰超级联赛", "日本J2 J3百年构想联赛"),
             leagues
         )
+    }
+
+    @Test
+    fun `available source leagues keep raw platform names`() {
+        val leagues = availableOddsLeagueNames(
+            listOf(
+                OddsPlatformMatch(sourceKey = "pinnacle", rawLeagueName = "韩国 - K联赛1"),
+                OddsPlatformMatch(sourceKey = "crown", rawLeagueName = "韩国K甲组联赛"),
+                OddsPlatformMatch(sourceKey = "pinnacle", rawLeagueName = "意大利甲组联赛-特别投注")
+            ),
+            sourceKey = "pinnacle"
+        )
+
+        assertEquals(listOf("韩国 - K联赛1"), leagues)
     }
 
     @Test

@@ -28,6 +28,8 @@ interface LayoutProps {
 const menuItems: MenuProps['items'] = [
   { key: '/odds-monitor', icon: <BarChartOutlined />, label: '比赛监控' },
   { key: '/default-tracking', icon: <FilterOutlined />, label: '默认追踪' },
+  { key: '/pinnacle-league-filter', icon: <FilterOutlined />, label: '平博比赛选择' },
+  { key: '/crown-league-filter', icon: <FilterOutlined />, label: '皇冠比赛选择' },
   { key: '/league-filter', icon: <FilterOutlined />, label: '联赛筛选' },
   { key: '/data-sources/settings', icon: <SettingOutlined />, label: '数据源设置' },
   { key: '/data-sources/status', icon: <CloudServerOutlined />, label: '数据源状态' },

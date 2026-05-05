@@ -20,12 +20,14 @@ type LeagueSelectorPageProps = {
   title?: string
   cardTitle?: string
   description?: string
+  sourceKey?: 'pinnacle' | 'crown'
 }
 
 const LeagueSelectorPage: React.FC<LeagueSelectorPageProps> = ({
   title = '联赛筛选',
   cardTitle = '关注联赛',
   description = '勾选后，比赛监控和 TG 只追踪这些联赛；不在名单内的比赛不会进入监控。',
+  sourceKey,
 }) => {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -52,7 +54,7 @@ const LeagueSelectorPage: React.FC<LeagueSelectorPageProps> = ({
   const loadLeagues = async () => {
     setLoading(true)
     try {
-      const response = await apiClient.post<ApiResponse<LeagueFilterData>>('/odds-monitor/leagues/list', {})
+      const response = await apiClient.post<ApiResponse<LeagueFilterData>>('/odds-monitor/leagues/list', { sourceKey })
       if (response.data.code !== 0) {
         message.error(response.data.msg || '读取联赛失败')
         return
@@ -85,6 +87,7 @@ const LeagueSelectorPage: React.FC<LeagueSelectorPageProps> = ({
     try {
       const response = await apiClient.post<ApiResponse<LeagueFilterData>>('/odds-monitor/leagues/save', {
         selectedLeagues,
+        sourceKey,
       })
       if (response.data.code !== 0) {
         message.error(response.data.msg || '保存联赛筛选失败')

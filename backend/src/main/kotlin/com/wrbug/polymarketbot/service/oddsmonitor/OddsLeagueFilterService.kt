@@ -14,30 +14,45 @@ class OddsLeagueFilterService(
     private val systemConfigRepository: SystemConfigRepository,
     private val objectMapper: ObjectMapper = ObjectMapper()
 ) {
-    fun getSelectedLeagues(): List<String> {
-        val config = systemConfigRepository.findByConfigKey(CONFIG_KEY)
+    fun getSelectedLeagues(sourceKey: String? = null): List<String> {
+        val normalizedSourceKey = normalizeLeagueFilterSourceKey(sourceKey)
+        val config = systemConfigRepository.findByConfigKey(configKey(normalizedSourceKey))
         val rawValue = config?.configValue?.takeIf { it.isNotBlank() }
         if (rawValue == null) {
-            return defaultTrackedLeagueNames()
+            return if (normalizedSourceKey == null) defaultTrackedLeagueNames() else emptyList()
         }
 
-        return runCatching {
+        val parsed = runCatching {
             objectMapper.readValue(rawValue, object : TypeReference<List<String>>() {})
         }.getOrDefault(emptyList())
-            .mapNotNull { canonicalOddsLeagueName(it) }
-            .distinct()
+
+        return if (normalizedSourceKey == null) {
+            parsed.mapNotNull { canonicalOddsLeagueName(it) }.distinct()
+        } else {
+            parsed.mapNotNull { rawOddsLeagueName(it) }.distinct()
+        }
     }
 
     @Transactional
-    fun saveSelectedLeagues(leagues: List<String>): List<String> {
-        val normalized = leagues.mapNotNull { canonicalOddsLeagueName(it) }.distinct()
+    fun saveSelectedLeagues(leagues: List<String>, sourceKey: String? = null): List<String> {
+        val normalizedSourceKey = normalizeLeagueFilterSourceKey(sourceKey)
+        val normalized = if (normalizedSourceKey == null) {
+            leagues.mapNotNull { canonicalOddsLeagueName(it) }.distinct()
+        } else {
+            leagues.mapNotNull { rawOddsLeagueName(it) }.distinct()
+        }
         val json = objectMapper.writeValueAsString(normalized)
         val now = System.currentTimeMillis()
-        val existing = systemConfigRepository.findByConfigKey(CONFIG_KEY)
+        val key = configKey(normalizedSourceKey)
+        val existing = systemConfigRepository.findByConfigKey(key)
         val entity = existing?.copy(configValue = json, updatedAt = now) ?: SystemConfig(
-            configKey = CONFIG_KEY,
+            configKey = key,
             configValue = json,
-            description = "全平台赔率监控默认追踪联赛",
+            description = if (normalizedSourceKey == null) {
+                "全平台赔率监控默认追踪联赛"
+            } else {
+                "全平台赔率监控${sourceDisplayName(normalizedSourceKey)}原始联赛筛选"
+            },
             createdAt = now,
             updatedAt = now
         )
@@ -54,12 +69,54 @@ class OddsLeagueFilterService(
         return normalized in selected
     }
 
+    fun shouldIncludeLeague(sourceKey: String?, leagueName: String): Boolean {
+        if (isSpecialBettingLeague(leagueName)) {
+            return false
+        }
+        val normalizedSourceKey = normalizeLeagueFilterSourceKey(sourceKey)
+        if (normalizedSourceKey == null) {
+            return shouldIncludeLeague(leagueName)
+        }
+        val config = systemConfigRepository.findByConfigKey(configKey(normalizedSourceKey))
+        if (config == null) {
+            return shouldIncludeLeague(leagueName)
+        }
+        val selected = getSelectedLeagues(normalizedSourceKey)
+        val normalized = rawOddsLeagueName(leagueName) ?: return false
+        return normalized in selected
+    }
+
+    fun getDefaultTrackingLeagues(): List<String> {
+        return (getSelectedLeagues(null) + getSelectedLeagues("pinnacle") + getSelectedLeagues("crown"))
+            .distinct()
+            .sortedWith(compareBy<String> { it.any { char -> char.code < 128 } }.thenBy { it })
+    }
+
+    fun hasSelectedLeaguesConfig(sourceKey: String?): Boolean {
+        val normalizedSourceKey = normalizeLeagueFilterSourceKey(sourceKey)
+        return systemConfigRepository.findByConfigKey(configKey(normalizedSourceKey)) != null
+    }
+
     companion object {
         const val CONFIG_KEY = "odds_monitor.selected_leagues"
+        const val PINNACLE_CONFIG_KEY = "odds_monitor.selected_leagues.pinnacle"
+        const val CROWN_CONFIG_KEY = "odds_monitor.selected_leagues.crown"
+    }
+
+    private fun configKey(sourceKey: String?): String {
+        return when (sourceKey) {
+            "pinnacle" -> PINNACLE_CONFIG_KEY
+            "crown" -> CROWN_CONFIG_KEY
+            else -> CONFIG_KEY
+        }
     }
 }
 
-fun availableOddsLeagueNames(matches: List<OddsPlatformMatch>): List<String> {
+fun availableOddsLeagueNames(matches: List<OddsPlatformMatch>, sourceKey: String? = null): List<String> {
+    val normalizedSourceKey = normalizeLeagueFilterSourceKey(sourceKey)
+    if (normalizedSourceKey != null) {
+        return availableRawOddsLeagueNames(matches.filter { it.sourceKey == normalizedSourceKey })
+    }
     return matches
         .filterNot { isSpecialBettingLeague(it.rawLeagueName) }
         .mapNotNull { canonicalOddsLeagueName(it.rawLeagueName) }
@@ -67,7 +124,22 @@ fun availableOddsLeagueNames(matches: List<OddsPlatformMatch>): List<String> {
         .sortedWith(compareBy<String> { it.any { char -> char.code < 128 } }.thenBy { it })
 }
 
+fun availableRawOddsLeagueNames(matches: List<OddsPlatformMatch>): List<String> {
+    return matches
+        .filterNot { isSpecialBettingLeague(it.rawLeagueName) }
+        .mapNotNull { rawOddsLeagueName(it.rawLeagueName) }
+        .distinct()
+        .sortedWith(compareBy<String> { it.any { char -> char.code < 128 } }.thenBy { it })
+}
+
 fun defaultTrackedLeagueNames(): List<String> = defaultTrackedLeagues
+
+fun rawOddsLeagueName(value: String?): String? {
+    return TextEncodingUtils.repairMojibake(value.orEmpty())
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .takeIf { it.isNotBlank() }
+}
 
 fun canonicalOddsLeagueName(value: String?): String? {
     val repaired = TextEncodingUtils.repairMojibake(value.orEmpty())
@@ -94,6 +166,22 @@ fun canonicalOddsLeagueName(value: String?): String? {
 
     return leagueAliases[leagueAliasKey(cleaned)]
         ?: cleaned.takeIf { it.isNotBlank() }
+}
+
+fun normalizeLeagueFilterSourceKey(sourceKey: String?): String? {
+    return when (sourceKey?.trim()?.lowercase()) {
+        "pinnacle" -> "pinnacle"
+        "crown" -> "crown"
+        else -> null
+    }
+}
+
+private fun sourceDisplayName(sourceKey: String): String {
+    return when (sourceKey) {
+        "pinnacle" -> "平博"
+        "crown" -> "皇冠"
+        else -> sourceKey
+    }
 }
 
 fun isSpecialBettingLeague(value: String?): Boolean {

@@ -383,6 +383,45 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
+    fun `telegram league filter uses platform specific league names`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val leagueConfigRepository = mock(SystemConfigRepository::class.java)
+        val leagueFilterService = OddsLeagueFilterService(leagueConfigRepository)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            leagueFilterService = leagueFilterService
+        )
+
+        `when`(leagueConfigRepository.findByConfigKey(OddsLeagueFilterService.CROWN_CONFIG_KEY)).thenReturn(
+            com.wrbug.polymarketbot.entity.SystemConfig(
+                configKey = OddsLeagueFilterService.CROWN_CONFIG_KEY,
+                configValue = """["韩国K甲组联赛"]"""
+            )
+        )
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown", rawLeagueName = "韩国 - K联赛1"),
+            oddsMarket(sourceKey = "crown"),
+            BigDecimal("0.88"),
+            BigDecimal("0.98")
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+        runBlocking {
+            verify(notificationConfigService, never()).getEnabledConfigsByType("telegram")
+        }
+    }
+
+    @Test
     fun `records one merged alert when multiple platforms change same match and market`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
@@ -413,6 +452,48 @@ class OddsChangeNotificationServiceTest {
         assertTrue(captor.value.message.contains("平博：0.91 -> 1.03"))
         assertTrue(captor.value.message.contains("皇冠：0.90 -> 0.99"))
         assertTrue(captor.value.message.contains("Polymarket：无对应盘口"))
+    }
+
+    @Test
+    fun `merges platform alerts for similar matches even when standard ids differ`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository
+        )
+        val startTime = System.currentTimeMillis() + 3_600_000
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapOddsMoveMin = "0.08"))
+            )
+        }
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "pinnacle", startTime = startTime, rawHomeTeam = "Tokyo", rawAwayTeam = "Kawasaki Frontale"),
+            oddsMarket(sourceKey = "pinnacle", matchId = 100),
+            BigDecimal("1.91"),
+            BigDecimal("2.03")
+        )
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown", startTime = startTime, rawHomeTeam = "FC Tokyo", rawAwayTeam = "Kawasaki Frontale"),
+            oddsMarket(sourceKey = "crown", matchId = 101),
+            BigDecimal("0.90"),
+            BigDecimal("0.99")
+        )
+        Thread.sleep(1_800)
+
+        val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
+        verify(alertRepository, times(1)).save(captor.capture())
+        assertTrue(captor.value.message.contains("平博：0.91 -> 1.03"))
+        assertTrue(captor.value.message.contains("皇冠：0.90 -> 0.99"))
     }
 
     @Test
@@ -514,9 +595,9 @@ class OddsChangeNotificationServiceTest {
         rawStartTime = startTime
     )
 
-    private fun oddsMarket(sourceKey: String = "crown") = OddsMarket(
+    private fun oddsMarket(sourceKey: String = "crown", matchId: Long = 100) = OddsMarket(
         id = 20,
-        matchId = 100,
+        matchId = matchId,
         sourceKey = sourceKey,
         marketType = "handicap",
         lineValue = "0",

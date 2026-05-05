@@ -48,6 +48,7 @@ class CrownResponseParser {
         val root = parseRoot(xmlText)
         return root.elements("game").mapNotNull { game ->
             val fields = game.childTextMap()
+            val detailIsLive = isLive || fields.indicatesLiveGame()
             val sourceMatchId = fields["gid"]?.takeIf { it.isNotBlank() } ?: fields["gidm"] ?: return@mapNotNull null
             val homeTeam = fields["team_h"]?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val awayTeam = fields["team_c"]?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
@@ -61,11 +62,11 @@ class CrownResponseParser {
                 homeTeam = homeTeam,
                 awayTeam = awayTeam,
                 startTime = fields["datetime"]?.let { parseMatchTime(it) },
-                isLive = isLive,
-                handicaps = parseHandicaps(fields, isLive),
-                totals = parseTotals(fields, isLive),
-                moneyline = parseMoneyline(fields, isLive),
-                rawPayload = fields + mapOf("is_live" to isLive)
+                isLive = detailIsLive,
+                handicaps = parseHandicaps(fields, detailIsLive),
+                totals = parseTotals(fields, detailIsLive),
+                moneyline = parseMoneyline(fields, detailIsLive),
+                rawPayload = fields + mapOf("is_live" to detailIsLive)
             )
         }
     }
@@ -188,6 +189,13 @@ class CrownResponseParser {
 
     private fun Map<String, String>.firstPresent(vararg names: String): String? {
         return names.firstNotNullOfOrNull { name -> this[name]?.takeIf { it.isNotBlank() } }
+    }
+
+    private fun Map<String, String>.indicatesLiveGame(): Boolean {
+        return firstPresent("showtype")?.equals("rb", ignoreCase = true) == true ||
+            firstPresent("is_rb")?.equals("Y", ignoreCase = true) == true ||
+            firstPresent("retimeset").orEmpty().let { it.isNotBlank() && it != "0" } ||
+            firstPresent("ratio_re", "ratio_rouo").orEmpty().isNotBlank()
     }
 
     private fun String?.toDecimalOrNull(): BigDecimal? {

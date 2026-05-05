@@ -5,6 +5,7 @@ import com.wrbug.polymarketbot.dto.OddsAlertRecordDto
 import com.wrbug.polymarketbot.dto.OddsCollectionLogDto
 import com.wrbug.polymarketbot.dto.OddsDataSourceConfigDto
 import com.wrbug.polymarketbot.dto.OddsDataSourceStatusDto
+import com.wrbug.polymarketbot.dto.ListOddsLeagueFilterRequest
 import com.wrbug.polymarketbot.dto.OddsMonitorDashboardDto
 import com.wrbug.polymarketbot.dto.OddsLeagueFilterDto
 import com.wrbug.polymarketbot.dto.OddsMonitorMatchDetailDto
@@ -48,15 +49,17 @@ class OddsMonitorController(
     }
 
     @PostMapping("/leagues/list")
-    fun listLeagues(): ResponseEntity<ApiResponse<OddsLeagueFilterDto>> {
-        return ResponseEntity.ok(ApiResponse.success(oddsMonitorService.listLeagueFilter()))
+    fun listLeagues(
+        @RequestBody(required = false) request: ListOddsLeagueFilterRequest?
+    ): ResponseEntity<ApiResponse<OddsLeagueFilterDto>> {
+        return ResponseEntity.ok(ApiResponse.success(oddsMonitorService.listLeagueFilter(request?.sourceKey)))
     }
 
     @PostMapping("/leagues/save")
     fun saveLeagues(
         @RequestBody request: SaveOddsLeagueFilterRequest
     ): ResponseEntity<ApiResponse<OddsLeagueFilterDto>> {
-        return ResponseEntity.ok(ApiResponse.success(oddsMonitorService.saveLeagueFilter(request.selectedLeagues)))
+        return ResponseEntity.ok(ApiResponse.success(oddsMonitorService.saveLeagueFilter(request.selectedLeagues, request.sourceKey)))
     }
 
     @PostMapping("/data-sources/status/list")

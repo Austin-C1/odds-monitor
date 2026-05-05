@@ -72,7 +72,12 @@ data class OddsLeagueFilterDto(
 )
 
 data class SaveOddsLeagueFilterRequest(
-    val selectedLeagues: List<String>
+    val selectedLeagues: List<String>,
+    val sourceKey: String? = null
+)
+
+data class ListOddsLeagueFilterRequest(
+    val sourceKey: String? = null
 )
 
 data class OddsDataSourceStatusDto(

@@ -11,12 +11,20 @@ describe('league filter page source', () => {
 
     expect(appSource).toContain('const LeagueFilter')
     expect(appSource).toContain('const DefaultTracking')
+    expect(appSource).toContain('const PinnacleLeagueFilter')
+    expect(appSource).toContain('const CrownLeagueFilter')
     expect(appSource).toContain('path="/league-filter"')
     expect(appSource).toContain('path="/default-tracking"')
+    expect(appSource).toContain('path="/pinnacle-league-filter"')
+    expect(appSource).toContain('path="/crown-league-filter"')
     expect(layoutSource).toContain("key: '/league-filter'")
     expect(layoutSource).toContain("key: '/default-tracking'")
+    expect(layoutSource).toContain("key: '/pinnacle-league-filter'")
+    expect(layoutSource).toContain("key: '/crown-league-filter'")
     expect(layoutSource).toContain("label: '联赛筛选'")
     expect(layoutSource).toContain("label: '默认追踪'")
+    expect(layoutSource).toContain("label: '平博比赛选择'")
+    expect(layoutSource).toContain("label: '皇冠比赛选择'")
   })
 
   it('league selector loads available leagues and saves selected names', () => {
@@ -24,6 +32,7 @@ describe('league filter page source', () => {
 
     expect(pageSource).toContain('/odds-monitor/leagues/list')
     expect(pageSource).toContain('/odds-monitor/leagues/save')
+    expect(pageSource).toContain('sourceKey')
     expect(pageSource).toContain('Checkbox.Group')
     expect(pageSource).toContain('手动增加联赛')
     expect(pageSource).toContain('保存筛选')

@@ -68,6 +68,8 @@ class OddsChangeNotificationService(
         }
 
         enqueueMergedNotification(
+            match = match,
+            standardMatch = standardMatch,
             matchName = notificationMatchName(match, standardMatch),
             leagueName = notificationLeagueName(match, standardMatch),
             matchId = market.matchId,
@@ -79,6 +81,8 @@ class OddsChangeNotificationService(
     }
 
     private fun enqueueMergedNotification(
+        match: OddsPlatformMatch,
+        standardMatch: OddsMatch?,
         matchName: String,
         leagueName: String,
         matchId: Long,
@@ -87,7 +91,8 @@ class OddsChangeNotificationService(
         currentOdds: BigDecimal,
         configs: List<NotificationConfigDto>
     ) {
-        val key = OddsChangeNotificationKey(standardMatchId = matchId)
+        val candidate = notificationMergeCandidate(match, standardMatch)
+        val key = notificationMergeKey(matchId, candidate)
         val marketKey = OddsChangeNotificationMarketKey(
             marketType = market.marketType,
             lineValue = market.lineValue,
@@ -98,6 +103,7 @@ class OddsChangeNotificationService(
                 matchName = matchName,
                 leagueName = leagueName,
                 matchId = matchId,
+                candidate = candidate,
                 configs = configs,
                 markets = linkedMapOf()
             )
@@ -243,9 +249,26 @@ class OddsChangeNotificationService(
         val filter = leagueFilterService ?: return true
         val rawLeagueName = TextEncodingUtils.repairMojibake(match.rawLeagueName).trim()
         if (rawLeagueName.isNotBlank()) {
-            return filter.shouldIncludeLeague(rawLeagueName)
+            return filter.shouldIncludeLeague(match.sourceKey, rawLeagueName)
         }
         return standardMatch?.leagueName?.let { filter.shouldIncludeLeague(it) } ?: false
+    }
+
+    private fun notificationMergeKey(
+        matchId: Long,
+        incomingCandidate: OddsMatchCandidate
+    ): OddsChangeNotificationKey {
+        val standardKey = OddsChangeNotificationKey("standard:$matchId")
+        if (pendingAlerts.containsKey(standardKey)) {
+            return standardKey
+        }
+        pendingAlerts.forEach { (existingKey, pending) ->
+            val score = OddsMatchMatcher.score(pending.candidate, incomingCandidate)
+            if (OddsMatchMatcher.shouldMerge(score)) {
+                return existingKey
+            }
+        }
+        return standardKey
     }
 }
 
@@ -262,7 +285,7 @@ data class OddsChangeNotificationMarketItem(
 )
 
 private data class OddsChangeNotificationKey(
-    val standardMatchId: Long
+    val value: String
 )
 
 private data class OddsChangeNotificationMarketKey(
@@ -275,6 +298,7 @@ private data class PendingOddsChangeNotification(
     val matchName: String,
     val leagueName: String,
     val matchId: Long,
+    val candidate: OddsMatchCandidate,
     val configs: List<NotificationConfigDto>,
     val markets: LinkedHashMap<OddsChangeNotificationMarketKey, PendingOddsChangeMarketNotification>
 )
@@ -496,6 +520,16 @@ private fun notificationMatchName(platformMatch: OddsPlatformMatch, standardMatc
     val standardName = standardMatch?.let { "${it.homeTeam} vs ${it.awayTeam}" }
     val platformName = "${platformMatch.rawHomeTeam} vs ${platformMatch.rawAwayTeam}"
     return bestNotificationText(platformName, standardName)
+}
+
+private fun notificationMergeCandidate(platformMatch: OddsPlatformMatch, standardMatch: OddsMatch?): OddsMatchCandidate {
+    return OddsMatchCandidate(
+        id = standardMatch?.id,
+        leagueName = notificationLeagueName(platformMatch, standardMatch),
+        homeTeam = TextEncodingUtils.repairMojibake(platformMatch.rawHomeTeam),
+        awayTeam = TextEncodingUtils.repairMojibake(platformMatch.rawAwayTeam),
+        startTime = standardMatch?.startTime ?: platformMatch.rawStartTime
+    )
 }
 
 private fun notificationLeagueName(platformMatch: OddsPlatformMatch, standardMatch: OddsMatch?): String {

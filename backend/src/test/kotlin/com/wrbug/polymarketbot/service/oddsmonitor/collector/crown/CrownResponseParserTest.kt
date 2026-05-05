@@ -140,6 +140,39 @@ class CrownResponseParserTest {
     }
 
     @Test
+    fun `detects live detail fields even when caller passes prematch flag`() {
+        val response = """
+            <serverresponse>
+              <game>
+                <gid>8735721</gid>
+                <showtype>rb</showtype>
+                <league>England Premier League</league>
+                <datetime>05-04 03:00p</datetime>
+                <team_h>Arsenal</team_h>
+                <team_c>Chelsea</team_c>
+                <ratio_re>0 / 0.5</ratio_re>
+                <ior_reh>0.810</ior_reh>
+                <ior_rec>1.070</ior_rec>
+                <ratio_rouo>5.5</ratio_rouo>
+                <ratio_rouu>5.5</ratio_rouu>
+                <ior_rouh>0.990</ior_rouh>
+                <ior_rouc>0.880</ior_rouc>
+              </game>
+            </serverresponse>
+        """.trimIndent()
+
+        val match = parser.parseDetailGames(response, isLive = false).single()
+
+        assertEquals(true, match.isLive)
+        assertEquals(listOf("0 / 0.5"), match.handicaps.map { it.line })
+        assertEquals(listOf(BigDecimal("0.810")), match.handicaps.map { it.homeOdds })
+        assertEquals(listOf(BigDecimal("1.070")), match.handicaps.map { it.awayOdds })
+        assertEquals(listOf("5.5"), match.totals.map { it.line })
+        assertEquals(listOf(BigDecimal("0.880")), match.totals.map { it.overOdds })
+        assertEquals(listOf(BigDecimal("0.990")), match.totals.map { it.underOdds })
+    }
+
+    @Test
     fun `ignores esports football detail games`() {
         val response = """
             <serverresponse>
