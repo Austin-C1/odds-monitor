@@ -67,6 +67,9 @@ foreach ($path in @($packageDir, $zipPath)) {
 
 Push-Location $frontendDir
 try {
+    $env:VERSION = $version
+    $env:GIT_TAG = "v$version"
+    $env:GITHUB_REPO_URL = 'https://github.com/Austin-C1/odds-monitor'
     & npm run build
     if ($LASTEXITCODE -ne 0) {
         throw "Frontend build failed with exit code $LASTEXITCODE."
