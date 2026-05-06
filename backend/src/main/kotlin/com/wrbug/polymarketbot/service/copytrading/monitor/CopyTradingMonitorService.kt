@@ -19,8 +19,7 @@ class CopyTradingMonitorService(
     private val leaderRepository: LeaderRepository,
     private val accountRepository: AccountRepository,
     private val activityWsService: PolymarketActivityWsService,
-    private val onChainWsService: OnChainWsService,
-    private val accountOnChainMonitorService: AccountOnChainMonitorService
+    private val onChainWsService: OnChainWsService
 ) {
     
     private val logger = LoggerFactory.getLogger(CopyTradingMonitorService::class.java)
@@ -48,7 +47,6 @@ class CopyTradingMonitorService(
         scope.cancel()
         activityWsService.stop()
         onChainWsService.stop()
-        accountOnChainMonitorService.stop()
     }
     
     suspend fun startMonitoring() {
@@ -57,7 +55,6 @@ class CopyTradingMonitorService(
         if (enabledCopyTradings.isEmpty()) {
             activityWsService.stop()
             onChainWsService.stop()
-            accountOnChainMonitorService.stop()
             return
         }
 
@@ -66,12 +63,10 @@ class CopyTradingMonitorService(
             logger.warn("No valid copy-trading leader/account pairs remain, stopping monitoring")
             activityWsService.stop()
             onChainWsService.stop()
-            accountOnChainMonitorService.stop()
             return
         }
         activityWsService.start(targets.leaders)
         onChainWsService.start(targets.leaders)
-        accountOnChainMonitorService.start(targets.accounts)
     }
     
     suspend fun addLeaderMonitoring(leaderId: Long) {
@@ -107,27 +102,9 @@ class CopyTradingMonitorService(
         if (leader != null && targets.accounts.isNotEmpty()) {
             activityWsService.addLeader(leader)
             onChainWsService.addLeader(leader)
-            targets.accounts.forEach { account ->
-                val accountId = account.id ?: return@forEach
-                accountOnChainMonitorService.addAccount(account)
-                updateAccountMonitoring(accountId)
-            }
         } else {
             activityWsService.removeLeader(leaderId)
             onChainWsService.removeLeader(leaderId)
-        }
-    }
-    
-    suspend fun updateAccountMonitoring(accountId: Long) {
-        val copyTradings = copyTradingRepository.findByAccountId(accountId)
-            .filter { it.enabled }
-        val targets = resolveMonitoringTargets(copyTradings)
-        val account = targets.accounts.firstOrNull { it.id == accountId }
-        
-        if (account != null && targets.leaders.isNotEmpty()) {
-            accountOnChainMonitorService.addAccount(account)
-        } else {
-            accountOnChainMonitorService.removeAccount(accountId)
         }
     }
 
@@ -156,9 +133,6 @@ class CopyTradingMonitorService(
         scope.launch {
             try {
                 updateLeaderMonitoring(event.leaderId)
-                event.accountIds.distinct().forEach { accountId ->
-                    updateAccountMonitoring(accountId)
-                }
             } catch (e: Exception) {
                 logger.error("同步跟单监控失败", e)
             }

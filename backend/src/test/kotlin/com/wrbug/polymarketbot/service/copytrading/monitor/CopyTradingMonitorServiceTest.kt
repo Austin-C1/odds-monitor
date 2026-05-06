@@ -20,15 +20,13 @@ class CopyTradingMonitorServiceTest {
     private val accountRepository = mock(AccountRepository::class.java)
     private val activityWsService = mock(PolymarketActivityWsService::class.java)
     private val onChainWsService = mock(OnChainWsService::class.java)
-    private val accountOnChainMonitorService = mock(AccountOnChainMonitorService::class.java)
 
     private val service = CopyTradingMonitorService(
         copyTradingRepository = copyTradingRepository,
         leaderRepository = leaderRepository,
         accountRepository = accountRepository,
         activityWsService = activityWsService,
-        onChainWsService = onChainWsService,
-        accountOnChainMonitorService = accountOnChainMonitorService
+        onChainWsService = onChainWsService
     )
 
     @Test
@@ -44,10 +42,8 @@ class CopyTradingMonitorServiceTest {
 
         verify(activityWsService, never()).start(org.mockito.ArgumentMatchers.anyList())
         verify(onChainWsService, never()).start(org.mockito.ArgumentMatchers.anyList())
-        verify(accountOnChainMonitorService, never()).start(org.mockito.ArgumentMatchers.anyList())
         verify(activityWsService).stop()
         verify(onChainWsService).stop()
-        verify(accountOnChainMonitorService).stop()
     }
 
     @Test
@@ -66,7 +62,6 @@ class CopyTradingMonitorServiceTest {
 
         verify(activityWsService).start(listOf(validLeader))
         verify(onChainWsService).start(listOf(validLeader))
-        verify(accountOnChainMonitorService).start(listOf(validAccount))
     }
 
     private fun leader(id: Long) = Leader(

@@ -50,6 +50,12 @@ class OddsMonitorService(
 
     fun getDashboard(): OddsMonitorDashboardDto {
         collectedDashboard(collectedSourceKeys)?.let { return it }
+        if (platformMatchRepository != null) {
+            return OddsMonitorDashboardDto(
+                matches = emptyList(),
+                selectedMatch = null
+            )
+        }
 
         val now = System.currentTimeMillis()
         val matches = listOf(

@@ -70,7 +70,7 @@ class OddsLeagueFilterServiceTest {
     }
 
     @Test
-    fun `source filter falls back to default list before source list is saved`() {
+    fun `source filter rejects default tracked leagues before source list is saved`() {
         val repository = mock(SystemConfigRepository::class.java)
         `when`(repository.findByConfigKey(OddsLeagueFilterService.PINNACLE_CONFIG_KEY)).thenReturn(null)
         `when`(repository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
@@ -79,7 +79,7 @@ class OddsLeagueFilterServiceTest {
 
         val filter = OddsLeagueFilterService(repository)
 
-        assertTrue(filter.shouldIncludeLeague("pinnacle", "英格兰 - 超级联赛"))
+        assertFalse(filter.shouldIncludeLeague("pinnacle", "英格兰 - 超级联赛"))
     }
 
     @Test

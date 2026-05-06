@@ -79,7 +79,7 @@ class OddsLeagueFilterService(
         }
         val config = systemConfigRepository.findByConfigKey(configKey(normalizedSourceKey))
         if (config == null) {
-            return shouldIncludeLeague(leagueName)
+            return false
         }
         val selected = getSelectedLeagues(normalizedSourceKey)
         val normalized = rawOddsLeagueName(leagueName) ?: return false

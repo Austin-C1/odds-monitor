@@ -20,19 +20,6 @@ interface SellMatchRecordRepository : JpaRepository<SellMatchRecord, Long> {
     fun findByPriceUpdatedFalse(): List<SellMatchRecord>
 
     @Query(
-        "SELECT r FROM SellMatchRecord r " +
-            "WHERE r.copyTradingId = :copyTradingId AND r.marketId = :marketId " +
-            "AND r.outcomeIndex = :outcomeIndex AND r.priceUpdated = false " +
-            "AND r.createdAt >= :createdAfter ORDER BY r.createdAt DESC"
-    )
-    fun findRecentPendingByCopyTradingIdAndMarketIdAndOutcomeIndex(
-        copyTradingId: Long,
-        marketId: String,
-        outcomeIndex: Int,
-        createdAfter: Long
-    ): List<SellMatchRecord>
-
-    @Query(
         "SELECT COALESCE(SUM(r.totalRealizedPnl), 0) FROM SellMatchRecord r " +
             "WHERE r.copyTradingId = :copyTradingId AND r.createdAt >= :createdAt AND r.priceUpdated = true"
     )

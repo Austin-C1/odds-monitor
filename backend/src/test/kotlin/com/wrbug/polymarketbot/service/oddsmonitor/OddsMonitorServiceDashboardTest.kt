@@ -4,13 +4,16 @@ import com.wrbug.polymarketbot.entity.OddsDataSourceConfig
 import com.wrbug.polymarketbot.entity.OddsMarket
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.entity.OddsSnapshot
+import com.wrbug.polymarketbot.entity.SystemConfig
 import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
 import com.wrbug.polymarketbot.repository.OddsCollectionLogRepository
 import com.wrbug.polymarketbot.repository.OddsDataSourceConfigRepository
 import com.wrbug.polymarketbot.repository.OddsMarketRepository
 import com.wrbug.polymarketbot.repository.OddsPlatformMatchRepository
 import com.wrbug.polymarketbot.repository.OddsSnapshotRepository
+import com.wrbug.polymarketbot.repository.SystemConfigRepository
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
@@ -409,6 +412,50 @@ class OddsMonitorServiceDashboardTest {
         assertEquals("多伦多国际", dashboard.matches.single().homeTeam)
         assertEquals("温哥华FC", dashboard.matches.single().awayTeam)
         assertEquals(listOf("crown"), dashboard.matches.single().matchedPlatforms)
+    }
+
+    @Test
+    fun `dashboard rejects platform matches before platform filter list is saved`() {
+        val configRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val logRepository = mock(OddsCollectionLogRepository::class.java)
+        val platformRepository = mock(OddsPlatformMatchRepository::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val systemConfigRepository = mock(SystemConfigRepository::class.java)
+
+        `when`(systemConfigRepository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
+            SystemConfig(configKey = OddsLeagueFilterService.CONFIG_KEY, configValue = """["英格兰超级联赛"]""")
+        )
+        `when`(systemConfigRepository.findByConfigKey(OddsLeagueFilterService.PINNACLE_CONFIG_KEY)).thenReturn(null)
+        `when`(platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("pinnacle")).thenReturn(
+            listOf(
+                OddsPlatformMatch(
+                    id = 601,
+                    sourceKey = "pinnacle",
+                    sourceMatchId = "p1",
+                    rawLeagueName = "英格兰 - 超级联赛",
+                    rawHomeTeam = "Arsenal",
+                    rawAwayTeam = "Chelsea",
+                    rawStartTime = 1893456000000L
+                )
+            )
+        )
+        `when`(platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")).thenReturn(emptyList())
+        `when`(platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("polymarket")).thenReturn(emptyList())
+
+        val dashboard = OddsMonitorService(
+            configRepository,
+            alertRepository,
+            logRepository,
+            platformRepository,
+            marketRepository,
+            snapshotRepository,
+            leagueFilterService = OddsLeagueFilterService(systemConfigRepository)
+        ).getDashboard()
+
+        assertTrue(dashboard.matches.isEmpty())
+        assertNull(dashboard.selectedMatch)
     }
 
     @Test

@@ -333,8 +333,7 @@ class OrderStatusUpdateService(
                     if (!record.sellOrderId.startsWith("0x", ignoreCase = true)) {
                         logger.debug("Sell order id is not a hex hash, checking auto-order fallback: orderId=${record.sellOrderId}")
                         val isAutoOrder = record.sellOrderId.startsWith("AUTO_", ignoreCase = true) ||
-                                record.sellOrderId.startsWith("AUTO_FIFO_", ignoreCase = true) ||
-                                record.sellOrderId.startsWith("AUTO_WS_", ignoreCase = true)
+                                record.sellOrderId.startsWith("AUTO_FIFO_", ignoreCase = true)
 
                         if (!isAutoOrder) {
                             sendSellOrderNotification(
@@ -368,8 +367,7 @@ class OrderStatusUpdateService(
                         continue
                     }
                     val isAutoOrder = record.sellOrderId.startsWith("AUTO_", ignoreCase = true) ||
-                            record.sellOrderId.startsWith("AUTO_FIFO_", ignoreCase = true) ||
-                            record.sellOrderId.startsWith("AUTO_WS_", ignoreCase = true)
+                            record.sellOrderId.startsWith("AUTO_FIFO_", ignoreCase = true)
 
                     if (isAutoOrder) {
                             logger.debug("No sell-match update condition met after auto-order fallback: orderId=${record.sellOrderId}")

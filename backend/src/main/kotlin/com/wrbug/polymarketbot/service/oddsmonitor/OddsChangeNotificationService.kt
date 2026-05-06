@@ -65,11 +65,10 @@ class OddsChangeNotificationService(
         }
 
         val leagueMatched = shouldNotifyLeague(match, standardMatch)
-        val eligibleConfigs = if (leagueMatched) {
-            configsQualifiedBySelectedLeagueRules(market, previousOdds, currentOdds, phaseConfigs)
-        } else {
-            configsQualifiedByCombinedWater(market, currentOdds, phaseConfigs)
+        if (!leagueMatched) {
+            return
         }
+        val eligibleConfigs = configsQualifiedBySelectedLeagueRules(market, previousOdds, currentOdds, phaseConfigs)
         if (eligibleConfigs.isEmpty()) {
             return
         }

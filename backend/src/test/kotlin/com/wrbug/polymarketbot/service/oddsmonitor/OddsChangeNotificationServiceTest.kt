@@ -337,7 +337,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `combined water qualified alert bypasses league filter`() {
+    fun `combined water qualified alert still respects league filter`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -388,7 +388,7 @@ class OddsChangeNotificationServiceTest {
         )
         Thread.sleep(1_800)
 
-        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
     }
 
     @Test
@@ -415,6 +415,12 @@ class OddsChangeNotificationServiceTest {
             com.wrbug.polymarketbot.entity.SystemConfig(
                 configKey = OddsLeagueFilterService.CONFIG_KEY,
                 configValue = """["日本J1百年构想联赛"]"""
+            )
+        )
+        `when`(leagueConfigRepository.findByConfigKey(OddsLeagueFilterService.CROWN_CONFIG_KEY)).thenReturn(
+            com.wrbug.polymarketbot.entity.SystemConfig(
+                configKey = OddsLeagueFilterService.CROWN_CONFIG_KEY,
+                configValue = """["日本 - J联赛"]"""
             )
         )
         runBlocking {
@@ -551,6 +557,12 @@ class OddsChangeNotificationServiceTest {
             com.wrbug.polymarketbot.entity.SystemConfig(
                 configKey = OddsLeagueFilterService.CONFIG_KEY,
                 configValue = """["日本J1百年构想联赛"]"""
+            )
+        )
+        `when`(leagueConfigRepository.findByConfigKey(OddsLeagueFilterService.CROWN_CONFIG_KEY)).thenReturn(
+            com.wrbug.polymarketbot.entity.SystemConfig(
+                configKey = OddsLeagueFilterService.CROWN_CONFIG_KEY,
+                configValue = """["日本 - J联赛"]"""
             )
         )
         runBlocking {
