@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
 import java.math.RoundingMode
+import kotlin.math.abs
 
 @Service
 class OddsStandardMatchService(
@@ -22,7 +23,7 @@ class OddsStandardMatchService(
         val existingLink = linkRepository.findByPlatformMatchId(platformMatchId)
         if (existingLink != null) {
             matchRepository.findById(existingLink.matchId).orElse(null)?.let {
-                return refreshStandardMatchStatus(it, platformMatch)
+                return resolveExistingLink(platformMatch, existingLink, it)
             }
         }
 
@@ -47,6 +48,38 @@ class OddsStandardMatchService(
         return standardMatch
     }
 
+    private fun resolveExistingLink(
+        platformMatch: OddsPlatformMatch,
+        existingLink: OddsMatchLink,
+        linkedMatch: OddsMatch
+    ): OddsMatch {
+        val incoming = platformMatch.toCandidate()
+        val currentScore = OddsMatchMatcher.score(linkedMatch.toCandidate(), incoming)
+        val linkedMatchId = linkedMatch.id
+        val best = matchRepository.findTop500BySportOrderByStartTimeAsc("football")
+            .asSequence()
+            .filter { match -> match.id != null && match.id != linkedMatchId }
+            .map { match -> match to OddsMatchMatcher.score(match.toCandidate(), incoming) }
+            .filter { (_, score) -> OddsMatchMatcher.shouldMerge(score) }
+            .maxByOrNull { (_, score) -> score.score }
+
+        if (best != null && best.second.score > currentScore.score) {
+            val target = refreshStandardMatchStatus(best.first, platformMatch)
+            val targetId = target.id ?: return target
+            linkRepository.save(
+                existingLink.copy(
+                    matchId = targetId,
+                    confidence = scaledConfidence(best.second.score),
+                    matchMethod = best.second.matchMethod,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            return target
+        }
+
+        return refreshStandardMatchStatus(linkedMatch, platformMatch)
+    }
+
     private fun createStandardMatch(platformMatch: OddsPlatformMatch): OddsMatch {
         val now = System.currentTimeMillis()
         return matchRepository.save(
@@ -65,15 +98,33 @@ class OddsStandardMatchService(
 
     private fun refreshStandardMatchStatus(match: OddsMatch, platformMatch: OddsPlatformMatch): OddsMatch {
         val nextStatus = oddsMonitorStatusForPlatformMatch(platformMatch)
-        if (match.status == nextStatus || (match.status == "live" && nextStatus == "scheduled")) {
+        val refreshedStatus = if (match.status == "live" && nextStatus == "scheduled") {
+            match.status
+        } else {
+            nextStatus
+        }
+        val refreshedStartTime = refreshedStartTime(match.startTime, platformMatch.rawStartTime)
+        if (match.status == refreshedStatus && match.startTime == refreshedStartTime) {
             return match
         }
         return matchRepository.save(
             match.copy(
-                status = nextStatus,
+                startTime = refreshedStartTime,
+                status = refreshedStatus,
                 updatedAt = System.currentTimeMillis()
             )
         )
+    }
+
+    private fun refreshedStartTime(existingStartTime: Long?, incomingStartTime: Long?): Long? {
+        if (incomingStartTime == null) {
+            return existingStartTime
+        }
+        if (existingStartTime == null) {
+            return incomingStartTime
+        }
+        val diffMinutes = abs(existingStartTime - incomingStartTime) / 60_000
+        return if (diffMinutes > 5) incomingStartTime else existingStartTime
     }
 
     private fun saveLink(matchId: Long, platformMatchId: Long, confidence: Double, matchMethod: String) {
@@ -84,12 +135,16 @@ class OddsStandardMatchService(
             OddsMatchLink(
                 matchId = matchId,
                 platformMatchId = platformMatchId,
-                confidence = BigDecimal.valueOf(confidence).setScale(4, RoundingMode.HALF_UP),
+                confidence = scaledConfidence(confidence),
                 matchMethod = matchMethod,
                 createdAt = System.currentTimeMillis(),
                 updatedAt = System.currentTimeMillis()
             )
         )
+    }
+
+    private fun scaledConfidence(confidence: Double): BigDecimal {
+        return BigDecimal.valueOf(confidence).setScale(4, RoundingMode.HALF_UP)
     }
 
     private fun OddsPlatformMatch.toCandidate(): OddsMatchCandidate {

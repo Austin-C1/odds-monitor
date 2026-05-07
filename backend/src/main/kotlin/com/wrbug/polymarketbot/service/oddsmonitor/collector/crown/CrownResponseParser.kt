@@ -160,7 +160,7 @@ class CrownResponseParser {
         return formatters.firstNotNullOfOrNull { formatter ->
             runCatching {
                 LocalDateTime.parse(normalized, formatter)
-                    .atZone(ZoneId.systemDefault())
+                    .atZone(CROWN_TIME_ZONE)
                     .toInstant()
                     .toEpochMilli()
             }.getOrNull()
@@ -201,5 +201,9 @@ class CrownResponseParser {
     private fun String?.toDecimalOrNull(): BigDecimal? {
         val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
         return runCatching { BigDecimal(value) }.getOrNull()
+    }
+
+    companion object {
+        private val CROWN_TIME_ZONE: ZoneId = ZoneId.of("America/New_York")
     }
 }

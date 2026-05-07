@@ -96,6 +96,75 @@ object OddsMatchMatcher {
         "曼城" to "manchestercity"
     )
 
+    private val observedPlatformAliases = mapOf(
+        "图库姆斯" to "tukums",
+        "图库姆斯2000" to "tukums",
+        "ogreunited" to "ogreunited",
+        "奥格雷联" to "ogreunited",
+        "海於格松b队" to "haugesundb",
+        "豪格松二队" to "haugesundb",
+        "oddbkii" to "oddb",
+        "奥特b队" to "oddb",
+        "pk35赫尔辛基" to "pk35",
+        "pk35" to "pk35",
+        "mp米克力" to "mpmikkeli",
+        "米克利" to "mpmikkeli",
+        "泰达姆恩" to "altadamun",
+        "阿尔塔达蒙" to "altadamun",
+        "吉特斯女" to "jitex",
+        "吉泰克斯bk" to "jitex",
+        "库恩卡青年" to "cuencayouth",
+        "昆卡青年队" to "cuencayouth",
+        "昆巴亚" to "cumbaya",
+        "坎巴亚金融" to "cumbaya",
+        "米伦拿列奥" to "millonarios",
+        "百万富翁队" to "millonarios",
+        "康菲安卡se" to "confianca",
+        "孔菲昂萨" to "confianca",
+        "福塔雷萨ce" to "fortaleza",
+        "福塔雷萨" to "fortaleza",
+        "lks罗兹" to "lkslodz",
+        "lks洛迪兹" to "lkslodz",
+        "波贡马佐维克" to "pogonmazowiecki",
+        "马佐夫舍地区格罗济斯克波贡" to "pogonmazowiecki",
+        "巴拉特" to "paradou",
+        "ac帕拉杜" to "paradou",
+        "cs康桑汰" to "csconstantine",
+        "cs康士坦丁" to "csconstantine",
+        "阿尔艾利多哈u23" to "alahlidoha",
+        "多哈阿尔阿赫利" to "alahlidoha",
+        "夏马尔u23" to "alshamal",
+        "舒马尔" to "alshamal",
+        "班菲特后备" to "banfield",
+        "班菲尔德" to "banfield",
+        "圣塔菲联后备" to "unionsantafe",
+        "圣菲联合" to "unionsantafe",
+        "沙巴柏利雅德" to "alshabab",
+        "利雅得青年" to "alshabab",
+        "纳撒利雅德" to "alnassr",
+        "利雅得胜利" to "alnassr",
+        "迈拉索尔sp" to "mirassol",
+        "米拉索尔" to "mirassol",
+        "奎托" to "lduquito",
+        "基多大学体育联盟" to "lduquito",
+        "司雷普纳" to "sleipner",
+        "斯莱坡尼尔" to "sleipner",
+        "西里安斯卡" to "syrianska",
+        "叙利扬斯卡" to "syrianska",
+        "提比利锡戴拿模" to "dinamotbilisi",
+        "第比利斯迪纳摩" to "dinamotbilisi",
+        "斯帕尔" to "spaeri",
+        "spaeri" to "spaeri",
+        "dhj哈斯沙尼亚" to "difaaeljadida",
+        "贾迪达迪法亚" to "difaaeljadida",
+        "哈斯沙尼亚" to "hassaniaagadir",
+        "阿加迪尔" to "hassaniaagadir",
+        "sjk阿卡泰米阿ii队" to "sjkakatemia2",
+        "阿克特米亚二队" to "sjkakatemia2",
+        "修玛乌尔禾" to "huimaurho",
+        "huimaurho" to "huimaurho"
+    )
+
     fun score(existing: OddsMatchCandidate, incoming: OddsMatchCandidate): OddsMatchScore {
         val normalScore = combinedScore(
             existing = existing,
@@ -173,7 +242,7 @@ object OddsMatchMatcher {
             .replace("&", "and")
             .replace(Regex("""[\s\p{Punct}\p{C}]+"""), "")
             .trim()
-        return aliases[normalized] ?: normalized
+        return aliases[normalized] ?: observedPlatformAliases[normalized] ?: normalized
     }
 
     private fun diceCoefficient(left: String, right: String): Double {

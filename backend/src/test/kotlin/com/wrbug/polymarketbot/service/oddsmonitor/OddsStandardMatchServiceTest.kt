@@ -12,6 +12,7 @@ import org.mockito.ArgumentCaptor
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
+import java.util.Optional
 
 class OddsStandardMatchServiceTest {
     @Test
@@ -86,5 +87,89 @@ class OddsStandardMatchServiceTest {
         assertEquals(30L, captor.value.matchId)
         assertEquals(21L, captor.value.platformMatchId)
         assertEquals("new", captor.value.matchMethod)
+    }
+
+    @Test
+    fun `relinks existing platform match when corrected source data matches a better standard match`() {
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val linkRepository = mock(OddsMatchLinkRepository::class.java)
+        val staleCrownMatch = OddsMatch(
+            id = 10,
+            leagueName = "拉脱维亚超级联赛",
+            homeTeam = "图库姆斯",
+            awayTeam = "奥格雷联",
+            startTime = 1893438000000L
+        )
+        val pinnacleMatch = OddsMatch(
+            id = 11,
+            leagueName = "拉脱维亚 - 超级联赛",
+            homeTeam = "图库姆斯2000",
+            awayTeam = "Ogre United",
+            startTime = 1893456000000L
+        )
+        `when`(linkRepository.findByPlatformMatchId(20)).thenReturn(
+            OddsMatchLink(matchId = 10, platformMatchId = 20)
+        )
+        `when`(matchRepository.findById(10)).thenReturn(Optional.of(staleCrownMatch))
+        `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(
+            listOf(staleCrownMatch, pinnacleMatch)
+        )
+        `when`(linkRepository.save(any(OddsMatchLink::class.java))).thenAnswer { it.arguments[0] }
+
+        val standardMatch = OddsStandardMatchService(matchRepository, linkRepository).resolveStandardMatch(
+            OddsPlatformMatch(
+                id = 20,
+                sourceKey = "crown",
+                sourceMatchId = "c1",
+                rawLeagueName = "拉脱维亚超级联赛",
+                rawHomeTeam = "图库姆斯",
+                rawAwayTeam = "奥格雷联",
+                rawStartTime = 1893456000000L
+            )
+        )
+
+        assertEquals(11, standardMatch.id)
+        val captor = ArgumentCaptor.forClass(OddsMatchLink::class.java)
+        verify(linkRepository).save(captor.capture())
+        assertEquals(11L, captor.value.matchId)
+        assertEquals(20L, captor.value.platformMatchId)
+        assertEquals(true, captor.value.confidence.toDouble() >= 0.85)
+    }
+
+    @Test
+    fun `refreshes stale standard match start time from corrected platform data`() {
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val linkRepository = mock(OddsMatchLinkRepository::class.java)
+        val staleMatch = OddsMatch(
+            id = 10,
+            leagueName = "拉脱维亚超级联赛",
+            homeTeam = "图库姆斯",
+            awayTeam = "奥格雷联",
+            startTime = 1893438000000L,
+            status = "scheduled"
+        )
+        `when`(linkRepository.findByPlatformMatchId(20)).thenReturn(
+            OddsMatchLink(matchId = 10, platformMatchId = 20)
+        )
+        `when`(matchRepository.findById(10)).thenReturn(Optional.of(staleMatch))
+        `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(listOf(staleMatch))
+        `when`(matchRepository.save(any(OddsMatch::class.java))).thenAnswer { it.arguments[0] }
+
+        val standardMatch = OddsStandardMatchService(matchRepository, linkRepository).resolveStandardMatch(
+            OddsPlatformMatch(
+                id = 20,
+                sourceKey = "crown",
+                sourceMatchId = "c1",
+                rawLeagueName = "拉脱维亚超级联赛",
+                rawHomeTeam = "图库姆斯",
+                rawAwayTeam = "奥格雷联",
+                rawStartTime = 1893456000000L
+            )
+        )
+
+        assertEquals(1893456000000L, standardMatch.startTime)
+        val captor = ArgumentCaptor.forClass(OddsMatch::class.java)
+        verify(matchRepository).save(captor.capture())
+        assertEquals(1893456000000L, captor.value.startTime)
     }
 }

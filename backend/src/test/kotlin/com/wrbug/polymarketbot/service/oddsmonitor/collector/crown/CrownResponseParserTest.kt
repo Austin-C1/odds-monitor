@@ -3,8 +3,9 @@ package com.wrbug.polymarketbot.service.oddsmonitor.collector.crown
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
-import java.time.Instant
 import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.util.TimeZone
 
 class CrownResponseParserTest {
     private val parser = CrownResponseParser()
@@ -123,11 +124,17 @@ class CrownResponseParserTest {
         assertEquals("Japan J1 League", match.leagueName)
         assertEquals("Okayama", match.homeTeam)
         assertEquals("Hiroshima", match.awayTeam)
-        val startTime = Instant.ofEpochMilli(match.startTime ?: 0).atZone(ZoneId.systemDefault())
-        assertEquals(5, startTime.monthValue)
-        assertEquals(1, startTime.dayOfMonth)
-        assertEquals(23, startTime.hour)
-        assertEquals(55, startTime.minute)
+        val expectedStartTime = ZonedDateTime.of(
+            java.time.Year.now().value,
+            5,
+            1,
+            23,
+            55,
+            0,
+            0,
+            ZoneId.of("America/New_York")
+        ).toInstant().toEpochMilli()
+        assertEquals(expectedStartTime, match.startTime)
         assertEquals("0.5 / 1", match.handicaps.single().line)
         assertEquals(BigDecimal("0.880"), match.handicaps.single().homeOdds)
         assertEquals(BigDecimal("1.000"), match.handicaps.single().awayOdds)
@@ -137,6 +144,44 @@ class CrownResponseParserTest {
         assertEquals(BigDecimal("4.95"), match.moneyline?.homeOdds)
         assertEquals(BigDecimal("3.60"), match.moneyline?.drawOdds)
         assertEquals(BigDecimal("1.75"), match.moneyline?.awayOdds)
+    }
+
+    @Test
+    fun `parses crown prematch datetime in eastern time independent of host timezone`() {
+        val originalTimeZone = TimeZone.getDefault()
+        TimeZone.setDefault(TimeZone.getTimeZone("Europe/London"))
+        try {
+            val response = """
+                <serverresponse>
+                  <game>
+                    <gid>8744597</gid>
+                    <league>拉脱维亚超级联赛</league>
+                    <datetime>05-07 11:00a</datetime>
+                    <team_h>图库姆斯</team_h>
+                    <team_c>奥格雷联</team_c>
+                    <ratio_r>0.5 / 1</ratio_r>
+                    <ior_rh>0.800</ior_rh>
+                    <ior_rc>1.060</ior_rc>
+                  </game>
+                </serverresponse>
+            """.trimIndent()
+
+            val match = parser.parseDetailGames(response, isLive = false).single()
+
+            val expected = ZonedDateTime.of(
+                java.time.Year.now().value,
+                5,
+                7,
+                11,
+                0,
+                0,
+                0,
+                ZoneId.of("America/New_York")
+            ).toInstant().toEpochMilli()
+            assertEquals(expected, match.startTime)
+        } finally {
+            TimeZone.setDefault(originalTimeZone)
+        }
     }
 
     @Test
