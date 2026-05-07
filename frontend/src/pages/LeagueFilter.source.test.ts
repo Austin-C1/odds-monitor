@@ -5,23 +5,24 @@ import path from 'node:path'
 const root = path.resolve(__dirname, '..')
 
 describe('league filter page source', () => {
-  it('adds league filter and default tracking routes and menu items', () => {
+  it('keeps only default tracking and platform selection routes and menu items', () => {
     const appSource = fs.readFileSync(path.join(root, 'App.tsx'), 'utf8')
     const layoutSource = fs.readFileSync(path.join(root, 'components', 'Layout.tsx'), 'utf8')
 
-    expect(appSource).toContain('const LeagueFilter')
     expect(appSource).toContain('const DefaultTracking')
     expect(appSource).toContain('const PinnacleLeagueFilter')
     expect(appSource).toContain('const CrownLeagueFilter')
+    expect(appSource).not.toContain('const LeagueFilter')
     expect(appSource).toContain('path="/league-filter"')
+    expect(appSource).toContain('to="/default-tracking" replace')
+    expect(appSource).not.toContain('<LeagueFilter />')
     expect(appSource).toContain('path="/default-tracking"')
     expect(appSource).toContain('path="/pinnacle-league-filter"')
     expect(appSource).toContain('path="/crown-league-filter"')
-    expect(layoutSource).toContain("key: '/league-filter'")
+    expect(layoutSource).not.toContain("key: '/league-filter'")
     expect(layoutSource).toContain("key: '/default-tracking'")
     expect(layoutSource).toContain("key: '/pinnacle-league-filter'")
     expect(layoutSource).toContain("key: '/crown-league-filter'")
-    expect(layoutSource).toContain("label: '联赛筛选'")
     expect(layoutSource).toContain("label: '默认追踪'")
     expect(layoutSource).toContain("label: '平博比赛选择'")
     expect(layoutSource).toContain("label: '皇冠比赛选择'")

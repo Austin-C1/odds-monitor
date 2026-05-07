@@ -10,7 +10,6 @@ import { hasToken } from './utils'
 const Login = lazy(() => import('./pages/Login'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const OddsMonitor = lazy(() => import('./pages/OddsMonitor'))
-const LeagueFilter = lazy(() => import('./pages/LeagueFilter'))
 const DefaultTracking = lazy(() => import('./pages/DefaultTracking'))
 const PinnacleLeagueFilter = lazy(() => import('./pages/PinnacleLeagueFilter'))
 const CrownLeagueFilter = lazy(() => import('./pages/CrownLeagueFilter'))
@@ -111,7 +110,7 @@ function App() {
           <Route path="/default-tracking" element={<ProtectedRoute><LazyRoute><DefaultTracking /></LazyRoute></ProtectedRoute>} />
           <Route path="/pinnacle-league-filter" element={<ProtectedRoute><LazyRoute><PinnacleLeagueFilter /></LazyRoute></ProtectedRoute>} />
           <Route path="/crown-league-filter" element={<ProtectedRoute><LazyRoute><CrownLeagueFilter /></LazyRoute></ProtectedRoute>} />
-          <Route path="/league-filter" element={<ProtectedRoute><LazyRoute><LeagueFilter /></LazyRoute></ProtectedRoute>} />
+          <Route path="/league-filter" element={<ProtectedRoute><Navigate to="/default-tracking" replace /></ProtectedRoute>} />
           <Route path="/data-sources/settings" element={<ProtectedRoute><LazyRoute><DataSourceSettings /></LazyRoute></ProtectedRoute>} />
           <Route path="/data-sources/status" element={<ProtectedRoute><LazyRoute><DataSourceStatus /></LazyRoute></ProtectedRoute>} />
           <Route path="/alerts" element={<ProtectedRoute><LazyRoute><AlertRecords /></LazyRoute></ProtectedRoute>} />
