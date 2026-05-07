@@ -5,6 +5,7 @@ import com.wrbug.polymarketbot.entity.OddsMatchLink
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.repository.OddsMatchLinkRepository
 import com.wrbug.polymarketbot.repository.OddsMatchRepository
+import com.wrbug.polymarketbot.repository.OddsPlatformMatchRepository
 import com.wrbug.polymarketbot.util.TextEncodingUtils
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -15,7 +16,8 @@ import kotlin.math.abs
 @Service
 class OddsStandardMatchService(
     private val matchRepository: OddsMatchRepository,
-    private val linkRepository: OddsMatchLinkRepository
+    private val linkRepository: OddsMatchLinkRepository,
+    private val platformMatchRepository: OddsPlatformMatchRepository
 ) {
     @Transactional
     fun resolveStandardMatch(platformMatch: OddsPlatformMatch): OddsMatch {
@@ -103,7 +105,7 @@ class OddsStandardMatchService(
         } else {
             nextStatus
         }
-        val refreshedStartTime = refreshedStartTime(match.startTime, platformMatch.rawStartTime)
+        val refreshedStartTime = preferredStartTime(match, platformMatch)
         if (match.status == refreshedStatus && match.startTime == refreshedStartTime) {
             return match
         }
@@ -125,6 +127,47 @@ class OddsStandardMatchService(
         }
         val diffMinutes = abs(existingStartTime - incomingStartTime) / 60_000
         return if (diffMinutes > 5) incomingStartTime else existingStartTime
+    }
+
+    private fun preferredStartTime(match: OddsMatch, incomingPlatformMatch: OddsPlatformMatch): Long? {
+        val matchId = match.id ?: return refreshedStartTime(match.startTime, incomingPlatformMatch.rawStartTime)
+        val linkedPlatformMatches = linkedPlatformMatchesForStandardMatch(matchId, incomingPlatformMatch)
+        if (linkedPlatformMatches.isEmpty()) {
+            return refreshedStartTime(match.startTime, incomingPlatformMatch.rawStartTime)
+        }
+        val preferred = (linkedPlatformMatches + incomingPlatformMatch)
+            .asSequence()
+            .filter { it.rawStartTime != null }
+            .sortedWith(
+                compareBy<OddsPlatformMatch> { startTimeSourcePriority(it.sourceKey) }
+                    .thenByDescending { it.updatedAt }
+            )
+            .firstOrNull()
+        return preferred?.rawStartTime ?: refreshedStartTime(match.startTime, incomingPlatformMatch.rawStartTime)
+    }
+
+    private fun linkedPlatformMatchesForStandardMatch(
+        matchId: Long,
+        incomingPlatformMatch: OddsPlatformMatch
+    ): List<OddsPlatformMatch> {
+        val linkedPlatformIds = linkRepository.findByMatchId(matchId)
+            .map { it.platformMatchId }
+            .filter { it != incomingPlatformMatch.id }
+            .distinct()
+        return if (linkedPlatformIds.isEmpty()) {
+            emptyList()
+        } else {
+            platformMatchRepository.findAllById(linkedPlatformIds).toList()
+        }
+    }
+
+    private fun startTimeSourcePriority(sourceKey: String): Int {
+        return when (sourceKey) {
+            "crown" -> 0
+            "pinnacle" -> 1
+            "polymarket" -> 2
+            else -> 3
+        }
     }
 
     private fun saveLink(matchId: Long, platformMatchId: Long, confidence: Double, matchMethod: String) {

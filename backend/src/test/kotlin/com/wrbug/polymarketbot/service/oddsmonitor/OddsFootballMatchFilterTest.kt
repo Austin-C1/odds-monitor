@@ -39,6 +39,17 @@ class OddsFootballMatchFilterTest {
     }
 
     @Test
+    fun `ignores fantasy events`() {
+        assertTrue(
+            OddsFootballMatchFilter.shouldIgnore(
+                leagueName = "奇幻赛事",
+                homeTeam = "诺丁汉森林",
+                awayTeam = "斯特拉斯堡"
+            )
+        )
+    }
+
+    @Test
     fun `keeps regular football matches`() {
         assertFalse(
             OddsFootballMatchFilter.shouldIgnore(

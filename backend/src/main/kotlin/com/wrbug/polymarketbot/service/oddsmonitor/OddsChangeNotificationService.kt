@@ -35,6 +35,8 @@ class OddsChangeNotificationService(
     private val logger = LoggerFactory.getLogger(OddsChangeNotificationService::class.java)
     private val expectedSources = listOf("pinnacle", "crown", "polymarket")
     private val pendingAlerts = ConcurrentHashMap<OddsChangeNotificationKey, PendingOddsChangeNotification>()
+    private val oddsMoveBaselines = ConcurrentHashMap<OddsMoveBaselineKey, BigDecimal>()
+    private val marketStates = ConcurrentHashMap<OddsMarketStateKey, Set<String>>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "odds-change-notification-flush").apply { isDaemon = true }
     }
@@ -68,7 +70,8 @@ class OddsChangeNotificationService(
         if (!leagueMatched) {
             return
         }
-        val eligibleConfigs = configsQualifiedBySelectedLeagueRules(market, previousOdds, currentOdds, phaseConfigs)
+        val referenceOdds = oddsMoveReferenceOdds(market, previousOdds, matchPhase, phaseConfigs)
+        val eligibleConfigs = configsQualifiedBySelectedLeagueRules(market, referenceOdds, currentOdds, phaseConfigs)
         if (eligibleConfigs.isEmpty()) {
             return
         }
@@ -80,11 +83,86 @@ class OddsChangeNotificationService(
             leagueName = notificationLeagueName(match, standardMatch),
             matchId = market.matchId,
             market = market,
-            previousOdds = previousOdds ?: BigDecimal.ZERO,
+            previousOdds = referenceOdds ?: previousOdds ?: BigDecimal.ZERO,
             currentOdds = currentOdds,
             configs = eligibleConfigs,
             applyOddsMoveFilter = leagueMatched
         )
+        rememberOddsMoveBaselineAfterAlert(market, currentOdds, matchPhase, eligibleConfigs)
+    }
+
+    fun notifyMarketState(
+        match: OddsPlatformMatch,
+        standardMatch: OddsMatch,
+        marketType: String,
+        currentLines: Set<String>
+    ) {
+        if (OddsFootballMatchFilter.shouldIgnore(match.rawLeagueName, match.rawHomeTeam, match.rawAwayTeam)) {
+            return
+        }
+        val standardMatchId = standardMatch.id ?: return
+        val normalizedLines = currentLines
+            .mapNotNull { OddsLineDisplayFormatter.format(marketType, it)?.takeIf { line -> line.isNotBlank() } }
+            .toSortedSet()
+        val stateKey = OddsMarketStateKey(
+            matchId = standardMatchId,
+            sourceKey = match.sourceKey,
+            marketType = marketType
+        )
+        val previousLines = marketStates.put(stateKey, normalizedLines) ?: return
+        if (previousLines == normalizedLines) {
+            return
+        }
+        if (previousLines.isEmpty() && normalizedLines.isNotEmpty()) {
+            return
+        }
+
+        val configs = loadActiveMonitorTelegramConfigs() ?: return
+        if (configs.isEmpty()) {
+            return
+        }
+        val now = System.currentTimeMillis()
+        val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch, now)
+        val startTime = standardMatch.startTime ?: match.rawStartTime
+        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase, startTime, now) }
+        if (phaseConfigs.isEmpty()) {
+            return
+        }
+        if (!shouldNotifyLeague(match, standardMatch)) {
+            return
+        }
+
+        val isSuspended = normalizedLines.isEmpty()
+        val alertType = if (isSuspended) "market_suspended" else "market_line_change"
+        val titlePrefix = if (isSuspended) "封盘" else "盘口变动"
+        val message = buildMarketStateAlertMessage(
+            titlePrefix = titlePrefix,
+            matchName = notificationMatchName(match, standardMatch),
+            leagueName = notificationLeagueName(match, standardMatch),
+            sourceKey = match.sourceKey,
+            marketType = marketType,
+            previousLines = previousLines,
+            currentLines = normalizedLines,
+            timestampText = DateUtils.formatDateTime()
+        )
+        alertRecordRepository.save(
+            OddsAlertRecord(
+                alertType = alertType,
+                severity = "warning",
+                matchId = standardMatchId,
+                sourceKey = match.sourceKey,
+                title = "$titlePrefix：${TextEncodingUtils.repairMojibake(notificationMatchName(match, standardMatch))}",
+                message = message,
+                createdAt = System.currentTimeMillis()
+            )
+        )
+        runCatching {
+            runBlocking {
+                telegramNotificationService.sendMonitorMessageToConfigs(message, phaseConfigs)
+            }
+        }.onFailure { error ->
+            logger.warn("Failed to send market state Telegram notification: {}", error.message)
+        }
     }
 
     private fun enqueueMergedNotification(
@@ -314,6 +392,49 @@ class OddsChangeNotificationService(
         return standardMatch?.leagueName?.let { filter.shouldIncludeLeague(it) } ?: false
     }
 
+    private fun oddsMoveReferenceOdds(
+        market: OddsMarket,
+        previousOdds: BigDecimal?,
+        matchPhase: OddsMonitorMatchPhase,
+        configs: List<NotificationConfigDto>
+    ): BigDecimal? {
+        if (previousOdds == null) {
+            return null
+        }
+        if (matchPhase != OddsMonitorMatchPhase.PREMATCH) {
+            return previousOdds
+        }
+        if (activeOddsMoveLimits(market.marketType, configs).isEmpty()) {
+            return previousOdds
+        }
+        return oddsMoveBaselines.getOrPut(oddsMoveBaselineKey(market)) { previousOdds }
+    }
+
+    private fun rememberOddsMoveBaselineAfterAlert(
+        market: OddsMarket,
+        currentOdds: BigDecimal,
+        matchPhase: OddsMonitorMatchPhase,
+        configs: List<NotificationConfigDto>
+    ) {
+        if (matchPhase != OddsMonitorMatchPhase.PREMATCH) {
+            return
+        }
+        if (activeOddsMoveLimits(market.marketType, configs).isEmpty()) {
+            return
+        }
+        oddsMoveBaselines[oddsMoveBaselineKey(market)] = currentOdds
+    }
+
+    private fun oddsMoveBaselineKey(market: OddsMarket): OddsMoveBaselineKey {
+        return OddsMoveBaselineKey(
+            matchId = market.matchId,
+            sourceKey = market.sourceKey,
+            marketType = market.marketType,
+            lineValue = market.lineValue,
+            selectionName = market.selectionName
+        )
+    }
+
     private fun notificationMergeKey(
         matchId: Long,
         incomingCandidate: OddsMatchCandidate
@@ -352,6 +473,20 @@ private data class OddsChangeNotificationMarketKey(
     val marketType: String,
     val lineValue: String?,
     val selectionName: String
+)
+
+private data class OddsMoveBaselineKey(
+    val matchId: Long,
+    val sourceKey: String,
+    val marketType: String,
+    val lineValue: String?,
+    val selectionName: String
+)
+
+private data class OddsMarketStateKey(
+    val matchId: Long,
+    val sourceKey: String,
+    val marketType: String
 )
 
 private data class PendingOddsChangeNotification(
@@ -547,6 +682,29 @@ fun buildMergedOddsChangeAlertMessage(
     }
 }
 
+private fun buildMarketStateAlertMessage(
+    titlePrefix: String,
+    matchName: String,
+    leagueName: String,
+    sourceKey: String,
+    marketType: String,
+    previousLines: Set<String>,
+    currentLines: Set<String>,
+    timestampText: String
+): String {
+    val previousText = previousLines.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "无"
+    val currentText = currentLines.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "已封盘"
+    return buildString {
+        appendLine("<b>${escapeHtml("$titlePrefix：${TextEncodingUtils.repairMojibake(matchName)}")}</b>")
+        appendLine()
+        appendLine("联赛：${escapeHtml(TextEncodingUtils.repairMojibake(leagueName))}")
+        appendLine("平台：${platformLabel(sourceKey)}")
+        appendLine("盘口：${marketTypeLabel(marketType)}")
+        appendLine("变化：<code>${escapeHtml(previousText)} -> ${escapeHtml(currentText)}</code>")
+        appendLine("时间：<code>$timestampText</code>")
+    }
+}
+
 private fun OddsMarket.displayLabel(): String {
     val marketLabel = when (marketType.lowercase()) {
         "handicap" -> "让球"
@@ -573,6 +731,15 @@ private fun platformLabel(sourceKey: String): String {
         "crown" -> "皇冠"
         "polymarket" -> "Polymarket"
         else -> sourceKey
+    }
+}
+
+private fun marketTypeLabel(marketType: String): String {
+    return when (marketType.lowercase()) {
+        "handicap" -> "让球"
+        "total" -> "大小球"
+        "moneyline" -> "胜平负"
+        else -> marketType
     }
 }
 

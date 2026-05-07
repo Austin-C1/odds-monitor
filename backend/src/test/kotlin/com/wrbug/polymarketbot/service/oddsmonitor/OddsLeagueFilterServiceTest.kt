@@ -146,6 +146,22 @@ class OddsLeagueFilterServiceTest {
     }
 
     @Test
+    fun `league filter rejects fantasy events`() {
+        val repository = mock(SystemConfigRepository::class.java)
+        `when`(repository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(null)
+
+        val filter = OddsLeagueFilterService(repository)
+
+        assertFalse(filter.shouldIncludeLeague("奇幻赛事"))
+        assertFalse(filter.shouldIncludeLeague("pinnacle", "Fantasy Matchups"))
+        assertFalse(filter.shouldIncludeLeague("crown", "奇幻赛事"))
+        assertEquals(
+            emptyList<String>(),
+            availableOddsLeagueNames(listOf(OddsPlatformMatch(rawLeagueName = "奇幻赛事")))
+        )
+    }
+
+    @Test
     fun `default tracked leagues are always available even before collection`() {
         val leagues = availableOddsLeagueNames(emptyList())
 

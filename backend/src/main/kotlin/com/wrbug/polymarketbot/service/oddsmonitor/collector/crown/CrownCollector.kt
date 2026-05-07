@@ -82,6 +82,18 @@ class CrownCollector(
             if (rows.isEmpty()) {
                 emptyMarketCount += 1
             }
+            oddsChangeNotificationService.notifyMarketState(
+                platformMatch,
+                standardMatch,
+                "handicap",
+                rows.filter { it.marketType == "handicap" }.mapNotNull { it.lineValue }.toSet()
+            )
+            oddsChangeNotificationService.notifyMarketState(
+                platformMatch,
+                standardMatch,
+                "total",
+                rows.filter { it.marketType == "total" }.mapNotNull { it.lineValue }.toSet()
+            )
             rows.forEach { saveOddsRow(platformMatch, standardMatchId, it) }
             rowCount += rows.size
         }

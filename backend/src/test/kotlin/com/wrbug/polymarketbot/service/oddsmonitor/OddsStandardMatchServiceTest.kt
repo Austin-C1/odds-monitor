@@ -5,6 +5,7 @@ import com.wrbug.polymarketbot.entity.OddsMatchLink
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.repository.OddsMatchLinkRepository
 import com.wrbug.polymarketbot.repository.OddsMatchRepository
+import com.wrbug.polymarketbot.repository.OddsPlatformMatchRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.any
@@ -19,7 +20,9 @@ class OddsStandardMatchServiceTest {
     fun `links translated platform match to existing standard match`() {
         val matchRepository = mock(OddsMatchRepository::class.java)
         val linkRepository = mock(OddsMatchLinkRepository::class.java)
+        val platformMatchRepository = mock(OddsPlatformMatchRepository::class.java)
         `when`(linkRepository.findByPlatformMatchId(20)).thenReturn(null)
+        `when`(linkRepository.findByMatchId(10)).thenReturn(emptyList())
         `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(
             listOf(
                 OddsMatch(
@@ -33,7 +36,11 @@ class OddsStandardMatchServiceTest {
         )
         `when`(linkRepository.save(any(OddsMatchLink::class.java))).thenAnswer { it.arguments[0] }
 
-        val standardMatch = OddsStandardMatchService(matchRepository, linkRepository).resolveStandardMatch(
+        val standardMatch = OddsStandardMatchService(
+            matchRepository,
+            linkRepository,
+            platformMatchRepository
+        ).resolveStandardMatch(
             OddsPlatformMatch(
                 id = 20,
                 sourceKey = "crown",
@@ -58,6 +65,7 @@ class OddsStandardMatchServiceTest {
     fun `creates standard match when no candidate is close enough`() {
         val matchRepository = mock(OddsMatchRepository::class.java)
         val linkRepository = mock(OddsMatchLinkRepository::class.java)
+        val platformMatchRepository = mock(OddsPlatformMatchRepository::class.java)
         `when`(linkRepository.findByPlatformMatchId(21)).thenReturn(null)
         `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(emptyList())
         `when`(
@@ -67,7 +75,11 @@ class OddsStandardMatchServiceTest {
         }
         `when`(linkRepository.save(any(OddsMatchLink::class.java))).thenAnswer { it.arguments[0] }
 
-        val standardMatch = OddsStandardMatchService(matchRepository, linkRepository).resolveStandardMatch(
+        val standardMatch = OddsStandardMatchService(
+            matchRepository,
+            linkRepository,
+            platformMatchRepository
+        ).resolveStandardMatch(
             OddsPlatformMatch(
                 id = 21,
                 sourceKey = "pinnacle",
@@ -93,6 +105,7 @@ class OddsStandardMatchServiceTest {
     fun `relinks existing platform match when corrected source data matches a better standard match`() {
         val matchRepository = mock(OddsMatchRepository::class.java)
         val linkRepository = mock(OddsMatchLinkRepository::class.java)
+        val platformMatchRepository = mock(OddsPlatformMatchRepository::class.java)
         val staleCrownMatch = OddsMatch(
             id = 10,
             leagueName = "拉脱维亚超级联赛",
@@ -110,13 +123,18 @@ class OddsStandardMatchServiceTest {
         `when`(linkRepository.findByPlatformMatchId(20)).thenReturn(
             OddsMatchLink(matchId = 10, platformMatchId = 20)
         )
+        `when`(linkRepository.findByMatchId(11)).thenReturn(emptyList())
         `when`(matchRepository.findById(10)).thenReturn(Optional.of(staleCrownMatch))
         `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(
             listOf(staleCrownMatch, pinnacleMatch)
         )
         `when`(linkRepository.save(any(OddsMatchLink::class.java))).thenAnswer { it.arguments[0] }
 
-        val standardMatch = OddsStandardMatchService(matchRepository, linkRepository).resolveStandardMatch(
+        val standardMatch = OddsStandardMatchService(
+            matchRepository,
+            linkRepository,
+            platformMatchRepository
+        ).resolveStandardMatch(
             OddsPlatformMatch(
                 id = 20,
                 sourceKey = "crown",
@@ -140,6 +158,7 @@ class OddsStandardMatchServiceTest {
     fun `refreshes stale standard match start time from corrected platform data`() {
         val matchRepository = mock(OddsMatchRepository::class.java)
         val linkRepository = mock(OddsMatchLinkRepository::class.java)
+        val platformMatchRepository = mock(OddsPlatformMatchRepository::class.java)
         val staleMatch = OddsMatch(
             id = 10,
             leagueName = "拉脱维亚超级联赛",
@@ -151,11 +170,18 @@ class OddsStandardMatchServiceTest {
         `when`(linkRepository.findByPlatformMatchId(20)).thenReturn(
             OddsMatchLink(matchId = 10, platformMatchId = 20)
         )
+        `when`(linkRepository.findByMatchId(10)).thenReturn(
+            listOf(OddsMatchLink(matchId = 10, platformMatchId = 20))
+        )
         `when`(matchRepository.findById(10)).thenReturn(Optional.of(staleMatch))
         `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(listOf(staleMatch))
         `when`(matchRepository.save(any(OddsMatch::class.java))).thenAnswer { it.arguments[0] }
 
-        val standardMatch = OddsStandardMatchService(matchRepository, linkRepository).resolveStandardMatch(
+        val standardMatch = OddsStandardMatchService(
+            matchRepository,
+            linkRepository,
+            platformMatchRepository
+        ).resolveStandardMatch(
             OddsPlatformMatch(
                 id = 20,
                 sourceKey = "crown",
@@ -171,5 +197,65 @@ class OddsStandardMatchServiceTest {
         val captor = ArgumentCaptor.forClass(OddsMatch::class.java)
         verify(matchRepository).save(captor.capture())
         assertEquals(1893456000000L, captor.value.startTime)
+    }
+
+    @Test
+    fun `keeps existing standard start time when pinnacle has timezone offset`() {
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val linkRepository = mock(OddsMatchLinkRepository::class.java)
+        val platformMatchRepository = mock(OddsPlatformMatchRepository::class.java)
+        val crownStartTime = 1893456000000L
+        val pinnacleOffsetStartTime = crownStartTime + 8 * 60 * 60 * 1000
+        val standardMatch = OddsMatch(
+            id = 10,
+            leagueName = "UEFA Europa League",
+            homeTeam = "Aston Villa",
+            awayTeam = "Nottingham Forest",
+            startTime = crownStartTime,
+            status = "scheduled"
+        )
+        `when`(linkRepository.findByPlatformMatchId(21)).thenReturn(
+            OddsMatchLink(matchId = 10, platformMatchId = 21)
+        )
+        `when`(linkRepository.findByMatchId(10)).thenReturn(
+            listOf(
+                OddsMatchLink(matchId = 10, platformMatchId = 20),
+                OddsMatchLink(matchId = 10, platformMatchId = 21)
+            )
+        )
+        `when`(platformMatchRepository.findAllById(listOf(20L))).thenReturn(
+            listOf(
+                OddsPlatformMatch(
+                    id = 20,
+                    sourceKey = "crown",
+                    sourceMatchId = "c1",
+                    rawLeagueName = "UEFA Europa League",
+                    rawHomeTeam = "Aston Villa",
+                    rawAwayTeam = "Nottingham Forest",
+                    rawStartTime = crownStartTime
+                )
+            )
+        )
+        `when`(matchRepository.findById(10)).thenReturn(Optional.of(standardMatch))
+        `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(listOf(standardMatch))
+        `when`(matchRepository.save(any(OddsMatch::class.java))).thenAnswer { it.arguments[0] }
+
+        val resolvedMatch = OddsStandardMatchService(
+            matchRepository,
+            linkRepository,
+            platformMatchRepository
+        ).resolveStandardMatch(
+            OddsPlatformMatch(
+                id = 21,
+                sourceKey = "pinnacle",
+                sourceMatchId = "p1",
+                rawLeagueName = "UEFA Europa League",
+                rawHomeTeam = "Aston Villa",
+                rawAwayTeam = "Nottingham Forest",
+                rawStartTime = pinnacleOffsetStartTime
+            )
+        )
+
+        assertEquals(crownStartTime, resolvedMatch.startTime)
     }
 }

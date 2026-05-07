@@ -195,7 +195,10 @@ fun isSpecialBettingLeague(value: String?): Boolean {
         "specials",
         "playoff",
         "play-offs",
-        "play off"
+        "play off",
+        "奇幻赛事",
+        "fantasy",
+        "virtual"
     ).any { text.contains(it) }
 }
 
