@@ -12,21 +12,22 @@ import java.util.concurrent.TimeUnit
 @Component
 class CrownApiClient(
     private val parser: CrownResponseParser
-) {
+) : CrownMatchGateway {
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    fun login(config: OddsDataSourceConfig): CrownSession {
+    override fun login(config: OddsDataSourceConfig): CrownSession {
         val username = config.username?.takeIf { it.isNotBlank() }
             ?: throw CrownCollectionException("failed_config", "crown username is empty")
         val password = config.password?.takeIf { it.isNotBlank() }
             ?: throw CrownCollectionException("failed_config", "crown password is empty")
+        val baseUrl = config.crownBaseUrl()
 
         val cookieJar = linkedMapOf<String, String>()
         val response = postForm(
-            baseUrl = config.crownBaseUrl(),
+            baseUrl = baseUrl,
             path = "/transform_nl.php",
             form = mapOf(
                 "p" to "chk_login",
@@ -45,11 +46,21 @@ class CrownApiClient(
             val suffix = details.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
             throw CrownCollectionException("failed_login", "crown login failed with status ${login.status}$suffix")
         }
-        return CrownSession(uid = login.uid, cookies = cookieJar.toMap())
+        return CrownSession(
+            uid = login.uid,
+            cookies = cookieJar.toMap(),
+            username = username.trim(),
+            baseUrl = baseUrl,
+            savedAt = System.currentTimeMillis()
+        )
     }
 
     fun fetchMatches(config: OddsDataSourceConfig, session: CrownSession): List<CrownFootballMatch> {
-        val baseUrl = config.crownBaseUrl()
+        return fetchMatchesWithSession(config, session).matches
+    }
+
+    override fun fetchMatchesWithSession(config: OddsDataSourceConfig, session: CrownSession): CrownFetchResult {
+        val baseUrl = session.baseUrl?.takeIf { it.isNotBlank() } ?: config.crownBaseUrl()
         val cookieJar = session.cookies.toMutableMap()
         val listResponse = postForm(
             baseUrl = baseUrl,
@@ -72,13 +83,19 @@ class CrownApiClient(
             ),
             cookies = cookieJar
         )
+        parser.parseSessionFailure(listResponse)?.let { reason ->
+            throw CrownCollectionException("failed_login", "crown session expired: $reason")
+        }
 
         val directMatches = parser.parseDetailGames(listResponse, isLive = false)
         if (directMatches.isNotEmpty()) {
-            return directMatches
+            return CrownFetchResult(
+                matches = directMatches,
+                session = session.copy(cookies = cookieJar.toMap(), savedAt = System.currentTimeMillis())
+            )
         }
 
-        return parser.parseGameList(listResponse).flatMap { item ->
+        val matches = parser.parseGameList(listResponse).flatMap { item ->
             val detailResponse = postForm(
                 baseUrl = baseUrl,
                 path = "/transform.php",
@@ -97,8 +114,15 @@ class CrownApiClient(
                 ),
                 cookies = cookieJar
             )
+            parser.parseSessionFailure(detailResponse)?.let { reason ->
+                throw CrownCollectionException("failed_login", "crown session expired: $reason")
+            }
             parser.parseDetailGames(detailResponse, item.isLive)
         }
+        return CrownFetchResult(
+            matches = matches,
+            session = session.copy(cookies = cookieJar.toMap(), savedAt = System.currentTimeMillis())
+        )
     }
 
     private fun postForm(
@@ -159,11 +183,6 @@ class CrownApiClient(
                 cookies[name] = value
             }
         }
-    }
-
-    private fun OddsDataSourceConfig.crownBaseUrl(): String {
-        val configured = queryKeyword?.trim()?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-        return configured ?: DEFAULT_BASE_URL
     }
 
     companion object {

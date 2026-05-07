@@ -25,6 +25,21 @@ class CrownResponseParser {
         )
     }
 
+    fun parseSessionFailure(xmlText: String): String? {
+        return runCatching {
+            val root = parseRoot(xmlText)
+            val status = root.childText("status")?.takeIf { it.isNotBlank() } ?: return null
+            if (status == "200") {
+                return null
+            }
+            val details = listOfNotNull(
+                root.childText("msg")?.takeIf { it.isNotBlank() },
+                root.childText("code_message")?.takeIf { it.isNotBlank() }
+            )
+            details.takeIf { it.isNotEmpty() }?.joinToString(": ") ?: status
+        }.getOrNull()
+    }
+
     fun parseGameList(xmlText: String): List<CrownGameListItem> {
         val root = parseRoot(xmlText)
         return root.elements("item").mapNotNull { item ->

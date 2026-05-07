@@ -23,7 +23,7 @@ class CrownCollector(
     private val marketRepository: OddsMarketRepository,
     private val snapshotRepository: OddsSnapshotRepository,
     private val collectionLogRepository: OddsCollectionLogRepository,
-    private val apiClient: CrownApiClient,
+    private val sessionManager: CrownSessionManager,
     private val mapper: CrownOddsMapper,
     private val objectMapper: ObjectMapper,
     private val oddsChangeNotificationService: OddsChangeNotificationService,
@@ -42,8 +42,7 @@ class CrownCollector(
 
         val startedAt = System.currentTimeMillis()
         return try {
-            val session = apiClient.login(config)
-            val matches = apiClient.fetchMatches(config, session)
+            val matches = sessionManager.fetchMatches(config)
             if (matches.isEmpty()) {
                 throw CrownCollectionException("failed_empty", "crown returned no football odds")
             }

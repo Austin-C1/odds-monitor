@@ -11,8 +11,24 @@ data class CrownLoginResponse(
 
 data class CrownSession(
     val uid: String,
-    val cookies: Map<String, String>
+    val cookies: Map<String, String>,
+    val username: String? = null,
+    val baseUrl: String? = null,
+    val savedAt: Long = System.currentTimeMillis()
 )
+
+data class CrownFetchResult(
+    val matches: List<CrownFootballMatch>,
+    val session: CrownSession
+)
+
+interface CrownMatchGateway {
+    fun login(config: com.wrbug.polymarketbot.entity.OddsDataSourceConfig): CrownSession
+    fun fetchMatchesWithSession(
+        config: com.wrbug.polymarketbot.entity.OddsDataSourceConfig,
+        session: CrownSession
+    ): CrownFetchResult
+}
 
 data class CrownGameListItem(
     val lid: String,

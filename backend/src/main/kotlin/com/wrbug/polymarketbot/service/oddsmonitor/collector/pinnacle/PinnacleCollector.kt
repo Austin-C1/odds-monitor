@@ -47,7 +47,6 @@ class PinnacleCollector(
         val startedAt = System.currentTimeMillis()
         return try {
             val page = loginService.ensureLoggedIn(config)
-            loginService.openFootballPage(page)
             browserSession.dismissBlockingPrompts()
             browserSession.scrollToBottom()
             val html = browserSession.waitForOddsContent()

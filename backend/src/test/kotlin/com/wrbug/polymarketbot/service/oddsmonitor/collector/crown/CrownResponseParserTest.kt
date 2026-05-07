@@ -44,6 +44,21 @@ class CrownResponseParserTest {
     }
 
     @Test
+    fun `detects crown session failure response`() {
+        val response = """
+            <serverresponse>
+              <status>error</status>
+              <msg>401</msg>
+              <code_message>session expired</code_message>
+            </serverresponse>
+        """.trimIndent()
+
+        val failure = parser.parseSessionFailure(response)
+
+        assertEquals("401: session expired", failure)
+    }
+
+    @Test
     fun `parses crown football detail games into normalized matches`() {
         val response = """
             <serverresponse>
