@@ -37,10 +37,20 @@ const LeagueSelectorPage: React.FC<LeagueSelectorPageProps> = ({
   const [searchQuery, setSearchQuery] = useState('')
 
   const allLeagues = useMemo(() => {
-    return Array.from(new Set([...availableLeagues, ...selectedLeagues]))
+    const normalizedSelectedLeagues = Array.from(new Set(
+      selectedLeagues.map((item) => item.trim()).filter(Boolean)
+    ))
+    const selectedLeagueSet = new Set(normalizedSelectedLeagues)
+    const unselectedAvailableLeagues = Array.from(new Set(
+      availableLeagues
+        .map((item) => item.trim())
+        .filter((item) => item && !selectedLeagueSet.has(item))
+    ))
+      .sort((a, b) => a.localeCompare(b, 'zh-CN'))
+
+    return [...normalizedSelectedLeagues, ...unselectedAvailableLeagues]
       .map((item) => item.trim())
       .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b, 'zh-CN'))
   }, [availableLeagues, selectedLeagues])
 
   const filteredLeagues = useMemo(() => {

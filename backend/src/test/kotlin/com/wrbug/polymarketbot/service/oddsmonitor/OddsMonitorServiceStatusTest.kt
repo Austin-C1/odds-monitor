@@ -128,7 +128,7 @@ class OddsMonitorServiceStatusTest {
             listOf(
                 OddsDataSourceConfig(
                     sourceKey = "crown",
-                    displayName = "鐨囧啝",
+                    displayName = "\u9428\u56E7\u555D",
                     enabled = true,
                     intervalSeconds = 60,
                     createdAt = 1,

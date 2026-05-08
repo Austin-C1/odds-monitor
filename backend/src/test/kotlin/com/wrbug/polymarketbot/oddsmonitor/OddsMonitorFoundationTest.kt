@@ -40,7 +40,10 @@ class OddsMonitorFoundationTest {
             "src/main/kotlin/com/wrbug/polymarketbot/enums/ErrorCode.kt"
         )
         val combined = files.joinToString("\n") { Files.readString(Path.of(it)) }
-        val markers = listOf("骞", "鐨", "鑻", "妯", "璁", "澶", "瑙", "鐧", "瀵", "鏌", "绁", "楠", "鍑", "閿")
+        val markers = listOf(
+            "\u9A9E", "\u9428", "\u947B", "\u59AF", "\u7481", "\u6FB6", "\u7459",
+            "\u9427", "\u7035", "\u93CC", "\u7EC1", "\u6960", "\u9351", "\u95BF"
+        )
 
         markers.forEach { marker ->
             assertFalse(combined.contains(marker), "mojibake marker remains: $marker")
@@ -50,5 +53,23 @@ class OddsMonitorFoundationTest {
         assertTrue(combined.contains("皇冠"))
         assertTrue(combined.contains("免密登录失败"))
         assertTrue(combined.contains("认证令牌无效或已过期"))
+    }
+
+    @Test
+    fun `default league migration text is readable Chinese`() {
+        val sql = Files.readString(Path.of("src/main/resources/db/migration/V57__set_default_league_filters.sql"))
+        val markers = listOf(
+            "\u9A9E", "\u9428", "\u947B", "\u59AF", "\u7481", "\u6FB6", "\u7459",
+            "\u9427", "\u7035", "\u93CC", "\u7EC1", "\u6960", "\u9351", "\u95BF"
+        )
+
+        markers.forEach { marker ->
+            assertFalse(sql.contains(marker), "mojibake marker remains: $marker")
+        }
+
+        assertTrue(sql.contains("芬兰 - 全国联赛"))
+        assertTrue(sql.contains("芬兰甲组联赛"))
+        assertTrue(sql.contains("全平台赔率监控皇冠默认比赛清单"))
+        assertTrue(sql.contains("美国公开赛冠军杯"))
     }
 }

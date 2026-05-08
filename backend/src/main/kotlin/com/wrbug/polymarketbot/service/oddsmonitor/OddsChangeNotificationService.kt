@@ -181,7 +181,7 @@ class OddsChangeNotificationService(
         val key = notificationMergeKey(matchId, candidate)
         val marketKey = OddsChangeNotificationMarketKey(
             marketType = market.marketType,
-            lineValue = market.lineValue,
+            lineValue = market.normalizedLineValue(),
             selectionName = market.selectionName
         )
         pendingAlerts.compute(key) { _, existing ->
@@ -723,6 +723,11 @@ private fun OddsMarket.displayLabel(): String {
     return listOf(marketLabel, selectionLabel, OddsLineDisplayFormatter.format(marketType, lineValue))
         .mapNotNull { it?.takeIf { value -> value.isNotBlank() } }
         .joinToString(" ")
+}
+
+private fun OddsMarket.normalizedLineValue(): String? {
+    return OddsLineDisplayFormatter.format(marketType, lineValue)
+        ?.takeIf { it.isNotBlank() }
 }
 
 private fun platformLabel(sourceKey: String): String {

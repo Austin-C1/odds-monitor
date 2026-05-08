@@ -17,7 +17,22 @@ const activeFiles = [
   'src/pages/CrownLeagueFilter.tsx',
 ]
 
-const mojibakeMarkers = ['闁', '閺', '閻', '婵', '缂', '閹', '鐠', '婢', '濠', '缁', '鑱', '绛涢', '鍏ㄥ', '姣旇']
+const mojibakeMarkers = [
+  '\u95c1',
+  '\u95ba',
+  '\u95bb',
+  '\u5a75',
+  '\u7f02',
+  '\u95b9',
+  '\u9420',
+  '\u5a62',
+  '\u6fe0',
+  '\u7f01',
+  '\u9471',
+  '\u7edb\u6da2',
+  '\u934f\u3125',
+  '\u59e3\u65c7',
+]
 
 describe('active page Chinese text', () => {
   it('does not contain mojibake in active odds-monitor pages', () => {

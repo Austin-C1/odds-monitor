@@ -415,7 +415,7 @@ class OddsMonitorServiceDashboardTest {
     }
 
     @Test
-    fun `dashboard rejects platform matches before platform filter list is saved`() {
+    fun `dashboard uses built in pinnacle defaults before platform filter list is saved`() {
         val configRepository = mock(OddsDataSourceConfigRepository::class.java)
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val logRepository = mock(OddsCollectionLogRepository::class.java)
@@ -454,8 +454,11 @@ class OddsMonitorServiceDashboardTest {
             leagueFilterService = OddsLeagueFilterService(systemConfigRepository)
         ).getDashboard()
 
-        assertTrue(dashboard.matches.isEmpty())
-        assertNull(dashboard.selectedMatch)
+        assertEquals(1, dashboard.matches.size)
+        assertEquals("英格兰超级联赛", dashboard.matches.single().leagueName)
+        assertEquals("阿森纳", dashboard.matches.single().homeTeam)
+        assertEquals("切尔西", dashboard.matches.single().awayTeam)
+        assertEquals(listOf("pinnacle"), dashboard.matches.single().matchedPlatforms)
     }
 
     @Test

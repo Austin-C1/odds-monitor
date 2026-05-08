@@ -19,7 +19,7 @@ class OddsLeagueFilterService(
         val config = systemConfigRepository.findByConfigKey(configKey(normalizedSourceKey))
         val rawValue = config?.configValue?.takeIf { it.isNotBlank() }
         if (rawValue == null) {
-            return if (normalizedSourceKey == null) defaultTrackedLeagueNames() else emptyList()
+            return defaultSelectedLeagues(normalizedSourceKey)
         }
 
         val parsed = runCatching {
@@ -77,19 +77,25 @@ class OddsLeagueFilterService(
         if (normalizedSourceKey == null) {
             return shouldIncludeLeague(leagueName)
         }
-        val config = systemConfigRepository.findByConfigKey(configKey(normalizedSourceKey))
-        if (config == null) {
-            return false
-        }
         val selected = getSelectedLeagues(normalizedSourceKey)
         val normalized = rawOddsLeagueName(leagueName) ?: return false
         return normalized in selected
     }
 
     fun getDefaultTrackingLeagues(): List<String> {
-        return (getSelectedLeagues(null) + getSelectedLeagues("pinnacle") + getSelectedLeagues("crown"))
+        return defaultTrackingLeagueDisplayNames(
+            getSelectedLeagues("pinnacle") + getSelectedLeagues("crown") + getSelectedLeagues(null)
+        )
+    }
+
+    fun expandDefaultTrackingLeagueNames(leagues: List<String>): List<String> {
+        val groupPartsByLabel = defaultTrackingLeagueGroups(
+            getSelectedLeagues("pinnacle") + getSelectedLeagues("crown") + getSelectedLeagues(null)
+        ).associate { it.label to it.parts }
+        return leagues
+            .flatMap { league -> groupPartsByLabel[league] ?: listOf(league) }
+            .mapNotNull { rawOddsLeagueName(it) }
             .distinct()
-            .sortedWith(compareBy<String> { it.any { char -> char.code < 128 } }.thenBy { it })
     }
 
     fun hasSelectedLeaguesConfig(sourceKey: String?): Boolean {
@@ -134,9 +140,22 @@ fun availableRawOddsLeagueNames(matches: List<OddsPlatformMatch>): List<String> 
 
 fun defaultTrackedLeagueNames(): List<String> = defaultTrackedLeagues
 
+private fun defaultSelectedLeagues(sourceKey: String?): List<String> {
+    return when (sourceKey) {
+        "pinnacle" -> defaultPinnacleTrackedLeagues
+        "crown" -> defaultCrownTrackedLeagues
+        null -> defaultTrackedLeagues
+        else -> emptyList()
+    }
+}
+
 fun rawOddsLeagueName(value: String?): String? {
     return TextEncodingUtils.repairMojibake(value.orEmpty())
+        .replace('－', '-')
+        .replace('–', '-')
+        .replace('—', '-')
         .replace(Regex("\\s+"), " ")
+        .replace(Regex("\\s*-\\s*"), " - ")
         .trim()
         .takeIf { it.isNotBlank() }
 }
@@ -206,6 +225,49 @@ private fun leagueAliasKey(value: String): String {
     return value
         .lowercase()
         .replace(Regex("[\\s\\-_/()（）·.]+"), "")
+}
+
+fun defaultTrackingLeagueDisplayNames(leagues: List<String>): List<String> {
+    return defaultTrackingLeagueGroups(leagues).map { it.label }
+}
+
+private data class DefaultTrackingLeagueGroup(
+    val label: String,
+    val parts: List<String>,
+    val order: Int,
+    val matched: Boolean
+)
+
+private data class DefaultTrackingLeagueGroupBuilder(
+    val parts: MutableList<String> = mutableListOf(),
+    var occurrences: Int = 0
+)
+
+private fun defaultTrackingLeagueGroups(leagues: List<String>): List<DefaultTrackingLeagueGroup> {
+    val groups = linkedMapOf<String, DefaultTrackingLeagueGroupBuilder>()
+    leagues.forEach { league ->
+        if (isSpecialBettingLeague(league)) {
+            return@forEach
+        }
+        val rawName = rawOddsLeagueName(league) ?: return@forEach
+        val explicitName = defaultTrackingLeagueAliases[leagueAliasKey(rawName)]
+        val key = explicitName?.let { "mapped:${leagueAliasKey(it)}" } ?: "raw:$rawName"
+        val group = groups.getOrPut(key) { DefaultTrackingLeagueGroupBuilder() }
+        group.occurrences += 1
+        if (group.parts.none { rawOddsLeagueName(it) == rawName }) {
+            group.parts += rawName
+        }
+    }
+    return groups.values
+        .mapIndexed { index, group ->
+            DefaultTrackingLeagueGroup(
+                label = group.parts.joinToString("/"),
+                parts = group.parts,
+                order = index,
+                matched = group.parts.size > 1 || group.occurrences > 1
+            )
+        }
+        .sortedWith(compareBy<DefaultTrackingLeagueGroup> { it.matched }.thenBy { it.order })
 }
 
 private val defaultTrackedLeagues = listOf(
@@ -329,8 +391,90 @@ private val defaultTrackedLeagues = listOf(
     "国际系列"
 )
 
-private val rawLeagueAliases = mapOf(
-    "英超" to "英格兰超级联赛",
+private val defaultCrownTrackedLeagues = defaultTrackedLeagues
+
+private val defaultPinnacleTrackedLeagues = listOf(
+    "英格兰 - 超级联赛",
+    "英格兰 - 冠军联赛",
+    "英格兰 - 甲级联赛",
+    "英格兰 - 乙级联赛",
+    "意大利 - 甲级联赛",
+    "意大利 - 乙级联赛",
+    "德国 - 德甲",
+    "德国 - 德乙",
+    "西班牙 - 西甲",
+    "西班牙 - 乙级联赛",
+    "法国 - 甲级联赛",
+    "法国 - 乙级联赛",
+    "荷兰 - 甲级联赛",
+    "荷兰 - 乙级联赛",
+    "葡萄牙 - 超级联赛",
+    "葡萄牙 - 甲级联赛",
+    "芬兰 - 全国联赛",
+    "芬兰 - 足球超级联赛A",
+    "瑞典 - 超级联赛",
+    "瑞典 - 甲级联赛",
+    "爱尔兰超级联赛",
+    "爱尔兰 - 甲级联赛",
+    "奥地利 - 甲级联赛",
+    "奥地利 - 乙级联赛",
+    "瑞士 - 超级联赛",
+    "瑞士 - 挑战联赛",
+    "丹麦 - 超级联赛",
+    "丹麦 - 甲级联赛",
+    "挪威 - 足球超级联赛",
+    "俄罗斯超级联赛",
+    "比利时 - 职业联赛",
+    "土耳其 - 超级联赛",
+    "希腊超级联赛",
+    "苏格兰 - 足球超级联赛",
+    "波兰 - 超级联赛",
+    "捷克 - 甲级联赛",
+    "罗马尼亚 - 甲级联赛",
+    "冰岛超级联赛",
+    "乌克兰超级联赛",
+    "巴西 - 甲级联赛",
+    "巴西 - 乙级联赛",
+    "阿根廷 - 职业联赛",
+    "智利 - 甲级联赛",
+    "哥伦比亚 - 甲级联赛",
+    "厄瓜多尔 - 甲级联赛",
+    "秘鲁 - 足球甲级联赛",
+    "巴拉圭 - 职业联赛",
+    "美国 - 美国足球大联盟",
+    "美国 - USL锦标赛",
+    "墨西哥 - 足球甲级联赛",
+    "墨西哥 - 墨西哥足球拓展联赛",
+    "日本 - J联赛",
+    "Japan - J2/J3 League",
+    "澳大利亚 - 甲级联赛",
+    "澳大利亚 - NPL维多利亚州",
+    "澳大利亚 - 甲级联赛女子",
+    "韩国 - K联赛1",
+    "沙特阿拉伯 - 职业联赛",
+    "印度 - 超级联赛",
+    "印度尼西亚 - 超级联赛",
+    "巴林 - 超级联赛",
+    "阿联酋 - 职业联赛",
+    "中国 - 超级联赛",
+    "埃及 - 超级联赛",
+    "FIFA - 世界杯",
+    "欧足联 - 冠军联赛",
+    "欧足联 - 欧罗巴联赛",
+    "欧足联 - 欧洲协会联赛",
+    "英格兰足总杯",
+    "德国杯赛",
+    "意大利 - 杯赛",
+    "芬兰 - 杯赛",
+    "奥地利 - 杯赛",
+    "波兰 - 杯赛",
+    "南美足联 - 解放者杯",
+    "南美足协 - 南美俱乐部杯",
+    "阿根廷 - 杯赛",
+    "美国 - 公开杯"
+)
+
+private val defaultPinnacleToCrownLeagueAliases = mapOf(
     "英格兰-超级联赛" to "英格兰超级联赛",
     "英格兰-冠军联赛" to "英格兰冠军联赛",
     "英格兰-甲级联赛" to "英格兰甲组联赛",
@@ -348,11 +492,11 @@ private val rawLeagueAliases = mapOf(
     "葡萄牙-超级联赛" to "葡萄牙超级联赛",
     "葡萄牙-甲级联赛" to "葡萄牙甲组联赛",
     "芬兰-足球超级联赛A" to "芬兰超级联赛",
-    "芬兰-全国联赛" to "芬兰甲组联赛",
     "瑞典-超级联赛" to "瑞典超级联赛",
     "瑞典-甲级联赛" to "瑞典超级甲组联赛",
     "丹麦-超级联赛" to "丹麦超级联赛",
     "丹麦-甲级联赛" to "丹麦甲组联赛",
+    "挪威-足球超级联赛" to "挪威超级联赛",
     "奥地利-甲级联赛" to "奥地利甲组联赛",
     "奥地利-乙级联赛" to "奥地利乙组联赛",
     "瑞士-超级联赛" to "瑞士超级联赛",
@@ -360,6 +504,7 @@ private val rawLeagueAliases = mapOf(
     "爱尔兰-甲级联赛" to "爱尔兰甲组联赛",
     "比利时-职业联赛" to "比利时甲组联赛A",
     "土耳其-超级联赛" to "土耳其超级联赛",
+    "希腊超级联赛" to "希腊超级联赛甲组",
     "苏格兰-足球超级联赛" to "苏格兰超级联赛",
     "波兰-超级联赛" to "波兰超级联赛",
     "罗马尼亚-甲级联赛" to "罗马尼亚甲组联赛",
@@ -384,23 +529,29 @@ private val rawLeagueAliases = mapOf(
     "澳大利亚-甲级联赛女子" to "澳大利亚女子甲组联赛",
     "韩国-K联赛1" to "韩国K甲组联赛",
     "沙特阿拉伯-职业联赛" to "沙特超级联赛",
+    "印度-超级联赛" to "印度超级联赛",
+    "巴林-超级联赛" to "巴林超级联赛",
     "阿联酋-职业联赛" to "阿联酋超级联赛",
     "中国-超级联赛" to "中国超级联赛",
     "印度尼西亚-超级联赛" to "印尼超级联赛",
+    "埃及-超级联赛" to "埃及超级联赛",
     "欧足联-冠军联赛" to "欧洲冠军联赛",
     "欧足联-欧罗巴联赛" to "欧洲联赛",
     "欧足联-欧洲协会联赛" to "欧洲协会联赛",
     "英格兰足总杯" to "英格兰足总杯",
     "德国杯赛" to "德国杯",
     "意大利-杯赛" to "意大利杯",
-    "芬兰-杯赛" to "芬兰杯",
     "奥地利-杯赛" to "奥地利杯",
     "波兰-杯赛" to "波兰杯",
     "南美足联-解放者杯" to "南美自由杯",
     "南美足协-南美俱乐部杯" to "南美洲球会杯",
     "阿根廷-杯赛" to "阿根廷杯",
     "美国-公开杯" to "美国公开赛冠军杯",
-    "FIFA-世界杯" to "世界杯2026(美加墨)",
+    "FIFA-世界杯" to "世界杯2026(美加墨)"
+)
+
+private val rawLeagueAliases = defaultPinnacleToCrownLeagueAliases + mapOf(
+    "英超" to "英格兰超级联赛",
     "EnglandPremierLeague" to "英格兰超级联赛",
     "EnglishPremierLeague" to "英格兰超级联赛",
     "PremierLeague" to "英格兰超级联赛",
@@ -410,6 +561,9 @@ private val rawLeagueAliases = mapOf(
     "MLS" to "美国职业大联盟",
     "MajorLeagueSoccer" to "美国职业大联盟"
 )
+
+private val defaultTrackingLeagueAliases = (defaultTrackedLeagues.associateBy { leagueAliasKey(it) } +
+    defaultPinnacleToCrownLeagueAliases.entries.associate { leagueAliasKey(it.key) to it.value })
 
 private val leagueAliases = (defaultTrackedLeagues.associateBy { leagueAliasKey(it) } +
     rawLeagueAliases.entries.associate { leagueAliasKey(it.key) to it.value })

@@ -830,6 +830,49 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
+    fun `records one merged alert when same handicap line has decimal and split formats`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository
+        )
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapOddsMoveMin = "0.08"))
+            )
+        }
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "pinnacle"),
+            oddsMarket(sourceKey = "pinnacle").copy(lineValue = "0.75"),
+            BigDecimal("1.91"),
+            BigDecimal("2.03")
+        )
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown"),
+            oddsMarket(sourceKey = "crown").copy(lineValue = "0.5/1"),
+            BigDecimal("0.90"),
+            BigDecimal("0.99")
+        )
+        Thread.sleep(1_800)
+
+        val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
+        verify(alertRepository, times(1)).save(captor.capture())
+        assertEquals(1, Regex("盘口：").findAll(captor.value.message).count())
+        assertTrue(captor.value.message.contains("盘口：让球 客队 0.5/1"))
+        assertTrue(captor.value.message.contains("平博：0.91 -> 1.03"))
+        assertTrue(captor.value.message.contains("皇冠：0.90 -> 0.99"))
+    }
+
+    @Test
     fun `merges platform alerts for similar matches even when standard ids differ`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)

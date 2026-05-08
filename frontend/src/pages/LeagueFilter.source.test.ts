@@ -47,4 +47,12 @@ describe('league filter page source', () => {
     expect(pageSource).toContain('placeholder="搜索联赛"')
     expect(pageSource).toContain('搜索结果')
   })
+
+  it('league selector keeps selected leagues first in backend order', () => {
+    const pageSource = fs.readFileSync(path.join(root, 'pages', 'LeagueFilter.tsx'), 'utf8')
+
+    expect(pageSource).toContain('selectedLeagueSet')
+    expect(pageSource).toContain('unselectedAvailableLeagues')
+    expect(pageSource).toContain('return [...normalizedSelectedLeagues, ...unselectedAvailableLeagues]')
+  })
 })

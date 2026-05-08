@@ -253,26 +253,33 @@ class OddsMonitorService(
     fun listLeagueFilter(sourceKey: String? = null): OddsLeagueFilterDto {
         val normalizedSourceKey = normalizeLeagueFilterSourceKey(sourceKey)
         val platformRepository = platformMatchRepository
-        val collected = if (platformRepository == null) {
-            emptyList()
-        } else if (normalizedSourceKey != null) {
-            availableOddsLeagueNames(loadRecentPlatformMatches(platformRepository, normalizedSourceKey), normalizedSourceKey)
-        } else {
-            availableOddsLeagueNames(
-                collectedSourceKeys.flatMap { collectedSourceKey ->
-                    loadRecentPlatformMatches(platformRepository, collectedSourceKey)
-                }
-            )
-        }
         val selected = if (normalizedSourceKey == null) {
             leagueFilterService?.getDefaultTrackingLeagues().orEmpty()
         } else {
             leagueFilterService?.getSelectedLeagues(normalizedSourceKey).orEmpty()
         }
-        val defaultLeagues = if (normalizedSourceKey == null) defaultTrackedLeagueNames() else emptyList()
-        val available = (defaultLeagues + collected + selected)
-            .distinct()
-            .sortedWith(compareBy<String> { it.any { char -> char.code < 128 } }.thenBy { it })
+        val available = if (normalizedSourceKey == null) {
+            val collectedRawLeagues = collectedSourceKeys.flatMap { collectedSourceKey ->
+                platformRepository
+                    ?.let { loadRecentPlatformMatches(it, collectedSourceKey) }
+                    .orEmpty()
+                    .map { it.rawLeagueName }
+            }
+            defaultTrackingLeagueDisplayNames(
+                leagueFilterService?.expandDefaultTrackingLeagueNames(selected).orEmpty() +
+                    leagueFilterService?.getSelectedLeagues("pinnacle").orEmpty() +
+                    leagueFilterService?.getSelectedLeagues("crown").orEmpty() +
+                    defaultTrackedLeagueNames() +
+                    collectedRawLeagues
+            )
+        } else {
+            val collected = platformRepository
+                ?.let { availableOddsLeagueNames(loadRecentPlatformMatches(it, normalizedSourceKey), normalizedSourceKey) }
+                .orEmpty()
+            (collected + selected)
+                .distinct()
+                .sortedWith(compareBy<String> { it.any { char -> char.code < 128 } }.thenBy { it })
+        }
         return OddsLeagueFilterDto(
             availableLeagues = available,
             selectedLeagues = selected
@@ -283,16 +290,20 @@ class OddsMonitorService(
         val normalizedSourceKey = normalizeLeagueFilterSourceKey(sourceKey)
         val filterService = leagueFilterService
         if (normalizedSourceKey == null) {
-            val selectedRawNames = selectedLeagues.mapNotNull { rawOddsLeagueName(it) }.toSet()
+            val selectedParts = filterService?.expandDefaultTrackingLeagueNames(selectedLeagues) ?: selectedLeagues
+            val selectedRawNames = selectedParts.mapNotNull { rawOddsLeagueName(it) }.toSet()
+            val selectedCanonicalNames = selectedParts.mapNotNull { canonicalOddsLeagueName(it) }.toSet()
             listOf("pinnacle", "crown").forEach { source ->
-                if (filterService?.hasSelectedLeaguesConfig(source) != true) {
-                    return@forEach
-                }
-                val retained = filterService.getSelectedLeagues(source)
+                val retained = filterService?.getSelectedLeagues(source)
                     .orEmpty()
-                    .filter { rawOddsLeagueName(it) in selectedRawNames }
-                filterService.saveSelectedLeagues(retained, source)
+                    .filter { league ->
+                        rawOddsLeagueName(league) in selectedRawNames ||
+                            canonicalOddsLeagueName(league) in selectedCanonicalNames
+                    }
+                filterService?.saveSelectedLeagues(retained, source)
             }
+            filterService?.saveSelectedLeagues(selectedCanonicalNames.toList(), null)
+            return listLeagueFilter(null)
         }
         filterService?.saveSelectedLeagues(selectedLeagues, normalizedSourceKey)
         return listLeagueFilter(normalizedSourceKey)
