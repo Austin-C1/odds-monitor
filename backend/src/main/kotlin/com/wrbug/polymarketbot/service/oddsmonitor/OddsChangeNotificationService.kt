@@ -35,7 +35,6 @@ class OddsChangeNotificationService(
     private val logger = LoggerFactory.getLogger(OddsChangeNotificationService::class.java)
     private val expectedSources = listOf("pinnacle", "crown", "polymarket")
     private val pendingAlerts = ConcurrentHashMap<OddsChangeNotificationKey, PendingOddsChangeNotification>()
-    private val oddsMoveBaselines = ConcurrentHashMap<OddsMoveBaselineKey, BigDecimal>()
     private val marketStates = ConcurrentHashMap<OddsMarketStateKey, Set<String>>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "odds-change-notification-flush").apply { isDaemon = true }
@@ -60,8 +59,7 @@ class OddsChangeNotificationService(
         }
         val now = System.currentTimeMillis()
         val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch, now)
-        val startTime = standardMatch?.startTime ?: match.rawStartTime
-        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase, startTime, now) }
+        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase) }
         if (phaseConfigs.isEmpty()) {
             return
         }
@@ -70,8 +68,7 @@ class OddsChangeNotificationService(
         if (!leagueMatched) {
             return
         }
-        val referenceOdds = oddsMoveReferenceOdds(market, previousOdds, matchPhase, phaseConfigs)
-        val eligibleConfigs = configsQualifiedBySelectedLeagueRules(market, referenceOdds, currentOdds, phaseConfigs)
+        val eligibleConfigs = configsQualifiedBySelectedLeagueRules(market, previousOdds, currentOdds, phaseConfigs)
         if (eligibleConfigs.isEmpty()) {
             return
         }
@@ -83,12 +80,11 @@ class OddsChangeNotificationService(
             leagueName = notificationLeagueName(match, standardMatch),
             matchId = market.matchId,
             market = market,
-            previousOdds = referenceOdds ?: previousOdds ?: BigDecimal.ZERO,
+            previousOdds = previousOdds ?: BigDecimal.ZERO,
             currentOdds = currentOdds,
             configs = eligibleConfigs,
             applyOddsMoveFilter = leagueMatched
         )
-        rememberOddsMoveBaselineAfterAlert(market, currentOdds, matchPhase, eligibleConfigs)
     }
 
     fun notifyMarketState(
@@ -123,8 +119,7 @@ class OddsChangeNotificationService(
         }
         val now = System.currentTimeMillis()
         val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch, now)
-        val startTime = standardMatch.startTime ?: match.rawStartTime
-        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase, startTime, now) }
+        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase) }
         if (phaseConfigs.isEmpty()) {
             return
         }
@@ -156,13 +151,6 @@ class OddsChangeNotificationService(
                 createdAt = System.currentTimeMillis()
             )
         )
-        runCatching {
-            runBlocking {
-                telegramNotificationService.sendMonitorMessageToConfigs(message, phaseConfigs)
-            }
-        }.onFailure { error ->
-            logger.warn("Failed to send market state Telegram notification: {}", error.message)
-        }
     }
 
     private fun enqueueMergedNotification(
@@ -392,49 +380,6 @@ class OddsChangeNotificationService(
         return standardMatch?.leagueName?.let { filter.shouldIncludeLeague(it) } ?: false
     }
 
-    private fun oddsMoveReferenceOdds(
-        market: OddsMarket,
-        previousOdds: BigDecimal?,
-        matchPhase: OddsMonitorMatchPhase,
-        configs: List<NotificationConfigDto>
-    ): BigDecimal? {
-        if (previousOdds == null) {
-            return null
-        }
-        if (matchPhase != OddsMonitorMatchPhase.PREMATCH) {
-            return previousOdds
-        }
-        if (activeOddsMoveLimits(market.marketType, configs).isEmpty()) {
-            return previousOdds
-        }
-        return oddsMoveBaselines.getOrPut(oddsMoveBaselineKey(market)) { previousOdds }
-    }
-
-    private fun rememberOddsMoveBaselineAfterAlert(
-        market: OddsMarket,
-        currentOdds: BigDecimal,
-        matchPhase: OddsMonitorMatchPhase,
-        configs: List<NotificationConfigDto>
-    ) {
-        if (matchPhase != OddsMonitorMatchPhase.PREMATCH) {
-            return
-        }
-        if (activeOddsMoveLimits(market.marketType, configs).isEmpty()) {
-            return
-        }
-        oddsMoveBaselines[oddsMoveBaselineKey(market)] = currentOdds
-    }
-
-    private fun oddsMoveBaselineKey(market: OddsMarket): OddsMoveBaselineKey {
-        return OddsMoveBaselineKey(
-            matchId = market.matchId,
-            sourceKey = market.sourceKey,
-            marketType = market.marketType,
-            lineValue = market.lineValue,
-            selectionName = market.selectionName
-        )
-    }
-
     private fun notificationMergeKey(
         matchId: Long,
         incomingCandidate: OddsMatchCandidate
@@ -470,14 +415,6 @@ private data class OddsChangeNotificationKey(
 )
 
 private data class OddsChangeNotificationMarketKey(
-    val marketType: String,
-    val lineValue: String?,
-    val selectionName: String
-)
-
-private data class OddsMoveBaselineKey(
-    val matchId: Long,
-    val sourceKey: String,
     val marketType: String,
     val lineValue: String?,
     val selectionName: String

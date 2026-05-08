@@ -90,7 +90,6 @@ const TEST_NOTIFICATION_MESSAGE = '这是一条测试消息'
 type RobotConfigOverrides = {
   monitorModeEnabled?: boolean
   liveOnlyModeEnabled?: boolean
-  prematchWindowMinutes?: number | null
   handicapCombinedWaterMin?: number | null
   totalCombinedWaterMin?: number | null
   handicapOddsMoveMin?: number | null
@@ -109,24 +108,12 @@ type OddsMoveFilterDraft = {
   moneylineOddsMoveMin: number | null
 }
 
-type PrematchWindowDraft = {
-  prematchWindowMinutes: number | null
-}
-
 const normalizeWaterLimit = (value: unknown): number | null => {
   if (value === null || value === undefined || value === '') {
     return null
   }
   const numericValue = Number(value)
   return Number.isFinite(numericValue) ? numericValue : null
-}
-
-const normalizePrematchWindow = (value: unknown): number | null => {
-  if (value === null || value === undefined || value === '') {
-    return null
-  }
-  const numericValue = Number(value)
-  return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : null
 }
 
 const getWaterLimitDraft = (config: NotificationConfig): WaterLimitDraft => {
@@ -146,13 +133,6 @@ const getOddsMoveFilterDraft = (config: NotificationConfig): OddsMoveFilterDraft
   }
 }
 
-const getPrematchWindowDraft = (config: NotificationConfig): PrematchWindowDraft => {
-  const telegramConfig = extractTelegramConfig(config)
-  return {
-    prematchWindowMinutes: normalizePrematchWindow(telegramConfig.prematchWindowMinutes),
-  }
-}
-
 const NotificationSettingsPage: React.FC = () => {
   const { t } = useTranslation()
   const isMobile = useMediaQuery({ maxWidth: 768 })
@@ -162,8 +142,6 @@ const NotificationSettingsPage: React.FC = () => {
   const [waterLimitModalConfig, setWaterLimitModalConfig] = useState<NotificationConfig | null>(null)
   const [oddsMoveFilterDrafts, setOddsMoveFilterDrafts] = useState<Record<number, OddsMoveFilterDraft>>({})
   const [oddsMoveFilterModalConfig, setOddsMoveFilterModalConfig] = useState<NotificationConfig | null>(null)
-  const [prematchWindowDrafts, setPrematchWindowDrafts] = useState<Record<number, PrematchWindowDraft>>({})
-  const [prematchWindowModalConfig, setPrematchWindowModalConfig] = useState<NotificationConfig | null>(null)
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingConfig, setEditingConfig] = useState<NotificationConfig | null>(null)
@@ -205,18 +183,15 @@ const NotificationSettingsPage: React.FC = () => {
         const nextConfigs = response.data.data
         const nextDrafts: Record<number, WaterLimitDraft> = {}
         const nextMoveDrafts: Record<number, OddsMoveFilterDraft> = {}
-        const nextPrematchDrafts: Record<number, PrematchWindowDraft> = {}
         nextConfigs.forEach((config) => {
           if (config.id) {
             nextDrafts[config.id] = getWaterLimitDraft(config)
             nextMoveDrafts[config.id] = getOddsMoveFilterDraft(config)
-            nextPrematchDrafts[config.id] = getPrematchWindowDraft(config)
           }
         })
         setConfigs(nextConfigs)
         setWaterLimitDrafts(nextDrafts)
         setOddsMoveFilterDrafts(nextMoveDrafts)
-        setPrematchWindowDrafts(nextPrematchDrafts)
       } else {
         message.error(response.data.msg || t('notificationSettings.fetchFailed'))
       }
@@ -289,7 +264,6 @@ const NotificationSettingsPage: React.FC = () => {
         chatIds: '',
         monitorModeEnabled: false,
         liveOnlyModeEnabled: false,
-        prematchWindowMinutes: null,
         marketBettingQueryEnabled: false,
         handicapCombinedWaterMin: null,
         totalCombinedWaterMin: null,
@@ -315,7 +289,6 @@ const NotificationSettingsPage: React.FC = () => {
         chatIds,
         monitorModeEnabled: Boolean(telegramConfig.monitorModeEnabled),
         liveOnlyModeEnabled: Boolean(telegramConfig.liveOnlyModeEnabled),
-        prematchWindowMinutes: normalizePrematchWindow(telegramConfig.prematchWindowMinutes),
         marketBettingQueryEnabled: Boolean(telegramConfig.marketBettingQueryEnabled),
         handicapCombinedWaterMin: normalizeWaterLimit(telegramConfig.handicapCombinedWaterMin),
         totalCombinedWaterMin: normalizeWaterLimit(telegramConfig.totalCombinedWaterMin),
@@ -343,7 +316,6 @@ const NotificationSettingsPage: React.FC = () => {
         chatIds: normalizeChatIds(telegramConfig.chatIds),
         monitorModeEnabled: overrides.monitorModeEnabled ?? Boolean(telegramConfig.monitorModeEnabled),
         liveOnlyModeEnabled: overrides.liveOnlyModeEnabled ?? Boolean(telegramConfig.liveOnlyModeEnabled),
-        prematchWindowMinutes: overrides.prematchWindowMinutes ?? normalizePrematchWindow(telegramConfig.prematchWindowMinutes),
         marketBettingQueryEnabled: Boolean(telegramConfig.marketBettingQueryEnabled),
         marketBettingDailyReportEnabled: Boolean(telegramConfig.marketBettingDailyReportEnabled),
         marketBettingDailyReportTime: telegramConfig.marketBettingDailyReportTime || '02:00',
@@ -482,36 +454,6 @@ const NotificationSettingsPage: React.FC = () => {
     }
   }
 
-  const openPrematchWindowModal = (config: NotificationConfig) => {
-    if (config.id) {
-      setPrematchWindowDrafts((current) => ({
-        ...current,
-        [config.id!]: current[config.id!] ?? getPrematchWindowDraft(config),
-      }))
-    }
-    setPrematchWindowModalConfig(config)
-  }
-
-  const handleUpdatePrematchWindow = async (config: NotificationConfig) => {
-    const draft = config.id ? prematchWindowDrafts[config.id] : undefined
-    const overrides: RobotConfigOverrides = {
-      prematchWindowMinutes: normalizePrematchWindow(draft?.prematchWindowMinutes),
-    }
-    try {
-      const response = await apiService.notifications.update(buildConfigPayload(config, overrides))
-      if (response.data.code === 0) {
-        message.success(t('notificationSettings.updateSuccess'))
-        setPrematchWindowModalConfig(null)
-        fetchConfigs()
-      } else {
-        message.error(response.data.msg || t('notificationSettings.updateFailed'))
-      }
-    } catch (error) {
-      showApiError(error, t('notificationSettings.updateFailed'))
-      fetchConfigs()
-    }
-  }
-
   const handleTestConfig = async (config: NotificationConfig) => {
     if (!isConfigReadyForTest(config)) {
       message.warning(t('notificationSettings.testUnavailable'))
@@ -548,7 +490,6 @@ const NotificationSettingsPage: React.FC = () => {
           chatIds: normalizeChatIds(values.config.chatIds),
           monitorModeEnabled: Boolean(values.config.monitorModeEnabled),
           liveOnlyModeEnabled: Boolean(values.config.liveOnlyModeEnabled),
-          prematchWindowMinutes: normalizePrematchWindow(values.config.prematchWindowMinutes),
           marketBettingQueryEnabled: editingConfig ? Boolean(extractTelegramConfig(editingConfig).marketBettingQueryEnabled) : false,
           marketBettingDailyReportEnabled: editingConfig ? Boolean(extractTelegramConfig(editingConfig).marketBettingDailyReportEnabled) : false,
           marketBettingDailyReportTime: editingConfig ? extractTelegramConfig(editingConfig).marketBettingDailyReportTime || '02:00' : '02:00',
@@ -862,45 +803,6 @@ const NotificationSettingsPage: React.FC = () => {
     return `动水限制：让球 ${handicap} / 大小球 ${total} / 胜平负 ${moneyline}`
   }
 
-  const renderPrematchWindowControls = (record: NotificationConfig) => {
-    const draft = record.id ? prematchWindowDrafts[record.id] ?? getPrematchWindowDraft(record) : getPrematchWindowDraft(record)
-    const updateDraft = (value: number | null) => {
-      if (!record.id) return
-      setPrematchWindowDrafts((current) => ({
-        ...current,
-        [record.id!]: {
-          prematchWindowMinutes: normalizePrematchWindow(value),
-        },
-      }))
-    }
-
-    return (
-      <Space direction="vertical" size={8}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          只在赛前模式生效；不填表示不限制赛前比赛时间。比赛开赛后由滚球模式处理。
-        </Text>
-        <Space size={6} wrap>
-          <Text style={{ width: 110 }}>开赛前分钟 ≤</Text>
-          <InputNumber
-            min={1}
-            max={10080}
-            step={1}
-            precision={0}
-            value={draft.prematchWindowMinutes}
-            placeholder="不限"
-            onChange={(value) => updateDraft(value)}
-            style={{ width: 160 }}
-          />
-        </Space>
-      </Space>
-    )
-  }
-
-  const formatPrematchWindowSummary = (record: NotificationConfig) => {
-    const minutes = getPrematchWindowDraft(record).prematchWindowMinutes
-    return `赛前区间：${minutes ? `${minutes} 分钟` : '不限'}`
-  }
-
   const configColumns = [
     {
       title: t('notificationSettings.configName'),
@@ -950,18 +852,12 @@ const NotificationSettingsPage: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 12 }}>
               {formatOddsMoveFilterSummary(record)}
             </Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {formatPrematchWindowSummary(record)}
-            </Text>
           </Space>
           <Button size="small" onClick={() => openWaterLimitModal(record)}>
             {formatWaterLimitSummary(record)}
           </Button>
           <Button size="small" onClick={() => openOddsMoveFilterModal(record)}>
             {formatOddsMoveFilterSummary(record)}
-          </Button>
-          <Button size="small" onClick={() => openPrematchWindowModal(record)}>
-            {formatPrematchWindowSummary(record)}
           </Button>
         </Space>
       ),
@@ -1177,9 +1073,6 @@ const NotificationSettingsPage: React.FC = () => {
           <Form.Item name={['config', 'liveOnlyModeEnabled']} hidden>
             <Input />
           </Form.Item>
-          <Form.Item name={['config', 'prematchWindowMinutes']} hidden>
-            <InputNumber />
-          </Form.Item>
           <Form.Item name={['config', 'handicapCombinedWaterMin']} hidden>
             <InputNumber />
           </Form.Item>
@@ -1229,17 +1122,6 @@ const NotificationSettingsPage: React.FC = () => {
         cancelText={t('common.cancel')}
       >
         {oddsMoveFilterModalConfig && renderOddsMoveFilterControls(oddsMoveFilterModalConfig)}
-      </Modal>
-      <Modal
-        title="赛前区间盯梢"
-        open={Boolean(prematchWindowModalConfig)}
-        onOk={() => prematchWindowModalConfig && void handleUpdatePrematchWindow(prematchWindowModalConfig)}
-        onCancel={() => setPrematchWindowModalConfig(null)}
-        width={isMobile ? '90%' : 420}
-        okText={t('common.save')}
-        cancelText={t('common.cancel')}
-      >
-        {prematchWindowModalConfig && renderPrematchWindowControls(prematchWindowModalConfig)}
       </Modal>
     </div>
   )

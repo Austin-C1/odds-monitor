@@ -21,6 +21,8 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
+import org.mockito.ArgumentMatchers.anyList
+import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.times
@@ -211,7 +213,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `prematch window suppresses matches outside configured minutes`() {
+    fun `prematch monitor ignores removed prematch window limit`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -240,7 +242,7 @@ class OddsChangeNotificationServiceTest {
         service.notifyIfChanged(platformMatch(startTime = now + 45 * 60_000), oddsMarket(), BigDecimal("0.88"), BigDecimal("0.98"))
         Thread.sleep(1_800)
 
-        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
     }
 
     @Test
@@ -277,7 +279,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `prematch odds move alert uses cumulative move from tracked baseline`() {
+    fun `prematch odds move alert compares only against previous collected odds`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -310,7 +312,7 @@ class OddsChangeNotificationServiceTest {
         service.notifyIfChanged(match, market, BigDecimal("0.94"), BigDecimal("0.96"))
         Thread.sleep(1_800)
 
-        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
     }
 
     @Test
@@ -343,6 +345,9 @@ class OddsChangeNotificationServiceTest {
         service.notifyMarketState(match, standardMatch, "handicap", setOf("1"))
 
         verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+        runBlocking {
+            verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
+        }
     }
 
     @Test
@@ -375,6 +380,9 @@ class OddsChangeNotificationServiceTest {
         service.notifyMarketState(match, standardMatch, "total", emptySet())
 
         verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+        runBlocking {
+            verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
+        }
     }
 
     @Test
