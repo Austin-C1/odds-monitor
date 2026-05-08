@@ -5,7 +5,7 @@ import path from 'node:path'
 const root = path.resolve(__dirname, '..')
 
 describe('NotificationSettingsPage alert filter settings', () => {
-  it('shows water and odds move filters without order amount or prematch window settings', () => {
+  it('shows combined water and odds move filters for odds monitor alerts without old order amount settings', () => {
     const source = fs.readFileSync(path.join(root, 'pages', 'NotificationSettingsPage.tsx'), 'utf8')
 
     expect(source).not.toContain('orderNotificationMinAmountUsdc')
@@ -16,16 +16,29 @@ describe('NotificationSettingsPage alert filter settings', () => {
     expect(source).toContain('max={2}')
     expect(source).toContain('waterLimitModalConfig')
     expect(source).toContain('openWaterLimitModal(record)')
+    expect(source).toContain('title="水位限制"')
+    expect(source).toContain('Polymarket')
+    expect(source).toContain('不受合水限制')
+    expect(source).toContain('让球合水')
+    expect(source).toContain('大小球合水')
     expect(source).toContain('oddsMoveFilterModalConfig')
     expect(source).toContain('openOddsMoveFilterModal(record)')
+    expect(source).toContain('title="动水筛选"')
     expect(source).toContain('handicapOddsMoveMin')
     expect(source).toContain('totalOddsMoveMin')
     expect(source).toContain('moneylineOddsMoveMin')
+    expect(source).toContain('只推送水位变化达到阈值')
     expect(source).toContain('{formatWaterLimitSummary(record)}')
     expect(source).toContain('{formatOddsMoveFilterSummary(record)}')
-    expect(source).not.toContain('prematchWindowModalConfig')
-    expect(source).not.toContain('openPrematchWindowModal(record)')
-    expect(source).not.toContain('{formatPrematchWindowSummary(record)}')
+    expect(source).toContain('prematchWindowMinutes')
+    expect(source).toContain('prematchWindowModalConfig')
+    expect(source).toContain('openPrematchWindowModal(record)')
+    expect(source).toContain('赛前区间盯梢')
+    expect(source).toContain('比赛开赛后由滚球模式处理')
+    expect(source).toContain('{formatPrematchWindowSummary(record)}')
+    expect(source).not.toContain('只看滚球')
+    expect(source).not.toContain('只看赛前')
+    expect(source).not.toContain('{getMonitorModeEnabled(record) && (')
     expect(source).not.toContain('fetchLeaders')
   })
 
