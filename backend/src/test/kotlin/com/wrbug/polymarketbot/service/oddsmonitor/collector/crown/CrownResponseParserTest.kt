@@ -59,6 +59,21 @@ class CrownResponseParserTest {
     }
 
     @Test
+    fun `detects crown double login response as session failure`() {
+        val response = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <serverresponse>
+              <code>error</code>
+              <msg>doubleLogin</msg>
+            </serverresponse>
+        """.trimIndent()
+
+        val failure = parser.parseSessionFailure(response)
+
+        assertEquals("doubleLogin", failure)
+    }
+
+    @Test
     fun `parses crown football detail games into normalized matches`() {
         val response = """
             <serverresponse>

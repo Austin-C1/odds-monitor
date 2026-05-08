@@ -28,15 +28,17 @@ class CrownResponseParser {
     fun parseSessionFailure(xmlText: String): String? {
         return runCatching {
             val root = parseRoot(xmlText)
-            val status = root.childText("status")?.takeIf { it.isNotBlank() } ?: return null
-            if (status == "200") {
+            val status = root.childText("status")?.takeIf { it.isNotBlank() }
+            val code = root.childText("code")?.takeIf { it.isNotBlank() }
+            val result = status ?: code ?: return null
+            if (result == "200" || result.equals("success", ignoreCase = true)) {
                 return null
             }
             val details = listOfNotNull(
                 root.childText("msg")?.takeIf { it.isNotBlank() },
                 root.childText("code_message")?.takeIf { it.isNotBlank() }
             )
-            details.takeIf { it.isNotEmpty() }?.joinToString(": ") ?: status
+            details.takeIf { it.isNotEmpty() }?.joinToString(": ") ?: result
         }.getOrNull()
     }
 
