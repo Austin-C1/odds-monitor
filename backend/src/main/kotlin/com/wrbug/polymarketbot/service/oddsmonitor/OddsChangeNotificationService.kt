@@ -36,6 +36,7 @@ class OddsChangeNotificationService(
     private val expectedSources = listOf("pinnacle", "crown", "polymarket")
     private val pendingAlerts = ConcurrentHashMap<OddsChangeNotificationKey, PendingOddsChangeNotification>()
     private val marketStates = ConcurrentHashMap<OddsMarketStateKey, Set<String>>()
+    private val oddsBaselineResets = ConcurrentHashMap<OddsMarketStateKey, OddsBaselineReset>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "odds-change-notification-flush").apply { isDaemon = true }
     }
@@ -50,6 +51,9 @@ class OddsChangeNotificationService(
             return
         }
         if (!hasOddsChanged(previousOdds, currentOdds)) {
+            return
+        }
+        if (shouldResetOddsBaselineAfterLineChange(market)) {
             return
         }
         val standardMatch = matchRepository?.findById(market.matchId)?.orElse(null)
@@ -110,6 +114,7 @@ class OddsChangeNotificationService(
         if (previousLines == normalizedLines) {
             return
         }
+        updateOddsBaselineReset(stateKey, normalizedLines)
         if (previousLines.isEmpty() && normalizedLines.isNotEmpty()) {
             return
         }
@@ -153,6 +158,36 @@ class OddsChangeNotificationService(
                 createdAt = System.currentTimeMillis()
             )
         )
+    }
+
+    private fun updateOddsBaselineReset(stateKey: OddsMarketStateKey, normalizedLines: Set<String>) {
+        if (normalizedLines.isEmpty()) {
+            oddsBaselineResets.remove(stateKey)
+            return
+        }
+        oddsBaselineResets[stateKey] = OddsBaselineReset(
+            currentLines = normalizedLines,
+            suppressedMarkets = ConcurrentHashMap.newKeySet()
+        )
+    }
+
+    private fun shouldResetOddsBaselineAfterLineChange(market: OddsMarket): Boolean {
+        val stateKey = OddsMarketStateKey(
+            matchId = market.matchId,
+            sourceKey = market.sourceKey,
+            marketType = market.marketType
+        )
+        val reset = oddsBaselineResets[stateKey] ?: return false
+        val normalizedLine = market.normalizedLineValue() ?: return false
+        if (normalizedLine !in reset.currentLines) {
+            return false
+        }
+        val marketKey = OddsChangeNotificationMarketKey(
+            marketType = market.marketType,
+            lineValue = normalizedLine,
+            selectionName = market.selectionName
+        )
+        return reset.suppressedMarkets.add(marketKey)
     }
 
     private fun enqueueMergedNotification(
@@ -426,6 +461,11 @@ private data class OddsMarketStateKey(
     val matchId: Long,
     val sourceKey: String,
     val marketType: String
+)
+
+private data class OddsBaselineReset(
+    val currentLines: Set<String>,
+    val suppressedMarkets: MutableSet<OddsChangeNotificationMarketKey>
 )
 
 private data class PendingOddsChangeNotification(

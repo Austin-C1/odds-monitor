@@ -351,6 +351,88 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
+    fun `line change resets odds baseline for any market line`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val now = System.currentTimeMillis()
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository
+        )
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(liveOnlyModeEnabled = false, prematchWindowMinutes = 30, totalOddsMoveMin = "0.06"))
+            )
+        }
+        val standardMatch = OddsMatch(id = 100, startTime = now + 20 * 60_000, status = "scheduled")
+        val match = platformMatch(startTime = now + 20 * 60_000)
+        `when`(matchRepository.findById(100)).thenReturn(Optional.of(standardMatch))
+
+        service.notifyMarketState(match, standardMatch, "total", setOf("2.5"))
+        service.notifyMarketState(match, standardMatch, "total", setOf("3"))
+        service.notifyIfChanged(
+            match,
+            oddsMarket(marketType = "total", lineValue = "3", selectionName = "over"),
+            BigDecimal("0.86"),
+            BigDecimal("1.17")
+        )
+        Thread.sleep(1_800)
+
+        val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
+        verify(alertRepository, times(1)).save(captor.capture())
+        assertEquals("market_line_change", captor.value.alertType)
+    }
+
+    @Test
+    fun `line change baseline reset only suppresses first odds comparison`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val now = System.currentTimeMillis()
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository
+        )
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(liveOnlyModeEnabled = false, prematchWindowMinutes = 30, totalOddsMoveMin = "0.06"))
+            )
+        }
+        val standardMatch = OddsMatch(id = 100, startTime = now + 20 * 60_000, status = "scheduled")
+        val match = platformMatch(startTime = now + 20 * 60_000)
+        val market = oddsMarket(marketType = "total", lineValue = "3", selectionName = "over")
+        `when`(matchRepository.findById(100)).thenReturn(Optional.of(standardMatch))
+
+        service.notifyMarketState(match, standardMatch, "total", setOf("2.5"))
+        service.notifyMarketState(match, standardMatch, "total", setOf("3"))
+        service.notifyIfChanged(match, market, BigDecimal("0.86"), BigDecimal("1.17"))
+        service.notifyIfChanged(match, market, BigDecimal("1.17"), BigDecimal("1.24"))
+        Thread.sleep(1_800)
+
+        val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
+        verify(alertRepository, times(2)).save(captor.capture())
+        assertTrue(captor.allValues.any { it.alertType == "market_line_change" })
+        assertTrue(captor.allValues.any { it.alertType == "odds_change" })
+    }
+
+    @Test
     fun `prematch monitor alerts when market is suspended`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
@@ -1017,12 +1099,18 @@ class OddsChangeNotificationServiceTest {
         rawStartTime = startTime
     )
 
-    private fun oddsMarket(sourceKey: String = "crown", matchId: Long = 100) = OddsMarket(
+    private fun oddsMarket(
+        sourceKey: String = "crown",
+        matchId: Long = 100,
+        marketType: String = "handicap",
+        lineValue: String? = "0",
+        selectionName: String = "away"
+    ) = OddsMarket(
         id = 20,
         matchId = matchId,
         sourceKey = sourceKey,
-        marketType = "handicap",
-        lineValue = "0",
-        selectionName = "away"
+        marketType = marketType,
+        lineValue = lineValue,
+        selectionName = selectionName
     )
 }
