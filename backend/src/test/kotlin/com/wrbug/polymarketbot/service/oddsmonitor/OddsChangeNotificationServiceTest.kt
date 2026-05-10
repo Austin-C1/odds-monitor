@@ -318,7 +318,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `prematch monitor alerts when market line changes`() {
+    fun `prematch monitor does not alert when market line changes`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -346,7 +346,7 @@ class OddsChangeNotificationServiceTest {
         service.notifyMarketState(match, standardMatch, "handicap", setOf("0.5/1"))
         service.notifyMarketState(match, standardMatch, "handicap", setOf("1"))
 
-        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
         runBlocking {
             verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
         }
@@ -389,7 +389,7 @@ class OddsChangeNotificationServiceTest {
         service.notifyMarketState(match, standardMatch, "handicap", setOf("0.5/1"))
         service.notifyMarketState(match, standardMatch, "handicap", setOf("1"))
 
-        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
         runBlocking {
             verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
         }
@@ -448,7 +448,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `line change resets odds baseline for any market line`() {
+    fun `line change resets odds baseline without creating market state alert`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -484,9 +484,7 @@ class OddsChangeNotificationServiceTest {
         )
         Thread.sleep(1_800)
 
-        val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
-        verify(alertRepository, times(1)).save(captor.capture())
-        assertEquals("market_line_change", captor.value.alertType)
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
     }
 
     @Test
@@ -524,13 +522,12 @@ class OddsChangeNotificationServiceTest {
         Thread.sleep(1_800)
 
         val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
-        verify(alertRepository, times(2)).save(captor.capture())
-        assertTrue(captor.allValues.any { it.alertType == "market_line_change" })
-        assertTrue(captor.allValues.any { it.alertType == "odds_change" })
+        verify(alertRepository, times(1)).save(captor.capture())
+        assertEquals("odds_change", captor.value.alertType)
     }
 
     @Test
-    fun `prematch monitor alerts when market is suspended`() {
+    fun `prematch monitor does not alert when market is suspended`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -558,7 +555,7 @@ class OddsChangeNotificationServiceTest {
         service.notifyMarketState(match, standardMatch, "total", setOf("2.5"))
         service.notifyMarketState(match, standardMatch, "total", emptySet())
 
-        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
         runBlocking {
             verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
         }

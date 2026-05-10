@@ -117,49 +117,7 @@ class OddsChangeNotificationService(
             return
         }
         updateOddsBaselineReset(stateKey, normalizedLines)
-        if (previousLines.isEmpty() && normalizedLines.isNotEmpty()) {
-            return
-        }
-
-        val configs = loadActiveMonitorTelegramConfigs() ?: return
-        if (configs.isEmpty()) {
-            return
-        }
-        val now = System.currentTimeMillis()
-        val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch, now)
-        val startTime = standardMatch.startTime ?: match.rawStartTime
-        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase, startTime, now) }
-        if (phaseConfigs.isEmpty()) {
-            return
-        }
-        if (!shouldNotifyLeague(match, standardMatch)) {
-            return
-        }
-
-        val isSuspended = normalizedLines.isEmpty()
-        val alertType = if (isSuspended) "market_suspended" else "market_line_change"
-        val titlePrefix = if (isSuspended) "封盘" else "盘口变动"
-        val message = buildMarketStateAlertMessage(
-            titlePrefix = titlePrefix,
-            matchName = notificationMatchName(match, standardMatch),
-            leagueName = notificationLeagueName(match, standardMatch),
-            sourceKey = match.sourceKey,
-            marketType = marketType,
-            previousLines = previousLines,
-            currentLines = normalizedLines,
-            timestampText = DateUtils.formatDateTime()
-        )
-        alertRecordRepository.save(
-            OddsAlertRecord(
-                alertType = alertType,
-                severity = "warning",
-                matchId = standardMatchId,
-                sourceKey = match.sourceKey,
-                title = "$titlePrefix：${TextEncodingUtils.repairMojibake(notificationMatchName(match, standardMatch))}",
-                message = message,
-                createdAt = System.currentTimeMillis()
-            )
-        )
+        return
     }
 
     private fun updateOddsBaselineReset(stateKey: OddsMarketStateKey, normalizedLines: Set<String>) {
