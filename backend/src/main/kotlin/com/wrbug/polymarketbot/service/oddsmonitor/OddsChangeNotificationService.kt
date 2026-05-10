@@ -160,13 +160,6 @@ class OddsChangeNotificationService(
                 createdAt = System.currentTimeMillis()
             )
         )
-        runCatching {
-            runBlocking {
-                telegramNotificationService.sendMonitorMessageToConfigs(message, phaseConfigs)
-            }
-        }.onFailure { error ->
-            logger.warn("Failed to send market state Telegram notification: {}", error.message)
-        }
     }
 
     private fun updateOddsBaselineReset(stateKey: OddsMarketStateKey, normalizedLines: Set<String>) {

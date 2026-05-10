@@ -348,12 +348,12 @@ class OddsChangeNotificationServiceTest {
 
         verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
         runBlocking {
-            verify(telegramNotificationService, times(1)).sendMonitorMessageToConfigs(anyString(), anyList())
+            verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
         }
     }
 
     @Test
-    fun `crown market state still sends telegram after pinnacle is disabled`() {
+    fun `crown market state still does not send telegram after pinnacle is disabled`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -391,7 +391,7 @@ class OddsChangeNotificationServiceTest {
 
         verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
         runBlocking {
-            verify(telegramNotificationService, times(1)).sendMonitorMessageToConfigs(anyString(), anyList())
+            verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
         }
     }
 
@@ -560,7 +560,7 @@ class OddsChangeNotificationServiceTest {
 
         verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
         runBlocking {
-            verify(telegramNotificationService, times(1)).sendMonitorMessageToConfigs(anyString(), anyList())
+            verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
         }
     }
 
