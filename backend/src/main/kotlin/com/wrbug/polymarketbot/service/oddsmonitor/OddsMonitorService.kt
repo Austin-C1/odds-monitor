@@ -38,7 +38,8 @@ class OddsMonitorService(
     private val snapshotRepository: OddsSnapshotRepository? = null,
     private val matchRepository: OddsMatchRepository? = null,
     private val matchLinkRepository: OddsMatchLinkRepository? = null,
-    private val leagueFilterService: OddsLeagueFilterService? = null
+    private val leagueFilterService: OddsLeagueFilterService? = null,
+    private val oddsChangeNotificationService: OddsChangeNotificationService? = null
 ) {
     private val collectedSourceKeys = listOf("pinnacle", "crown", "polymarket")
 
@@ -314,20 +315,22 @@ class OddsMonitorService(
         configs.forEach { incoming ->
             val normalized = normalizeConfig(incoming)
             val existing = dataSourceConfigRepository.findBySourceKey(normalized.sourceKey)
-            dataSourceConfigRepository.save(
-                OddsDataSourceConfig(
-                    id = existing?.id,
-                    sourceKey = normalized.sourceKey,
-                    displayName = normalized.displayName,
-                    enabled = normalized.enabled,
-                    username = normalized.username?.takeIf { it.isNotBlank() },
-                    password = passwordValue(normalized.password),
-                    queryKeyword = normalized.queryKeyword?.takeIf { it.isNotBlank() },
-                    intervalSeconds = normalized.intervalSeconds.coerceAtLeast(10),
-                    createdAt = existing?.createdAt ?: System.currentTimeMillis(),
-                    updatedAt = System.currentTimeMillis()
-                )
+            val savedConfig = OddsDataSourceConfig(
+                id = existing?.id,
+                sourceKey = normalized.sourceKey,
+                displayName = normalized.displayName,
+                enabled = normalized.enabled,
+                username = normalized.username?.takeIf { it.isNotBlank() } ?: existing?.username,
+                password = passwordValue(normalized.password) ?: existing?.password,
+                queryKeyword = normalized.queryKeyword?.takeIf { it.isNotBlank() } ?: existing?.queryKeyword,
+                intervalSeconds = normalized.intervalSeconds.coerceAtLeast(10),
+                createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis()
             )
+            dataSourceConfigRepository.save(savedConfig)
+            if (existing?.enabled == true && !savedConfig.enabled) {
+                oddsChangeNotificationService?.clearSourceState(savedConfig.sourceKey)
+            }
         }
         return listDataSourceConfigs()
     }

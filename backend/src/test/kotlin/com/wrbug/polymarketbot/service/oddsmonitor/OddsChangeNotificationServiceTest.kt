@@ -4,11 +4,13 @@ import com.wrbug.polymarketbot.dto.NotificationConfigData
 import com.wrbug.polymarketbot.dto.NotificationConfigDto
 import com.wrbug.polymarketbot.dto.TelegramConfigData
 import com.wrbug.polymarketbot.entity.OddsAlertRecord
+import com.wrbug.polymarketbot.entity.OddsDataSourceConfig
 import com.wrbug.polymarketbot.entity.OddsMarket
 import com.wrbug.polymarketbot.entity.OddsMatch
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.entity.OddsSnapshot
 import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
+import com.wrbug.polymarketbot.repository.OddsDataSourceConfigRepository
 import com.wrbug.polymarketbot.repository.OddsMarketRepository
 import com.wrbug.polymarketbot.repository.OddsMatchRepository
 import com.wrbug.polymarketbot.repository.OddsSnapshotRepository
@@ -346,7 +348,102 @@ class OddsChangeNotificationServiceTest {
 
         verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
         runBlocking {
-            verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
+            verify(telegramNotificationService, times(1)).sendMonitorMessageToConfigs(anyString(), anyList())
+        }
+    }
+
+    @Test
+    fun `crown market state still sends telegram after pinnacle is disabled`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val dataSourceConfigRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val now = System.currentTimeMillis()
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository,
+            dataSourceConfigRepository = dataSourceConfigRepository
+        )
+
+        `when`(dataSourceConfigRepository.findAll()).thenReturn(
+            listOf(
+                OddsDataSourceConfig(sourceKey = "pinnacle", displayName = "pinnacle", enabled = false),
+                OddsDataSourceConfig(sourceKey = "crown", displayName = "crown", enabled = true)
+            )
+        )
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(liveOnlyModeEnabled = false, prematchWindowMinutes = 30))
+            )
+        }
+        val standardMatch = OddsMatch(id = 100, startTime = now + 20 * 60_000, status = "scheduled")
+        val match = platformMatch(sourceKey = "crown", startTime = now + 20 * 60_000)
+
+        service.notifyMarketState(match, standardMatch, "handicap", setOf("0.5/1"))
+        service.notifyMarketState(match, standardMatch, "handicap", setOf("1"))
+
+        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+        runBlocking {
+            verify(telegramNotificationService, times(1)).sendMonitorMessageToConfigs(anyString(), anyList())
+        }
+    }
+
+    @Test
+    fun `crown odds alert omits disabled sources after pinnacle is disabled`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val dataSourceConfigRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val now = System.currentTimeMillis()
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository,
+            dataSourceConfigRepository = dataSourceConfigRepository
+        )
+
+        `when`(dataSourceConfigRepository.findAll()).thenReturn(
+            listOf(
+                OddsDataSourceConfig(sourceKey = "pinnacle", displayName = "pinnacle", enabled = false),
+                OddsDataSourceConfig(sourceKey = "crown", displayName = "crown", enabled = true),
+                OddsDataSourceConfig(sourceKey = "polymarket", displayName = "Polymarket", enabled = false)
+            )
+        )
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(liveOnlyModeEnabled = false, prematchWindowMinutes = 30, handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(matchRepository.findById(100)).thenReturn(
+            Optional.of(OddsMatch(id = 100, startTime = now + 20 * 60_000, status = "scheduled"))
+        )
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown", startTime = now + 20 * 60_000),
+            oddsMarket(sourceKey = "crown"),
+            BigDecimal("0.88"),
+            BigDecimal("0.98")
+        )
+        Thread.sleep(1_800)
+
+        val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
+        verify(alertRepository, times(1)).save(captor.capture())
+        assertFalse(captor.value.message.contains("Polymarket"))
+        runBlocking {
+            verify(telegramNotificationService, times(1)).sendMonitorMessageToConfigs(anyString(), anyList())
         }
     }
 
@@ -463,7 +560,7 @@ class OddsChangeNotificationServiceTest {
 
         verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
         runBlocking {
-            verify(telegramNotificationService, never()).sendMonitorMessageToConfigs(anyString(), anyList())
+            verify(telegramNotificationService, times(1)).sendMonitorMessageToConfigs(anyString(), anyList())
         }
     }
 

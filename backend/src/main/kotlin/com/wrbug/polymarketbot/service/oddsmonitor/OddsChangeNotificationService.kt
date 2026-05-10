@@ -7,6 +7,7 @@ import com.wrbug.polymarketbot.entity.OddsMarket
 import com.wrbug.polymarketbot.entity.OddsMatch
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
+import com.wrbug.polymarketbot.repository.OddsDataSourceConfigRepository
 import com.wrbug.polymarketbot.repository.OddsMarketRepository
 import com.wrbug.polymarketbot.repository.OddsMatchRepository
 import com.wrbug.polymarketbot.repository.OddsSnapshotRepository
@@ -30,10 +31,11 @@ class OddsChangeNotificationService(
     private val marketRepository: OddsMarketRepository,
     private val snapshotRepository: OddsSnapshotRepository,
     private val matchRepository: OddsMatchRepository? = null,
-    private val leagueFilterService: OddsLeagueFilterService? = null
+    private val leagueFilterService: OddsLeagueFilterService? = null,
+    private val dataSourceConfigRepository: OddsDataSourceConfigRepository? = null
 ) {
     private val logger = LoggerFactory.getLogger(OddsChangeNotificationService::class.java)
-    private val expectedSources = listOf("pinnacle", "crown", "polymarket")
+    private val defaultExpectedSources = listOf("pinnacle", "crown", "polymarket")
     private val pendingAlerts = ConcurrentHashMap<OddsChangeNotificationKey, PendingOddsChangeNotification>()
     private val marketStates = ConcurrentHashMap<OddsMarketStateKey, Set<String>>()
     private val oddsBaselineResets = ConcurrentHashMap<OddsMarketStateKey, OddsBaselineReset>()
@@ -158,6 +160,13 @@ class OddsChangeNotificationService(
                 createdAt = System.currentTimeMillis()
             )
         )
+        runCatching {
+            runBlocking {
+                telegramNotificationService.sendMonitorMessageToConfigs(message, phaseConfigs)
+            }
+        }.onFailure { error ->
+            logger.warn("Failed to send market state Telegram notification: {}", error.message)
+        }
     }
 
     private fun updateOddsBaselineReset(stateKey: OddsMarketStateKey, normalizedLines: Set<String>) {
@@ -272,7 +281,7 @@ class OddsChangeNotificationService(
                     changes = market.changes.values.toList()
                 )
             },
-            expectedSources = expectedSources,
+            expectedSources = expectedSourcesForNotification(pending),
             timestampText = DateUtils.formatDateTime()
         )
         alertRecordRepository.save(
@@ -293,6 +302,45 @@ class OddsChangeNotificationService(
             }
         }.onFailure { error ->
             logger.warn("Failed to send odds change Telegram notification: {}", error.message)
+        }
+    }
+
+    private fun expectedSourcesForNotification(pending: PendingOddsChangeNotification): List<String> {
+        val changedSources = pending.markets.values
+            .flatMap { market -> market.changes.keys }
+            .toSet()
+        val enabledSources = enabledSourceKeys()
+        return defaultExpectedSources
+            .filter { sourceKey -> sourceKey in enabledSources || sourceKey in changedSources }
+            .ifEmpty { changedSources.toList().ifEmpty { defaultExpectedSources } }
+    }
+
+    private fun enabledSourceKeys(): Set<String> {
+        val repository = dataSourceConfigRepository ?: return defaultExpectedSources.toSet()
+        return runCatching {
+            repository.findAll()
+                .filter { config -> config.enabled }
+                .map { config -> config.sourceKey }
+                .toSet()
+                .ifEmpty { defaultExpectedSources.toSet() }
+        }.getOrElse { error ->
+            logger.warn("Failed to load active odds data sources: {}", error.message)
+            defaultExpectedSources.toSet()
+        }
+    }
+
+    fun clearSourceState(sourceKey: String) {
+        val normalizedSourceKey = sourceKey.trim().takeIf { it.isNotBlank() } ?: return
+        marketStates.keys.removeIf { key -> key.sourceKey == normalizedSourceKey }
+        oddsBaselineResets.keys.removeIf { key -> key.sourceKey == normalizedSourceKey }
+        pendingAlerts.keys.forEach { key ->
+            pendingAlerts.computeIfPresent(key) { _, pending ->
+                pending.markets.values.forEach { market ->
+                    market.changes.remove(normalizedSourceKey)
+                }
+                pending.markets.entries.removeIf { (_, market) -> market.changes.isEmpty() }
+                pending.takeIf { it.markets.isNotEmpty() }
+            }
         }
     }
 
