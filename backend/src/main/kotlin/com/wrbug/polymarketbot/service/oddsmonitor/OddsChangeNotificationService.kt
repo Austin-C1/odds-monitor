@@ -660,29 +660,6 @@ fun buildMergedOddsChangeAlertMessage(
     }
 }
 
-private fun buildMarketStateAlertMessage(
-    titlePrefix: String,
-    matchName: String,
-    leagueName: String,
-    sourceKey: String,
-    marketType: String,
-    previousLines: Set<String>,
-    currentLines: Set<String>,
-    timestampText: String
-): String {
-    val previousText = previousLines.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "无"
-    val currentText = currentLines.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "已封盘"
-    return buildString {
-        appendLine("<b>${escapeHtml("$titlePrefix：${TextEncodingUtils.repairMojibake(matchName)}")}</b>")
-        appendLine()
-        appendLine("联赛：${escapeHtml(TextEncodingUtils.repairMojibake(leagueName))}")
-        appendLine("平台：${platformLabel(sourceKey)}")
-        appendLine("盘口：${marketTypeLabel(marketType)}")
-        appendLine("变化：<code>${escapeHtml(previousText)} -> ${escapeHtml(currentText)}</code>")
-        appendLine("时间：<code>$timestampText</code>")
-    }
-}
-
 private fun OddsMarket.displayLabel(): String {
     val marketLabel = when (marketType.lowercase()) {
         "handicap" -> "让球"
@@ -714,15 +691,6 @@ private fun platformLabel(sourceKey: String): String {
         "crown" -> "皇冠"
         "polymarket" -> "Polymarket"
         else -> sourceKey
-    }
-}
-
-private fun marketTypeLabel(marketType: String): String {
-    return when (marketType.lowercase()) {
-        "handicap" -> "让球"
-        "total" -> "大小球"
-        "moneyline" -> "胜平负"
-        else -> marketType
     }
 }
 
