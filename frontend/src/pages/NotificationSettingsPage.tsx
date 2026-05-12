@@ -74,6 +74,42 @@ const variableTagHoverStyle: React.CSSProperties = {
   boxShadow: '0 2px 4px rgba(24, 144, 255, 0.2)',
 }
 
+const liveObservationPanelStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  padding: '12px 16px',
+  marginBottom: 16,
+  border: '1px solid #edf1f7',
+  borderRadius: 8,
+  background: '#fafcff',
+}
+
+const filterSettingsGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+  gap: 8,
+  width: '100%',
+}
+
+const filterSettingItemStyle: React.CSSProperties = {
+  minHeight: 72,
+  padding: '8px 10px',
+  border: '1px solid #eef1f5',
+  borderRadius: 8,
+  background: '#fff',
+}
+
+const filterButtonStyle: React.CSSProperties = {
+  height: 'auto',
+  minHeight: 72,
+  padding: '8px 10px',
+  textAlign: 'left',
+  whiteSpace: 'normal',
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   common: 'notificationSettings.templates.commonVariables',
   order: 'notificationSettings.templates.orderVariables',
@@ -129,6 +165,14 @@ const normalizePrematchWindow = (value: unknown): number | null => {
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : null
 }
 
+const normalizeLiveObservationMinutes = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const numericValue = Number(value)
+  return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : null
+}
+
 const getWaterLimitDraft = (config: NotificationConfig): WaterLimitDraft => {
   const telegramConfig = extractTelegramConfig(config)
   return {
@@ -164,6 +208,10 @@ const NotificationSettingsPage: React.FC = () => {
   const [oddsMoveFilterModalConfig, setOddsMoveFilterModalConfig] = useState<NotificationConfig | null>(null)
   const [prematchWindowDrafts, setPrematchWindowDrafts] = useState<Record<number, PrematchWindowDraft>>({})
   const [prematchWindowModalConfig, setPrematchWindowModalConfig] = useState<NotificationConfig | null>(null)
+  const [liveObservationMinutes, setLiveObservationMinutes] = useState<number | null>(null)
+  const [liveObservationDraftInput, setLiveObservationDraftInput] = useState('')
+  const [liveObservationModalVisible, setLiveObservationModalVisible] = useState(false)
+  const [liveObservationLoading, setLiveObservationLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingConfig, setEditingConfig] = useState<NotificationConfig | null>(null)
@@ -227,6 +275,19 @@ const NotificationSettingsPage: React.FC = () => {
     }
   }, [showApiError, t])
 
+  const fetchSystemConfig = useCallback(async () => {
+    try {
+      const response = await apiService.systemConfig.get()
+      if (response.data.code === 0 && response.data.data) {
+        const minutes = normalizeLiveObservationMinutes(response.data.data.liveObservationMinutes)
+        setLiveObservationMinutes(minutes)
+        setLiveObservationDraftInput(minutes?.toString() ?? '')
+      }
+    } catch (error) {
+      showApiError(error, t('notificationSettings.fetchFailed'))
+    }
+  }, [showApiError, t])
+
   const fetchTemplateTypes = useCallback(async () => {
     try {
       const response = await apiService.notifications.getTemplateTypes()
@@ -266,8 +327,9 @@ const NotificationSettingsPage: React.FC = () => {
 
   useEffect(() => {
     fetchConfigs()
+    fetchSystemConfig()
     fetchTemplateTypes()
-  }, [fetchConfigs, fetchTemplateTypes])
+  }, [fetchConfigs, fetchSystemConfig, fetchTemplateTypes])
 
   useEffect(() => {
     if (!selectedTemplateType) {
@@ -509,6 +571,35 @@ const NotificationSettingsPage: React.FC = () => {
     } catch (error) {
       showApiError(error, t('notificationSettings.updateFailed'))
       fetchConfigs()
+    }
+  }
+
+  const handleUpdateLiveObservationMinutes = async () => {
+    const rawMinutes = liveObservationDraftInput.trim()
+    const minutes = normalizeLiveObservationMinutes(rawMinutes)
+    if (rawMinutes && (minutes === null || minutes > 180)) {
+      message.error('请输入 1-180 的整数')
+      return
+    }
+    setLiveObservationLoading(true)
+    try {
+      const response = await apiService.systemConfig.updateLiveObservationMinutes({
+        liveObservationMinutes: minutes,
+      })
+      if (response.data.code === 0) {
+        const nextMinutes = normalizeLiveObservationMinutes(response.data.data?.liveObservationMinutes ?? minutes)
+        setLiveObservationMinutes(nextMinutes)
+        setLiveObservationDraftInput(nextMinutes?.toString() ?? '')
+        setLiveObservationModalVisible(false)
+        message.success(t('notificationSettings.updateSuccess'))
+      } else {
+        message.error(response.data.msg || t('notificationSettings.updateFailed'))
+      }
+    } catch (error) {
+      showApiError(error, t('notificationSettings.updateFailed'))
+      fetchSystemConfig()
+    } finally {
+      setLiveObservationLoading(false)
     }
   }
 
@@ -901,34 +992,64 @@ const NotificationSettingsPage: React.FC = () => {
     return `赛前区间：${minutes ? `${minutes} 分钟` : '不限'}`
   }
 
-  const configColumns = [
-    {
-      title: t('notificationSettings.configName'),
-      dataIndex: 'name',
-      key: 'name',
-    },
-    {
-      title: t('notificationSettings.type'),
-      dataIndex: 'type',
-      key: 'type',
-      render: (type: string) => <Tag color="blue">{type.toUpperCase()}</Tag>,
-    },
-    {
-      title: t('notificationSettings.status'),
-      dataIndex: 'enabled',
-      key: 'enabled',
-      render: (enabled: boolean) => (
-        <Tag color={enabled ? 'green' : 'default'}>
-          {enabled ? t('notificationSettings.enabledStatus') : t('notificationSettings.disabledStatus')}
-        </Tag>
-      ),
-    },
-    {
-      title: t('notificationSettings.monitorMode'),
-      key: 'monitorMode',
-      render: (_: unknown, record: NotificationConfig) => (
-        <Space size="small" wrap>
-          <Space direction="vertical" size={2}>
+  const formatLiveObservationSummary = () => {
+    return `滚球时间：${liveObservationMinutes ? `${liveObservationMinutes} 分钟内` : '不限'}`
+  }
+
+  const openLiveObservationModal = () => {
+    setLiveObservationDraftInput(liveObservationMinutes?.toString() ?? '')
+    setLiveObservationModalVisible(true)
+  }
+
+  const renderLiveObservationControls = () => (
+    <Space size={8} wrap>
+      <Text type="secondary">观察至第</Text>
+      <Input
+        value={liveObservationDraftInput}
+        placeholder="不限制"
+        inputMode="numeric"
+        maxLength={3}
+        addonAfter="分钟"
+        allowClear
+        onChange={(event) => setLiveObservationDraftInput(event.target.value.replace(/\D/g, ''))}
+        style={{ width: 160 }}
+      />
+      <Button onClick={() => setLiveObservationDraftInput('')}>不限制</Button>
+      <Button type="primary" loading={liveObservationLoading} onClick={handleUpdateLiveObservationMinutes}>
+        保存
+      </Button>
+    </Space>
+  )
+
+  const renderLiveObservationPanel = () => (
+    <div style={liveObservationPanelStyle}>
+      <Space direction="vertical" size={2} style={{ flex: '1 1 280px' }}>
+        <Text strong>滚球全局筛选</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          只影响滚球模式，不填表示不限制，赛前不受影响。
+        </Text>
+      </Space>
+      {renderLiveObservationControls()}
+    </div>
+  )
+
+  const renderFilterButton = (title: string, summary: string, onClick: () => void) => (
+    <Button style={{ ...filterButtonStyle, width: '100%' }} onClick={onClick}>
+      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+        <Text strong>{title}</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {summary}
+        </Text>
+      </Space>
+    </Button>
+  )
+
+  const renderMonitorFilterPanel = (record: NotificationConfig) => (
+    <div style={filterSettingsGridStyle}>
+      <div style={filterSettingItemStyle}>
+        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+          <Text strong>监控模式</Text>
+          <Space size={8} wrap>
             <Tooltip title={t('notificationSettings.monitorModeDescription')}>
               <Switch
                 checked={getMonitorModeEnabled(record)}
@@ -936,39 +1057,57 @@ const NotificationSettingsPage: React.FC = () => {
                 onChange={(checked) => handleToggleMonitorMode(record, checked)}
               />
             </Tooltip>
-            <Space size={6}>
-              <Switch
-                checked={getLiveOnlyModeEnabled(record)}
-                size="small"
-                disabled={!getMonitorModeEnabled(record)}
-                onChange={(checked) => handleToggleLiveOnlyMode(record, checked)}
-              />
-            </Space>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              {formatWaterLimitSummary(record)}
-            </Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {formatOddsMoveFilterSummary(record)}
-            </Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {formatPrematchWindowSummary(record)}
+              全平台监控
             </Text>
           </Space>
-          <Button size="small" onClick={() => openWaterLimitModal(record)}>
-            {formatWaterLimitSummary(record)}
-          </Button>
-          <Button size="small" onClick={() => openOddsMoveFilterModal(record)}>
-            {formatOddsMoveFilterSummary(record)}
-          </Button>
-          <Button size="small" onClick={() => openPrematchWindowModal(record)}>
-            {formatPrematchWindowSummary(record)}
-          </Button>
+          <Space size={8} wrap>
+            <Switch
+              checked={getLiveOnlyModeEnabled(record)}
+              size="small"
+              disabled={!getMonitorModeEnabled(record)}
+              onChange={(checked) => handleToggleLiveOnlyMode(record, checked)}
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {getLiveOnlyModeEnabled(record) ? '滚球模式' : '赛前模式'}
+            </Text>
+          </Space>
+        </Space>
+      </div>
+      {renderFilterButton('合水筛选', formatWaterLimitSummary(record), () => openWaterLimitModal(record))}
+      {renderFilterButton('动水筛选', formatOddsMoveFilterSummary(record), () => openOddsMoveFilterModal(record))}
+      {renderFilterButton('赛前时间', `${formatPrematchWindowSummary(record)} / 只管赛前`, () => openPrematchWindowModal(record))}
+      {renderFilterButton('滚球时间', `${formatLiveObservationSummary()} / 只管滚球`, openLiveObservationModal)}
+    </div>
+  )
+
+  const configColumns = [
+    {
+      title: t('notificationSettings.configName'),
+      dataIndex: 'name',
+      key: 'name',
+      width: isMobile ? 170 : 220,
+      render: (name: string, record: NotificationConfig) => (
+        <Space direction="vertical" size={4}>
+          <Text strong>{name}</Text>
+          <Space size={6} wrap>
+            <Tag color="blue">{record.type.toUpperCase()}</Tag>
+            <Tag color={record.enabled ? 'green' : 'default'}>
+              {record.enabled ? t('notificationSettings.enabledStatus') : t('notificationSettings.disabledStatus')}
+            </Tag>
+          </Space>
         </Space>
       ),
     },
     {
+      title: '筛选配置',
+      key: 'monitorFilters',
+      render: (_: unknown, record: NotificationConfig) => renderMonitorFilterPanel(record),
+    },
+    {
       title: t('notificationSettings.chatIds'),
       key: 'chatIds',
+      width: isMobile ? 150 : 180,
       render: (_: unknown, record: NotificationConfig) => {
         const chatIds = getConfigChatIds(record)
         return chatIds.length > 0 ? (
@@ -985,7 +1124,7 @@ const NotificationSettingsPage: React.FC = () => {
     {
       title: t('common.actions'),
       key: 'action',
-      width: isMobile ? 140 : 220,
+      width: isMobile ? 150 : 210,
       render: (_: unknown, record: NotificationConfig) => (
         <Space size="small" wrap>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
@@ -1043,13 +1182,14 @@ const NotificationSettingsPage: React.FC = () => {
           </Button>
         }
       >
+        {renderLiveObservationPanel()}
         <Table
           columns={configColumns}
           dataSource={configs}
           loading={loading}
           rowKey="id"
           pagination={false}
-          scroll={{ x: isMobile ? 760 : 'auto' }}
+          scroll={{ x: isMobile ? 900 : 'auto' }}
         />
       </Card>
 
@@ -1240,6 +1380,20 @@ const NotificationSettingsPage: React.FC = () => {
         cancelText={t('common.cancel')}
       >
         {prematchWindowModalConfig && renderPrematchWindowControls(prematchWindowModalConfig)}
+      </Modal>
+      <Modal
+        title="滚球时间筛选"
+        open={liveObservationModalVisible}
+        onCancel={() => setLiveObservationModalVisible(false)}
+        footer={null}
+        width={isMobile ? '90%' : 420}
+      >
+        <Space direction="vertical" size={12}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            只影响滚球模式，不填表示不限制，赛前不受影响。
+          </Text>
+          {renderLiveObservationControls()}
+        </Space>
       </Modal>
     </div>
   )

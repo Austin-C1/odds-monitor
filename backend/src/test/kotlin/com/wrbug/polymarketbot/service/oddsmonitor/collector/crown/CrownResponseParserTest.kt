@@ -74,6 +74,43 @@ class CrownResponseParserTest {
     }
 
     @Test
+    fun `parses live minute from crown game list`() {
+        val response = """
+            <serverresponse>
+              <item>
+                <lid>10</lid>
+                <gidm>41001</gidm>
+                <retimeset>52</retimeset>
+                <is_rb>Y</is_rb>
+              </item>
+            </serverresponse>
+        """.trimIndent()
+
+        val item = parser.parseGameList(response).single()
+
+        assertEquals(true, item.isLive)
+        assertEquals(52, item.elapsedMinutes)
+    }
+
+    @Test
+    fun `treats crown game list is rb flag as live`() {
+        val response = """
+            <serverresponse>
+              <item>
+                <lid>10</lid>
+                <gidm>41001</gidm>
+                <retimeset>0</retimeset>
+                <is_rb>Y</is_rb>
+              </item>
+            </serverresponse>
+        """.trimIndent()
+
+        val item = parser.parseGameList(response).single()
+
+        assertEquals(true, item.isLive)
+    }
+
+    @Test
     fun `parses crown football detail games into normalized matches`() {
         val response = """
             <serverresponse>
@@ -225,6 +262,9 @@ class CrownResponseParserTest {
                 <datetime>05-04 03:00p</datetime>
                 <team_h>Arsenal</team_h>
                 <team_c>Chelsea</team_c>
+                <score_h>2</score_h>
+                <score_c>1</score_c>
+                <retimeset>37</retimeset>
                 <ratio_re>0 / 0.5</ratio_re>
                 <ior_reh>0.810</ior_reh>
                 <ior_rec>1.070</ior_rec>
@@ -239,6 +279,8 @@ class CrownResponseParserTest {
         val match = parser.parseDetailGames(response, isLive = false).single()
 
         assertEquals(true, match.isLive)
+        assertEquals("2-1", match.rawPayload["score"])
+        assertEquals(37, match.rawPayload["elapsed_minutes"])
         assertEquals(listOf("0 / 0.5"), match.handicaps.map { it.line })
         assertEquals(listOf(BigDecimal("0.810")), match.handicaps.map { it.homeOdds })
         assertEquals(listOf(BigDecimal("1.070")), match.handicaps.map { it.awayOdds })

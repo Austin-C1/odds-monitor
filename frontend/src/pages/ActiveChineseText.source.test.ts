@@ -63,6 +63,8 @@ describe('active page Chinese text', () => {
       '运行日志',
       '水位限制',
       '动水筛选',
+      '滚球全局筛选',
+      '筛选配置',
       '免密登录失败',
     ].forEach((label) => expect(combined).toContain(label))
   })

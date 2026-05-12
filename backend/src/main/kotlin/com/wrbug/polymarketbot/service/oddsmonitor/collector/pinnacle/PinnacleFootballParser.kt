@@ -1,5 +1,6 @@
 package com.wrbug.polymarketbot.service.oddsmonitor.collector.pinnacle
 
+import com.wrbug.polymarketbot.service.oddsmonitor.normalizeOddsMonitorLiveElapsedMinutes
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.springframework.stereotype.Component
@@ -17,7 +18,6 @@ class PinnacleFootballParser {
         if (leagueElements.isEmpty()) {
             return document.select("table.events")
                 .mapNotNull { parseTable(it, "unknown", "") }
-                .filter { !it.isLive }
         }
 
         return leagueElements.flatMap { league ->
@@ -25,7 +25,7 @@ class PinnacleFootballParser {
             val leagueId = league.id().removePrefix("lg")
             val tables = findEventTablesAfter(league)
             tables.mapNotNull { parseTable(it, leagueName, leagueId) }
-        }.filter { !it.isLive }
+        }
     }
 
     private fun parseLeagueName(league: Element): String {
@@ -92,7 +92,9 @@ class PinnacleFootballParser {
 
         val firstEventRow = table.selectFirst("tr[data-eid]")
         val score = firstEventRow?.attr("data-score").orEmpty()
-        val isLive = score.isNotBlank()
+        val elapsedText = parseLiveElapsedText(table)
+        val elapsedMinutes = normalizeOddsMonitorLiveElapsedMinutes(elapsedText)
+        val isLive = score.isNotBlank() || elapsedMinutes != null || table.selectFirst("span.liveTm") != null
         val startTime = table.selectFirst("a.odds[data-date]")?.attr("data-date")?.toLongOrNull()
         val handicaps = parseHandicaps(table)
         val totals = parseTotals(table)
@@ -121,6 +123,7 @@ class PinnacleFootballParser {
                 "start_time" to startTime,
                 "is_live" to isLive,
                 "score" to score,
+                "elapsed_minutes" to elapsedMinutes,
                 "handicaps" to handicaps,
                 "totals" to totals,
                 "moneyline" to moneyline
@@ -180,5 +183,19 @@ class PinnacleFootballParser {
     private fun parseOdds(link: Element): BigDecimal? {
         val text = link.selectFirst("span")?.text()?.trim().orEmpty()
         return text.takeIf { it.isNotBlank() }?.let { runCatching { BigDecimal(it) }.getOrNull() }
+    }
+
+    private fun parseLiveElapsedText(table: Element): String? {
+        val liveTimeCell = table.select("td.col-time, td.main-time, td.enhanced-odd-selection")
+            .firstOrNull { it.selectFirst("span.liveTm") != null }
+            ?: return null
+        return liveTimeCell.select("span")
+            .asSequence()
+            .map { it.text().trim() }
+            .firstOrNull { text ->
+                text.isNotBlank() &&
+                    !text.contains("滚球") &&
+                    normalizeOddsMonitorLiveElapsedMinutes(text) != null
+            }
     }
 }

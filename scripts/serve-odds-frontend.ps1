@@ -200,16 +200,29 @@ try {
             }
         }
         catch {
-            $body = [System.Text.Encoding]::UTF8.GetBytes('Internal Server Error')
-            $response.StatusCode = 500
-            $response.ContentType = 'text/plain; charset=utf-8'
-            $response.ContentLength64 = $body.Length
-            $response.OutputStream.Write($body, 0, $body.Length)
             Write-Warning $_
+            try {
+                $body = [System.Text.Encoding]::UTF8.GetBytes('Internal Server Error')
+                $response.StatusCode = 500
+                $response.ContentType = 'text/plain; charset=utf-8'
+                $response.ContentLength64 = $body.Length
+                $response.OutputStream.Write($body, 0, $body.Length)
+            }
+            catch {
+                Write-Warning $_
+            }
         }
         finally {
-            $response.OutputStream.Close()
-            $response.Close()
+            try {
+                $response.OutputStream.Close()
+            }
+            catch {
+            }
+            try {
+                $response.Close()
+            }
+            catch {
+            }
         }
     }
 }

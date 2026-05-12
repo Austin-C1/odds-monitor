@@ -49,6 +49,10 @@ class PinnacleFootballParserTest {
             </div>
             <table class="events" id="e9002">
               <tr data-eid="9002" data-score="1-0">
+                <td class="enhanced-odd-selection col-time main-time">
+                  <span>23:15</span>
+                  <span class="liveTm" title="滚球盘">滚球盘</span>
+                </td>
                 <td>
                   <span class="sel">Real Madrid</span>
                   <span class="sel">Barcelona</span>
@@ -67,8 +71,8 @@ class PinnacleFootballParserTest {
     fun `parses prematch full time all handicap total and moneyline markets`() {
         val matches = PinnacleFootballParser().parse(html)
 
-        assertEquals(1, matches.size)
-        val match = matches.single()
+        assertEquals(2, matches.size)
+        val match = matches.first { it.sourceMatchId == "9001" }
         assertEquals("9001", match.sourceMatchId)
         assertEquals("England - Premier League", match.leagueName)
         assertEquals("Arsenal", match.homeTeam)
@@ -87,6 +91,16 @@ class PinnacleFootballParserTest {
         assertEquals("2.11", match.moneyline?.homeOdds?.toPlainString())
         assertEquals("3.30", match.moneyline?.drawOdds?.toPlainString())
         assertEquals("3.20", match.moneyline?.awayOdds?.toPlainString())
+    }
+
+    @Test
+    fun `parses live score and elapsed minute`() {
+        val matches = PinnacleFootballParser().parse(html)
+
+        val match = matches.first { it.sourceMatchId == "9002" }
+        assertTrue(match.isLive)
+        assertEquals("1-0", match.rawPayload["score"])
+        assertEquals(23, match.rawPayload["elapsed_minutes"])
     }
 
     @Test

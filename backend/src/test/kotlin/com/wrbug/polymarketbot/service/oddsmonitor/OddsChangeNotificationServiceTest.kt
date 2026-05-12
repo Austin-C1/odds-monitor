@@ -16,6 +16,7 @@ import com.wrbug.polymarketbot.repository.OddsMatchRepository
 import com.wrbug.polymarketbot.repository.OddsSnapshotRepository
 import com.wrbug.polymarketbot.repository.SystemConfigRepository
 import com.wrbug.polymarketbot.service.system.NotificationConfigService
+import com.wrbug.polymarketbot.service.system.SystemConfigService
 import com.wrbug.polymarketbot.service.system.TelegramNotificationService
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -62,6 +63,22 @@ class OddsChangeNotificationServiceTest {
         assertTrue(message.contains("Polymarket：无对应盘口"))
         assertTrue(message.contains("筛选：动水通过 / 合水通过"))
         assertTrue(message.contains("时间：2026-05-03 15:07"))
+    }
+
+    @Test
+    fun `builds live merged odds change message with elapsed minute and score`() {
+        val message = buildMergedOddsChangeAlertMessage(
+            matchName = "东京 vs 川崎前锋",
+            leagueName = "日本J1",
+            marketLabel = "让球 主队 0.5",
+            changes = listOf(OddsChangeNotificationItem("crown", BigDecimal("0.90"), BigDecimal("0.98"))),
+            expectedSources = listOf("crown"),
+            timestampText = "2026-05-03 15:07",
+            liveContext = OddsLiveMatchContext(elapsedMinutes = 23, scoreText = "1-0")
+        )
+
+        assertTrue(message.contains("进行：第 23 分钟"))
+        assertTrue(message.contains("比分：1-0"))
     }
 
     @Test
@@ -212,6 +229,156 @@ class OddsChangeNotificationServiceTest {
         Thread.sleep(1_800)
 
         verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
+    fun `live observation limit suppresses live odds changes after configured minutes`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val systemConfigService = mock(SystemConfigService::class.java)
+        val now = System.currentTimeMillis()
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository,
+            systemConfigService = systemConfigService
+        )
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(liveOnlyModeEnabled = true, handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(systemConfigService.getLiveObservationMinutes()).thenReturn(30)
+        `when`(matchRepository.findById(100)).thenReturn(
+            Optional.of(OddsMatch(id = 100, startTime = now - 31 * 60_000, status = "live"))
+        )
+
+        service.notifyIfChanged(platformMatch(startTime = now - 31 * 60_000), oddsMarket(), BigDecimal("0.88"), BigDecimal("0.98"))
+        Thread.sleep(1_800)
+
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
+    fun `live observation limit allows live odds changes inside configured minutes`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val systemConfigService = mock(SystemConfigService::class.java)
+        val now = System.currentTimeMillis()
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository,
+            systemConfigService = systemConfigService
+        )
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(liveOnlyModeEnabled = true, handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(systemConfigService.getLiveObservationMinutes()).thenReturn(30)
+        `when`(matchRepository.findById(100)).thenReturn(
+            Optional.of(OddsMatch(id = 100, startTime = now - 20 * 60_000, status = "live"))
+        )
+
+        service.notifyIfChanged(platformMatch(startTime = now - 20 * 60_000), oddsMarket(), BigDecimal("0.88"), BigDecimal("0.98"))
+        Thread.sleep(1_800)
+
+        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
+    fun `live odds notification records elapsed minute and score`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val now = System.currentTimeMillis()
+        val startTime = now - 23 * 60_000
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository
+        )
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(liveOnlyModeEnabled = true, handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(matchRepository.findById(100)).thenReturn(
+            Optional.of(OddsMatch(id = 100, startTime = startTime, status = "live"))
+        )
+
+        service.notifyIfChanged(
+            platformMatch(startTime = startTime, rawPayloadJson = """{"score":"1-0"}"""),
+            oddsMarket(),
+            BigDecimal("0.88"),
+            BigDecimal("0.98")
+        )
+        Thread.sleep(1_800)
+
+        val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
+        verify(alertRepository, times(1)).save(captor.capture())
+        assertTrue(captor.value.message.contains("进行：第 23 分钟"))
+        assertTrue(captor.value.message.contains("比分：1-0"))
+    }
+
+    @Test
+    fun `live observation limit does not affect prematch monitor`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val systemConfigService = mock(SystemConfigService::class.java)
+        val now = System.currentTimeMillis()
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository,
+            systemConfigService = systemConfigService
+        )
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(liveOnlyModeEnabled = false, prematchWindowMinutes = 30, handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(systemConfigService.getLiveObservationMinutes()).thenReturn(10)
+        `when`(matchRepository.findById(100)).thenReturn(
+            Optional.of(OddsMatch(id = 100, startTime = now + 20 * 60_000, status = "scheduled"))
+        )
+
+        service.notifyIfChanged(platformMatch(startTime = now + 20 * 60_000), oddsMarket(), BigDecimal("0.88"), BigDecimal("0.98"))
+        Thread.sleep(1_800)
+
+        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
     }
 
     @Test
@@ -1182,7 +1349,8 @@ class OddsChangeNotificationServiceTest {
         startTime: Long? = null,
         rawLeagueName: String = "日本J1",
         rawHomeTeam: String = "东京",
-        rawAwayTeam: String = "川崎前锋"
+        rawAwayTeam: String = "川崎前锋",
+        rawPayloadJson: String? = null
     ) = OddsPlatformMatch(
         id = 10,
         sourceKey = sourceKey,
@@ -1190,7 +1358,8 @@ class OddsChangeNotificationServiceTest {
         rawLeagueName = rawLeagueName,
         rawHomeTeam = rawHomeTeam,
         rawAwayTeam = rawAwayTeam,
-        rawStartTime = startTime
+        rawStartTime = startTime,
+        rawPayloadJson = rawPayloadJson
     )
 
     private fun oddsMarket(

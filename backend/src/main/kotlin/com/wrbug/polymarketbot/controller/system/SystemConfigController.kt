@@ -136,6 +136,39 @@ class SystemConfigController(
             )
         }
     }
+
+    @PostMapping("/live-observation-minutes/update")
+    fun updateLiveObservationMinutes(
+        @RequestBody request: LiveObservationMinutesUpdateRequest
+    ): ResponseEntity<ApiResponse<SystemConfigDto>> {
+        return try {
+            val result = systemConfigService.updateLiveObservationMinutes(request.liveObservationMinutes)
+            result.fold(
+                onSuccess = { config ->
+                    ResponseEntity.ok(ApiResponse.success(config))
+                },
+                onFailure = { e ->
+                    logger.error("Failed to update odds monitor live observation minutes: ${e.message}", e)
+                    ResponseEntity.ok(
+                        ApiResponse.error(
+                            ErrorCode.SERVER_ERROR,
+                            "Failed to update odds monitor live observation minutes: ${e.message}",
+                            messageSource
+                        )
+                    )
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("Failed to update odds monitor live observation minutes: ${e.message}", e)
+            ResponseEntity.ok(
+                ApiResponse.error(
+                    ErrorCode.SERVER_ERROR,
+                    "Failed to update odds monitor live observation minutes: ${e.message}",
+                    messageSource
+                )
+            )
+        }
+    }
     
     @PostMapping("/auto-redeem/status")
     fun getAutoRedeemStatus(): ResponseEntity<ApiResponse<Map<String, Boolean>>> {

@@ -27,6 +27,8 @@ class SystemConfigService(
         const val CONFIG_KEY_BUILDER_PASSPHRASE = "builder.passphrase"
         const val CONFIG_KEY_AUTO_REDEEM = "auto_redeem"
         const val CONFIG_KEY_ORDER_NOTIFICATION_MIN_AMOUNT = "telegram.order_notification_min_amount_usdc"
+        const val CONFIG_KEY_LIVE_OBSERVATION_MINUTES = "odds_monitor.live_observation_minutes"
+        private const val MAX_LIVE_OBSERVATION_MINUTES = 180
     }
 
     fun getSystemConfig(): SystemConfigDto {
@@ -35,6 +37,7 @@ class SystemConfigService(
         val builderPassphrase = getConfigValue(CONFIG_KEY_BUILDER_PASSPHRASE)
         val autoRedeem = isAutoRedeemEnabled()
         val orderNotificationMinAmount = getOrderNotificationMinAmount()
+        val liveObservationMinutes = getLiveObservationMinutes()
         val builderApiKeyDisplay = builderApiKey?.let {
             try {
                 cryptoUtils.decrypt(it)
@@ -67,7 +70,8 @@ class SystemConfigService(
             builderSecretDisplay = builderSecretDisplay,
             builderPassphraseDisplay = builderPassphraseDisplay,
             autoRedeemEnabled = autoRedeem,
-            orderNotificationMinAmountUsdc = formatDecimal(orderNotificationMinAmount)
+            orderNotificationMinAmountUsdc = formatDecimal(orderNotificationMinAmount),
+            liveObservationMinutes = liveObservationMinutes
         )
     }
 
@@ -157,6 +161,14 @@ class SystemConfigService(
         return if (amount < BigDecimal.ZERO) defaultOrderNotificationMinAmount else amount
     }
 
+    fun getLiveObservationMinutes(): Int? {
+        return getConfigValue(CONFIG_KEY_LIVE_OBSERVATION_MINUTES)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.toIntOrNull()
+            ?.takeIf { it > 0 && it <= MAX_LIVE_OBSERVATION_MINUTES }
+    }
+
     @Transactional
     fun updateAutoRedeem(enabled: Boolean): Result<SystemConfigDto> {
         return try {
@@ -176,6 +188,21 @@ class SystemConfigService(
             Result.success(getSystemConfig())
         } catch (e: Exception) {
             logger.error("Failed to update Telegram order notification minimum amount", e)
+            Result.failure(e)
+        }
+    }
+
+    @Transactional
+    fun updateLiveObservationMinutes(minutes: Int?): Result<SystemConfigDto> {
+        return try {
+            require(minutes == null || minutes > 0) { "liveObservationMinutes must be greater than 0" }
+            require(minutes == null || minutes <= MAX_LIVE_OBSERVATION_MINUTES) {
+                "liveObservationMinutes cannot exceed $MAX_LIVE_OBSERVATION_MINUTES"
+            }
+            updateConfigValue(CONFIG_KEY_LIVE_OBSERVATION_MINUTES, minutes?.toString())
+            Result.success(getSystemConfig())
+        } catch (e: Exception) {
+            logger.error("Failed to update odds monitor live observation minutes", e)
             Result.failure(e)
         }
     }
@@ -205,6 +232,7 @@ class SystemConfigService(
                     CONFIG_KEY_BUILDER_SECRET -> "Builder Secret（用于 Gasless 交易）"
                     CONFIG_KEY_BUILDER_PASSPHRASE -> "Builder Passphrase（用于 Gasless 交易）"
                     CONFIG_KEY_AUTO_REDEEM -> "自动赎回（系统级别配置，默认开启）"
+                    CONFIG_KEY_LIVE_OBSERVATION_MINUTES -> "赔率监控滚球观察分钟限制；空值表示不限制"
                     else -> null
                 }
             )

@@ -35,7 +35,8 @@ data class CrownGameListItem(
     val detailId: String,
     val ecid: String?,
     val isLive: Boolean,
-    val isRb: String?
+    val isRb: String?,
+    val elapsedMinutes: Int?
 )
 
 data class CrownFootballMatch(

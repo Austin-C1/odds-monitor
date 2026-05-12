@@ -1101,6 +1101,7 @@ export interface SystemConfig {
   builderSecretDisplay?: string  // Builder Secret 显示值（完整）
   builderPassphraseDisplay?: string  // Builder Passphrase 显示值（完整）
   autoRedeemEnabled: boolean  // 自动赎回（系统级别配置，默认开启）
+  liveObservationMinutes?: number | string | null
 }
 
 /**

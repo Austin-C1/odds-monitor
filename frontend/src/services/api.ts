@@ -822,6 +822,9 @@ export const apiService = {
      */
     updateAutoRedeem: (data: { enabled: boolean }) =>
       apiClient.post<ApiResponse<import('../types').SystemConfig>>('/system/config/auto-redeem/update', data),
+
+    updateLiveObservationMinutes: (data: { liveObservationMinutes?: number | null }) =>
+      apiClient.post<ApiResponse<import('../types').SystemConfig>>('/system/config/live-observation-minutes/update', data),
     
     /**
      * 更新订单推送最小金额

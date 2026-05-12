@@ -1,6 +1,7 @@
 package com.wrbug.polymarketbot.service.oddsmonitor.collector.crown
 
 import com.wrbug.polymarketbot.service.oddsmonitor.OddsFootballMatchFilter
+import com.wrbug.polymarketbot.service.oddsmonitor.normalizeOddsMonitorLiveElapsedMinutes
 import org.springframework.stereotype.Component
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
@@ -51,17 +52,19 @@ class CrownResponseParser {
             val ecid = item.childText("ecid")?.takeIf { it.isNotBlank() }
             val detailId = ecid ?: gidm ?: gid ?: return@mapNotNull null
             val retimeset = item.childText("retimeset").orEmpty()
+            val isRb = item.childText("is_rb")?.takeIf { it.isNotBlank() }
             CrownGameListItem(
                 lid = lid,
                 detailId = detailId,
                 ecid = ecid,
-                isLive = retimeset.isNotBlank() && retimeset != "0",
-                isRb = item.childText("is_rb")?.takeIf { it.isNotBlank() }
+                isLive = (retimeset.isNotBlank() && retimeset != "0") || isRb.equals("Y", ignoreCase = true),
+                isRb = isRb,
+                elapsedMinutes = normalizeOddsMonitorLiveElapsedMinutes(retimeset)
             )
         }
     }
 
-    fun parseDetailGames(xmlText: String, isLive: Boolean): List<CrownFootballMatch> {
+    fun parseDetailGames(xmlText: String, isLive: Boolean, elapsedMinutes: Int? = null): List<CrownFootballMatch> {
         val root = parseRoot(xmlText)
         return root.elements("game").mapNotNull { game ->
             val fields = game.childTextMap()
@@ -73,6 +76,13 @@ class CrownResponseParser {
             if (OddsFootballMatchFilter.shouldIgnore(leagueName, homeTeam, awayTeam)) {
                 return@mapNotNull null
             }
+            val liveElapsedMinutes = elapsedMinutes
+                ?: fields.liveElapsedMinutes()
+            val rawPayload = fields + mapOf(
+                "is_live" to detailIsLive,
+                "score" to fields.liveScoreText(),
+                "elapsed_minutes" to liveElapsedMinutes
+            )
             CrownFootballMatch(
                 sourceMatchId = sourceMatchId,
                 leagueName = leagueName,
@@ -83,7 +93,7 @@ class CrownResponseParser {
                 handicaps = parseHandicaps(fields, detailIsLive),
                 totals = parseTotals(fields, detailIsLive),
                 moneyline = parseMoneyline(fields, detailIsLive),
-                rawPayload = fields + mapOf("is_live" to detailIsLive)
+                rawPayload = rawPayload
             )
         }
     }
@@ -213,6 +223,25 @@ class CrownResponseParser {
             firstPresent("is_rb")?.equals("Y", ignoreCase = true) == true ||
             firstPresent("retimeset").orEmpty().let { it.isNotBlank() && it != "0" } ||
             firstPresent("ratio_re", "ratio_rouo").orEmpty().isNotBlank()
+    }
+
+    private fun Map<String, String>.liveScoreText(): String? {
+        val directScore = firstPresent("score")?.takeIf { it != "-" }
+        if (!directScore.isNullOrBlank()) {
+            return directScore
+        }
+        val homeScore = firstPresent("score_h", "score_home", "h_score", "home_score")
+        val awayScore = firstPresent("score_c", "score_away", "c_score", "away_score")
+        return if (!homeScore.isNullOrBlank() && !awayScore.isNullOrBlank()) {
+            "$homeScore-$awayScore"
+        } else {
+            null
+        }
+    }
+
+    private fun Map<String, String>.liveElapsedMinutes(): Int? {
+        return firstPresent("retimeset", "elapsed_minutes", "match_minute", "minute", "rb_time", "timer")
+            ?.let { normalizeOddsMonitorLiveElapsedMinutes(it) }
     }
 
     private fun String?.toDecimalOrNull(): BigDecimal? {

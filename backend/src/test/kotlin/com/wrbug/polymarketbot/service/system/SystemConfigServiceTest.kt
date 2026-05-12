@@ -54,4 +54,38 @@ class SystemConfigServiceTest {
         assertEquals(SystemConfigService.CONFIG_KEY_ORDER_NOTIFICATION_MIN_AMOUNT, captor.value.configKey)
         assertEquals("10", captor.value.configValue)
     }
+
+    @Test
+    fun `live observation minutes should be unrestricted when not configured`() {
+        `when`(systemConfigRepository.findByConfigKey(SystemConfigService.CONFIG_KEY_LIVE_OBSERVATION_MINUTES))
+            .thenReturn(null)
+
+        assertEquals(null, service.getLiveObservationMinutes())
+    }
+
+    @Test
+    fun `update live observation minutes should persist blank as unrestricted`() {
+        `when`(systemConfigRepository.findByConfigKey(SystemConfigService.CONFIG_KEY_LIVE_OBSERVATION_MINUTES))
+            .thenReturn(null)
+        val captor = ArgumentCaptor.forClass(SystemConfig::class.java)
+
+        service.updateLiveObservationMinutes(null)
+
+        verify(systemConfigRepository).save(captor.capture())
+        assertEquals(SystemConfigService.CONFIG_KEY_LIVE_OBSERVATION_MINUTES, captor.value.configKey)
+        assertEquals(null, captor.value.configValue)
+    }
+
+    @Test
+    fun `update live observation minutes should persist positive minutes`() {
+        `when`(systemConfigRepository.findByConfigKey(SystemConfigService.CONFIG_KEY_LIVE_OBSERVATION_MINUTES))
+            .thenReturn(null)
+        val captor = ArgumentCaptor.forClass(SystemConfig::class.java)
+
+        service.updateLiveObservationMinutes(75)
+
+        verify(systemConfigRepository).save(captor.capture())
+        assertEquals(SystemConfigService.CONFIG_KEY_LIVE_OBSERVATION_MINUTES, captor.value.configKey)
+        assertEquals("75", captor.value.configValue)
+    }
 }

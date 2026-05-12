@@ -12,6 +12,7 @@ import com.wrbug.polymarketbot.repository.OddsMarketRepository
 import com.wrbug.polymarketbot.repository.OddsMatchRepository
 import com.wrbug.polymarketbot.repository.OddsSnapshotRepository
 import com.wrbug.polymarketbot.service.system.NotificationConfigService
+import com.wrbug.polymarketbot.service.system.SystemConfigService
 import com.wrbug.polymarketbot.service.system.TelegramNotificationService
 import com.wrbug.polymarketbot.util.DateUtils
 import com.wrbug.polymarketbot.util.TextEncodingUtils
@@ -32,7 +33,8 @@ class OddsChangeNotificationService(
     private val snapshotRepository: OddsSnapshotRepository,
     private val matchRepository: OddsMatchRepository? = null,
     private val leagueFilterService: OddsLeagueFilterService? = null,
-    private val dataSourceConfigRepository: OddsDataSourceConfigRepository? = null
+    private val dataSourceConfigRepository: OddsDataSourceConfigRepository? = null,
+    private val systemConfigService: SystemConfigService? = null
 ) {
     private val logger = LoggerFactory.getLogger(OddsChangeNotificationService::class.java)
     private val defaultExpectedSources = listOf("pinnacle", "crown", "polymarket")
@@ -66,7 +68,14 @@ class OddsChangeNotificationService(
         val now = System.currentTimeMillis()
         val matchPhase = determineOddsMonitorMatchPhase(match, standardMatch, now)
         val startTime = standardMatch?.startTime ?: match.rawStartTime
-        val phaseConfigs = configs.filter { telegramConfigMatchesOddsMonitorPhase(it, matchPhase, startTime, now) }
+        val liveObservationMinutes = if (matchPhase == OddsMonitorMatchPhase.LIVE) {
+            loadLiveObservationMinutes()
+        } else {
+            null
+        }
+        val phaseConfigs = configs.filter {
+            telegramConfigMatchesOddsMonitorPhase(it, matchPhase, startTime, now, liveObservationMinutes)
+        }
         if (phaseConfigs.isEmpty()) {
             return
         }
@@ -90,7 +99,8 @@ class OddsChangeNotificationService(
             previousOdds = previousOdds ?: BigDecimal.ZERO,
             currentOdds = currentOdds,
             configs = eligibleConfigs,
-            applyOddsMoveFilter = leagueMatched
+            applyOddsMoveFilter = leagueMatched,
+            liveContext = liveContextForNotification(matchPhase, match, standardMatch, now)
         )
     }
 
@@ -160,7 +170,8 @@ class OddsChangeNotificationService(
         previousOdds: BigDecimal,
         currentOdds: BigDecimal,
         configs: List<NotificationConfigDto>,
-        applyOddsMoveFilter: Boolean = true
+        applyOddsMoveFilter: Boolean = true,
+        liveContext: OddsLiveMatchContext? = null
     ) {
         val candidate = notificationMergeCandidate(match, standardMatch)
         val key = notificationMergeKey(matchId, candidate)
@@ -181,7 +192,8 @@ class OddsChangeNotificationService(
             val updatedBase = base.copy(
                 matchName = bestNotificationText(base.matchName, matchName),
                 leagueName = bestNotificationText(base.leagueName, leagueName),
-                configs = mergeNotificationConfigs(base.configs, configs)
+                configs = mergeNotificationConfigs(base.configs, configs),
+                liveContext = mergeLiveContext(base.liveContext, liveContext)
             )
             val pendingMarket = updatedBase.markets.getOrPut(marketKey) {
                 PendingOddsChangeMarketNotification(
@@ -233,7 +245,8 @@ class OddsChangeNotificationService(
                 )
             },
             expectedSources = expectedSourcesForNotification(pending),
-            timestampText = DateUtils.formatDateTime()
+            timestampText = DateUtils.formatDateTime(),
+            liveContext = pending.liveContext
         )
         alertRecordRepository.save(
             OddsAlertRecord(
@@ -407,6 +420,15 @@ class OddsChangeNotificationService(
         }
     }
 
+    private fun loadLiveObservationMinutes(): Int? {
+        return runCatching {
+            systemConfigService?.getLiveObservationMinutes()
+        }.getOrElse { error ->
+            logger.warn("Failed to load live observation minutes: {}", error.message)
+            null
+        }
+    }
+
     private fun shouldNotifyLeague(match: OddsPlatformMatch, standardMatch: OddsMatch?): Boolean {
         val filter = leagueFilterService ?: return true
         val rawLeagueName = TextEncodingUtils.repairMojibake(match.rawLeagueName).trim()
@@ -414,6 +436,42 @@ class OddsChangeNotificationService(
             return filter.shouldIncludeLeague(match.sourceKey, rawLeagueName)
         }
         return standardMatch?.leagueName?.let { filter.shouldIncludeLeague(it) } ?: false
+    }
+
+    private fun liveContextForNotification(
+        matchPhase: OddsMonitorMatchPhase,
+        match: OddsPlatformMatch,
+        standardMatch: OddsMatch?,
+        now: Long
+    ): OddsLiveMatchContext? {
+        if (matchPhase != OddsMonitorMatchPhase.LIVE) {
+            return null
+        }
+        val startTime = standardMatch?.startTime ?: match.rawStartTime
+        val elapsedMinutes = oddsMonitorLiveElapsedMinutes(match.rawPayloadJson)
+            ?: startTime
+                ?.let { ((now - it) / 60_000L).toInt() }
+                ?.takeIf { it >= 0 }
+        return OddsLiveMatchContext(
+            elapsedMinutes = elapsedMinutes,
+            scoreText = oddsMonitorLiveScoreText(match.rawPayloadJson)
+        )
+    }
+
+    private fun mergeLiveContext(
+        existing: OddsLiveMatchContext?,
+        incoming: OddsLiveMatchContext?
+    ): OddsLiveMatchContext? {
+        if (existing == null) {
+            return incoming
+        }
+        if (incoming == null) {
+            return existing
+        }
+        return OddsLiveMatchContext(
+            elapsedMinutes = incoming.elapsedMinutes ?: existing.elapsedMinutes,
+            scoreText = incoming.scoreText ?: existing.scoreText
+        )
     }
 
     private fun notificationMergeKey(
@@ -446,6 +504,11 @@ data class OddsChangeNotificationMarketItem(
     val changes: List<OddsChangeNotificationItem>
 )
 
+data class OddsLiveMatchContext(
+    val elapsedMinutes: Int? = null,
+    val scoreText: String? = null
+)
+
 private data class OddsChangeNotificationKey(
     val value: String
 )
@@ -473,7 +536,8 @@ private data class PendingOddsChangeNotification(
     val matchId: Long,
     val candidate: OddsMatchCandidate,
     val configs: List<NotificationConfigDto>,
-    val markets: LinkedHashMap<OddsChangeNotificationMarketKey, PendingOddsChangeMarketNotification>
+    val markets: LinkedHashMap<OddsChangeNotificationMarketKey, PendingOddsChangeMarketNotification>,
+    val liveContext: OddsLiveMatchContext? = null
 )
 
 private data class PendingOddsChangeMarketNotification(
@@ -614,14 +678,16 @@ fun buildMergedOddsChangeAlertMessage(
     marketLabel: String,
     changes: List<OddsChangeNotificationItem>,
     expectedSources: List<String>,
-    timestampText: String
+    timestampText: String,
+    liveContext: OddsLiveMatchContext? = null
 ): String {
     return buildMergedOddsChangeAlertMessage(
         matchName = matchName,
         leagueName = leagueName,
         markets = listOf(OddsChangeNotificationMarketItem(marketLabel = marketLabel, changes = changes)),
         expectedSources = expectedSources,
-        timestampText = timestampText
+        timestampText = timestampText,
+        liveContext = liveContext
     )
 }
 
@@ -630,7 +696,8 @@ fun buildMergedOddsChangeAlertMessage(
     leagueName: String,
     markets: List<OddsChangeNotificationMarketItem>,
     expectedSources: List<String>,
-    timestampText: String
+    timestampText: String,
+    liveContext: OddsLiveMatchContext? = null
 ): String {
     val displayMatchName = TextEncodingUtils.repairMojibake(matchName)
     val displayLeagueName = TextEncodingUtils.repairMojibake(leagueName)
@@ -638,6 +705,10 @@ fun buildMergedOddsChangeAlertMessage(
         appendLine("<b>${escapeHtml("赔率变动：$displayMatchName")}</b>")
         appendLine()
         appendLine("联赛：${escapeHtml(displayLeagueName)}")
+        liveContext?.let { context ->
+            appendLine("进行：${formatElapsedMinutes(context.elapsedMinutes)}")
+            appendLine("比分：${escapeHtml(context.scoreText?.takeIf { it.isNotBlank() } ?: "未知")}")
+        }
         appendLine()
         markets.forEachIndexed { index, market ->
             if (index > 0) {
@@ -658,6 +729,10 @@ fun buildMergedOddsChangeAlertMessage(
         appendLine("筛选：动水通过 / 合水通过")
         append("时间：$timestampText")
     }
+}
+
+private fun formatElapsedMinutes(elapsedMinutes: Int?): String {
+    return elapsedMinutes?.let { "第 $it 分钟" } ?: "未知"
 }
 
 private fun OddsMarket.displayLabel(): String {

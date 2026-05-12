@@ -117,7 +117,7 @@ class CrownApiClient(
             parser.parseSessionFailure(detailResponse)?.let { reason ->
                 throw CrownCollectionException("failed_login", "crown session expired: $reason")
             }
-            parser.parseDetailGames(detailResponse, item.isLive)
+            parser.parseDetailGames(detailResponse, item.isLive, item.elapsedMinutes)
         }
         return CrownFetchResult(
             matches = matches,

@@ -52,6 +52,10 @@ data class OrderNotificationMinAmountUpdateRequest(
     val minAmountUsdc: String? = null
 )
 
+data class LiveObservationMinutesUpdateRequest(
+    val liveObservationMinutes: Int? = null
+)
+
 data class SystemConfigDto(
     val builderApiKeyConfigured: Boolean,
     val builderSecretConfigured: Boolean,
@@ -60,7 +64,8 @@ data class SystemConfigDto(
     val builderSecretDisplay: String? = null,
     val builderPassphraseDisplay: String? = null,
     val autoRedeemEnabled: Boolean = true,
-    val orderNotificationMinAmountUsdc: String = "10"
+    val orderNotificationMinAmountUsdc: String = "10",
+    val liveObservationMinutes: Int? = null
 )
 
 data class AccountDeleteRequest(
