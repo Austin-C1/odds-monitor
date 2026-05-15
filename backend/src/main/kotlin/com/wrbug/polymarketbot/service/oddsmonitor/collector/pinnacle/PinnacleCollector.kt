@@ -152,7 +152,7 @@ class PinnacleCollector(
 
     private fun saveOddsRow(platformMatch: OddsPlatformMatch, standardMatchId: Long, row: PinnacleMappedOddsRow) {
         val now = System.currentTimeMillis()
-        val market = marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+        val market = marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
             matchId = standardMatchId,
             sourceKey = SOURCE_KEY,
             marketType = row.marketType,

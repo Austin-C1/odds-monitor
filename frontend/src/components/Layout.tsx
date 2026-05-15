@@ -9,15 +9,15 @@ import {
   CloudServerOutlined,
   DatabaseOutlined,
   FilterOutlined,
+  HistoryOutlined,
   LogoutOutlined,
   MenuOutlined,
   NotificationOutlined,
-  SearchOutlined,
   SettingOutlined,
+  WalletOutlined,
 } from '@ant-design/icons'
 import { useMediaQuery } from 'react-responsive'
 import { removeToken, getVersionInfo, getVersionText } from '../utils'
-import { wsManager } from '../services/websocket'
 
 const { Header, Content, Sider } = AntLayout
 
@@ -30,11 +30,12 @@ const menuItems: MenuProps['items'] = [
   { key: '/default-tracking', icon: <FilterOutlined />, label: '默认追踪' },
   { key: '/pinnacle-league-filter', icon: <FilterOutlined />, label: '平博比赛选择' },
   { key: '/crown-league-filter', icon: <FilterOutlined />, label: '皇冠比赛选择' },
+  { key: '/crown-betting', icon: <WalletOutlined />, label: '皇冠投注' },
+  { key: '/betting-history', icon: <HistoryOutlined />, label: '下注成功' },
   { key: '/data-sources/settings', icon: <SettingOutlined />, label: '数据源设置' },
   { key: '/data-sources/status', icon: <CloudServerOutlined />, label: '数据源状态' },
   { key: '/alerts', icon: <AlertOutlined />, label: '告警记录' },
   { key: '/system-settings/notification', icon: <NotificationOutlined />, label: '告警通知' },
-  { key: '/polymarket-query', icon: <SearchOutlined />, label: 'Polymarket 查询' },
   { key: '/runtime-logs', icon: <DatabaseOutlined />, label: '运行日志' },
   { key: '/system-settings/update', icon: <CloudUploadOutlined />, label: '系统更新' },
   { type: 'divider' },
@@ -54,7 +55,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const handleLogout = () => {
     removeToken()
-    wsManager.disconnect()
     navigate('/login', { replace: true })
   }
 

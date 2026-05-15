@@ -2,17 +2,61 @@ package com.wrbug.polymarketbot.service.oddsmonitor
 
 import com.wrbug.polymarketbot.entity.OddsCollectionLog
 import com.wrbug.polymarketbot.entity.OddsDataSourceConfig
+import com.wrbug.polymarketbot.entity.OddsAlertRecord
 import com.wrbug.polymarketbot.dto.OddsDataSourceConfigDto
 import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
 import com.wrbug.polymarketbot.repository.OddsCollectionLogRepository
 import com.wrbug.polymarketbot.repository.OddsDataSourceConfigRepository
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
 
 class OddsMonitorServiceStatusTest {
+    @Test
+    fun `alert records hide legacy template code fragments and telegram tags`() {
+        val configRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val logRepository = mock(OddsCollectionLogRepository::class.java)
+        `when`(alertRepository.findTop100ByOrderByCreatedAtDesc()).thenReturn(
+            listOf(
+                OddsAlertRecord(
+                    alertType = "odds_change",
+                    severity = "info",
+                    title = "赔率变动：{TextEncodingUtils.repairMojibake(pending.matchName)}",
+                    message = """
+                    <b>滚球赔率变动</b>
+                    联赛：苏格兰超级联赛
+                    比赛：邓迪联 vs 利文斯顿 进行：第 2 分钟 比分：0-0
+                    盘口：{escapeHtml(TextEncodingUtils.repairMojibake(market.marketLabel))}
+                    皇冠：{formatMergedOdds(change.previousOdds, change.sourceKey, market.marketType)} -> 1.82
+                    筛选：动水通过 / 合水通过
+                    时间：<code>2026-05-12 21:38:07</code>
+                    """.trimIndent(),
+                    createdAt = 100
+                )
+            )
+        )
+
+        val record = OddsMonitorService(configRepository, alertRepository, logRepository)
+            .listAlertRecords()
+            .first()
+
+        assertEquals("赔率变动：邓迪联 vs 利文斯顿", record.title)
+        assertTrue(record.message.contains("滚球赔率变动"))
+        assertTrue(record.message.contains("联赛：苏格兰超级联赛"))
+        assertTrue(record.message.contains("筛选：动水通过 / 合水通过"))
+        assertTrue(record.message.contains("时间：2026-05-12 21:38:07"))
+        assertFalse(record.message.contains("TextEncodingUtils"))
+        assertFalse(record.message.contains("formatMergedOdds"))
+        assertFalse(record.message.contains("{"))
+        assertFalse(record.message.contains("<b>"))
+        assertFalse(record.message.contains("<code>"))
+    }
+
     @Test
     fun `data source status reports typed pinnacle failure`() {
         val configRepository = mock(OddsDataSourceConfigRepository::class.java)
@@ -146,6 +190,31 @@ class OddsMonitorServiceStatusTest {
 
         assertEquals("皇冠", service.listDataSourceConfigs().first { it.sourceKey == "crown" }.displayName)
         assertEquals("皇冠", service.listDataSourceStatuses().first { it.sourceKey == "crown" }.displayName)
+    }
+
+    @Test
+    fun `data source configs and statuses only expose pinnacle and crown`() {
+        val configRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val logRepository = mock(OddsCollectionLogRepository::class.java)
+
+        `when`(configRepository.findAll()).thenReturn(
+            listOf(
+                OddsDataSourceConfig(sourceKey = "pinnacle", displayName = "平博", enabled = true),
+                OddsDataSourceConfig(sourceKey = "crown", displayName = "皇冠", enabled = true),
+                OddsDataSourceConfig(sourceKey = "polymarket", displayName = "Polymarket", enabled = true)
+            )
+        )
+        listOf("pinnacle", "crown").forEach { sourceKey ->
+            `when`(logRepository.findTop1BySourceKeyOrderByStartedAtDesc(sourceKey)).thenReturn(null)
+            `when`(logRepository.findTop1BySourceKeyAndStatusOrderByStartedAtDesc(sourceKey, "success")).thenReturn(null)
+            `when`(logRepository.findTop1FailureBySourceKey(sourceKey)).thenReturn(null)
+        }
+
+        val service = OddsMonitorService(configRepository, alertRepository, logRepository)
+
+        assertEquals(listOf("pinnacle", "crown"), service.listDataSourceConfigs().map { it.sourceKey })
+        assertEquals(listOf("pinnacle", "crown"), service.listDataSourceStatuses().map { it.sourceKey })
     }
 
     @Test

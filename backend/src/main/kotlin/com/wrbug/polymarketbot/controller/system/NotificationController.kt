@@ -46,15 +46,13 @@ class NotificationController(
     @PostMapping("/configs/detail")
     fun getConfigDetail(@RequestBody request: NotificationConfigDetailRequest): ResponseEntity<ApiResponse<NotificationConfigDto>> {
         return try {
-            if (request.id == null) {
-                return ResponseEntity.ok(ApiResponse.error(
+            val id = request.id ?: return ResponseEntity.ok(ApiResponse.error(
                     ErrorCode.NOTIFICATION_CONFIG_ID_EMPTY,
                     messageSource = messageSource
                 ))
-            }
             
             val config = runBlocking {
-                notificationConfigService.getConfigById(request.id)
+                notificationConfigService.getConfigById(id)
             }
             
             if (config == null) {
@@ -76,13 +74,13 @@ class NotificationController(
     fun createConfig(@RequestBody request: NotificationConfigRequest): ResponseEntity<ApiResponse<NotificationConfigDto>> {
         return try {
             if (request.type.isBlank()) {
-                return ResponseEntity.ok(ApiResponse.paramError("推送类型不能为空"))
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "推送类型不能为空"))
             }
             if (request.name.isBlank()) {
-                return ResponseEntity.ok(ApiResponse.paramError("配置名称不能为空"))
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "配置名称不能为空"))
             }
             if (request.config.isEmpty()) {
-                return ResponseEntity.ok(ApiResponse.paramError("配置信息不能为空"))
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "配置信息不能为空"))
             }
             
             val result = runBlocking {
@@ -115,12 +113,10 @@ class NotificationController(
     @PostMapping("/configs/update")
     fun updateConfig(@RequestBody request: NotificationConfigUpdateRequest): ResponseEntity<ApiResponse<NotificationConfigDto>> {
         return try {
-            if (request.id == null) {
-                return ResponseEntity.ok(ApiResponse.error(
+            val id = request.id ?: return ResponseEntity.ok(ApiResponse.error(
                     ErrorCode.NOTIFICATION_CONFIG_ID_EMPTY,
                     messageSource = messageSource
                 ))
-            }
             if (request.type.isBlank()) {
                 return ResponseEntity.ok(ApiResponse.error(
                     ErrorCode.NOTIFICATION_CONFIG_TYPE_EMPTY,
@@ -148,7 +144,7 @@ class NotificationController(
             )
             
             val result = runBlocking {
-                notificationConfigService.updateConfig(request.id, configRequest)
+                notificationConfigService.updateConfig(id, configRequest)
             }
             
             result.fold(
@@ -177,15 +173,13 @@ class NotificationController(
     @PostMapping("/configs/update-enabled")
     fun updateEnabled(@RequestBody request: NotificationConfigUpdateEnabledRequest): ResponseEntity<ApiResponse<NotificationConfigDto>> {
         return try {
-            if (request.id == null) {
-                return ResponseEntity.ok(ApiResponse.error(
+            val id = request.id ?: return ResponseEntity.ok(ApiResponse.error(
                     ErrorCode.NOTIFICATION_CONFIG_ID_EMPTY,
                     messageSource = messageSource
                 ))
-            }
             
             val result = runBlocking {
-                notificationConfigService.updateEnabled(request.id, request.enabled ?: true)
+                notificationConfigService.updateEnabled(id, request.enabled ?: true)
             }
             
             result.fold(
@@ -214,15 +208,13 @@ class NotificationController(
     @PostMapping("/configs/delete")
     fun deleteConfig(@RequestBody request: NotificationConfigDeleteRequest): ResponseEntity<ApiResponse<Unit>> {
         return try {
-            if (request.id == null) {
-                return ResponseEntity.ok(ApiResponse.error(
+            val id = request.id ?: return ResponseEntity.ok(ApiResponse.error(
                     ErrorCode.NOTIFICATION_CONFIG_ID_EMPTY,
                     messageSource = messageSource
                 ))
-            }
             
             val result = runBlocking {
-                notificationConfigService.deleteConfig(request.id)
+                notificationConfigService.deleteConfig(id)
             }
             
             result.fold(
@@ -338,7 +330,7 @@ class NotificationController(
     fun getTemplateDetail(@RequestBody request: TemplateDetailRequest): ResponseEntity<ApiResponse<NotificationTemplateDto>> {
         return try {
             if (request.templateType.isBlank()) {
-                return ResponseEntity.ok(ApiResponse.paramError("模板类型不能为空"))
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "模板类型不能为空"))
             }
 
             val template = notificationTemplateService.getTemplate(request.templateType)
@@ -357,7 +349,7 @@ class NotificationController(
     fun getTemplateVariables(@RequestBody request: TemplateDetailRequest): ResponseEntity<ApiResponse<TemplateVariablesResponse>> {
         return try {
             if (request.templateType.isBlank()) {
-                return ResponseEntity.ok(ApiResponse.paramError("模板类型不能为空"))
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "模板类型不能为空"))
             }
 
             val variables = notificationTemplateService.getTemplateVariables(request.templateType)
@@ -376,10 +368,10 @@ class NotificationController(
     fun updateTemplate(@RequestBody request: UpdateTemplateRequestWithId): ResponseEntity<ApiResponse<NotificationTemplateDto>> {
         return try {
             if (request.templateType.isBlank()) {
-                return ResponseEntity.ok(ApiResponse.paramError("模板类型不能为空"))
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "模板类型不能为空"))
             }
             if (request.templateContent.isBlank()) {
-                return ResponseEntity.ok(ApiResponse.paramError("模板内容不能为空"))
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "模板内容不能为空"))
             }
 
             val template = notificationTemplateService.updateTemplate(request.templateType, request.templateContent)
@@ -394,7 +386,7 @@ class NotificationController(
     fun resetTemplate(@RequestBody request: TemplateDetailRequest): ResponseEntity<ApiResponse<NotificationTemplateDto>> {
         return try {
             if (request.templateType.isBlank()) {
-                return ResponseEntity.ok(ApiResponse.paramError("模板类型不能为空"))
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "模板类型不能为空"))
             }
 
             val template = notificationTemplateService.resetTemplate(request.templateType)
@@ -413,7 +405,7 @@ class NotificationController(
     fun testTemplate(@RequestBody request: TestTemplateRequest): ResponseEntity<ApiResponse<Boolean>> {
         return try {
             if (request.templateType.isBlank()) {
-                return ResponseEntity.ok(ApiResponse.paramError("模板类型不能为空"))
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "模板类型不能为空"))
             }
 
             val success = runBlocking {
@@ -448,11 +440,11 @@ data class NotificationConfigListRequest(
 )
 
 data class NotificationConfigDetailRequest(
-    val id: Long
+    val id: Long?
 )
 
 data class NotificationConfigUpdateRequest(
-    val id: Long,
+    val id: Long?,
     val type: String,
     val name: String,
     val enabled: Boolean? = null,
@@ -460,12 +452,12 @@ data class NotificationConfigUpdateRequest(
 )
 
 data class NotificationConfigUpdateEnabledRequest(
-    val id: Long,
+    val id: Long?,
     val enabled: Boolean? = true
 )
 
 data class NotificationConfigDeleteRequest(
-    val id: Long
+    val id: Long?
 )
 
 data class TemplateDetailRequest(

@@ -1,6 +1,7 @@
 package com.wrbug.polymarketbot.config
 
 import com.wrbug.polymarketbot.dto.ApiResponse
+import com.wrbug.polymarketbot.enums.ErrorCode
 import com.wrbug.polymarketbot.repository.UserRepository
 import com.wrbug.polymarketbot.util.JwtUtils
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -87,7 +88,7 @@ class JwtAuthenticationInterceptor(
         response.contentType = MediaType.APPLICATION_JSON_VALUE
         response.characterEncoding = "UTF-8"
         
-        val apiResponse: ApiResponse<Unit> = ApiResponse.authError(message)
+        val apiResponse: ApiResponse<Unit> = ApiResponse.error(ErrorCode.AUTH_ERROR, message)
         val json = objectMapper.writeValueAsString(apiResponse)
         response.writer.write(json)
         response.writer.flush()

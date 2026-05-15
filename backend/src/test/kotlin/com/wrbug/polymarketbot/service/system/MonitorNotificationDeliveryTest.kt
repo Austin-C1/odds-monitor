@@ -10,27 +10,15 @@ import org.junit.jupiter.api.Test
 class MonitorNotificationDeliveryTest {
 
     @Test
-    fun `standard delivery should keep non monitor configs when monitor mode is enabled`() {
+    fun `all delivery should keep every telegram config`() {
         val configs = listOf(
             telegramConfigDto(id = 1L, monitorModeEnabled = false),
             telegramConfigDto(id = 2L, monitorModeEnabled = true)
         )
 
-        val filtered = filterTelegramConfigsForAudience(configs, TelegramNotificationAudience.STANDARD)
+        val filtered = filterTelegramConfigsForAudience(configs, TelegramNotificationAudience.ALL)
 
-        assertEquals(listOf(1L), filtered.mapNotNull { it.id })
-    }
-
-    @Test
-    fun `standard delivery should exclude market betting query bots`() {
-        val configs = listOf(
-            telegramConfigDto(id = 1L, monitorModeEnabled = false, marketBettingQueryEnabled = true),
-            telegramConfigDto(id = 2L, monitorModeEnabled = false, marketBettingQueryEnabled = false)
-        )
-
-        val filtered = filterTelegramConfigsForAudience(configs, TelegramNotificationAudience.STANDARD)
-
-        assertEquals(listOf(2L), filtered.mapNotNull { it.id })
+        assertEquals(listOf(1L, 2L), filtered.mapNotNull { it.id })
     }
 
     @Test
@@ -46,46 +34,9 @@ class MonitorNotificationDeliveryTest {
         assertEquals(listOf(2L, 3L), filtered.mapNotNull { it.id })
     }
 
-    @Test
-    fun `monitor delivery should exclude market betting query bots`() {
-        val configs = listOf(
-            telegramConfigDto(id = 1L, monitorModeEnabled = true, marketBettingQueryEnabled = true),
-            telegramConfigDto(id = 2L, monitorModeEnabled = true, marketBettingQueryEnabled = false)
-        )
-
-        val filtered = filterTelegramConfigsForAudience(configs, TelegramNotificationAudience.MONITOR_ONLY)
-
-        assertEquals(listOf(2L), filtered.mapNotNull { it.id })
-    }
-
-    @Test
-    fun `standard delivery should fall back to monitor configs when no standard config exists`() {
-        val configs = listOf(
-            telegramConfigDto(id = 2L, monitorModeEnabled = true),
-            telegramConfigDto(id = 3L, monitorModeEnabled = true)
-        )
-
-        val filtered = filterTelegramConfigsForAudience(configs, TelegramNotificationAudience.STANDARD)
-
-        assertEquals(listOf(2L, 3L), filtered.mapNotNull { it.id })
-    }
-
-    @Test
-    fun `standard fallback should still exclude query-only bots`() {
-        val configs = listOf(
-            telegramConfigDto(id = 1L, monitorModeEnabled = false, marketBettingQueryEnabled = true),
-            telegramConfigDto(id = 2L, monitorModeEnabled = true, marketBettingQueryEnabled = false)
-        )
-
-        val filtered = filterTelegramConfigsForAudience(configs, TelegramNotificationAudience.STANDARD)
-
-        assertEquals(listOf(2L), filtered.mapNotNull { it.id })
-    }
-
     private fun telegramConfigDto(
         id: Long,
-        monitorModeEnabled: Boolean,
-        marketBettingQueryEnabled: Boolean = false
+        monitorModeEnabled: Boolean
     ) = NotificationConfigDto(
         id = id,
         type = "telegram",
@@ -95,8 +46,7 @@ class MonitorNotificationDeliveryTest {
             TelegramConfigData(
                 botToken = "token-$id",
                 chatIds = listOf("chat-$id"),
-                monitorModeEnabled = monitorModeEnabled,
-                marketBettingQueryEnabled = marketBettingQueryEnabled
+                monitorModeEnabled = monitorModeEnabled
             )
         )
     )

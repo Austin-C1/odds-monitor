@@ -41,12 +41,11 @@ class OddsMonitorService(
     private val leagueFilterService: OddsLeagueFilterService? = null,
     private val oddsChangeNotificationService: OddsChangeNotificationService? = null
 ) {
-    private val collectedSourceKeys = listOf("pinnacle", "crown", "polymarket")
+    private val collectedSourceKeys = listOf("pinnacle", "crown")
 
     private val defaultSources = listOf(
         OddsDataSourceConfigDto("pinnacle", "平博", false, intervalSeconds = 60, updatedAt = 0),
-        OddsDataSourceConfigDto("crown", "皇冠", false, intervalSeconds = 60, updatedAt = 0),
-        OddsDataSourceConfigDto("polymarket", "Polymarket", true, queryKeyword = "soccer", intervalSeconds = 120, updatedAt = 0)
+        OddsDataSourceConfigDto("crown", "皇冠", false, intervalSeconds = 60, updatedAt = 0)
     )
 
     fun getDashboard(): OddsMonitorDashboardDto {
@@ -60,8 +59,8 @@ class OddsMonitorService(
 
         val now = System.currentTimeMillis()
         val matches = listOf(
-            OddsMonitorMatchDto(1, "英格兰超级联赛", "阿森纳", "切尔西", now + 3_600_000, "模拟", 3, 0, listOf("pinnacle", "crown", "polymarket")),
-            OddsMonitorMatchDto(2, "西班牙甲组联赛", "皇家马德里", "巴塞罗那", now + 7_200_000, "模拟", 3, 0, listOf("pinnacle", "crown", "polymarket")),
+            OddsMonitorMatchDto(1, "英格兰超级联赛", "阿森纳", "切尔西", now + 3_600_000, "模拟", 2, 0, listOf("pinnacle", "crown")),
+            OddsMonitorMatchDto(2, "西班牙甲级联赛", "皇家马德里", "巴塞罗那", now + 7_200_000, "模拟", 2, 0, listOf("pinnacle", "crown")),
             OddsMonitorMatchDto(3, "欧洲冠军联赛", "国际米兰", "拜仁慕尼黑", now + 10_800_000, "模拟", 2, 0, listOf("pinnacle", "crown"))
         )
         val selected = matches.first()
@@ -70,8 +69,7 @@ class OddsMonitorService(
             OddsHistoryPointDto(
                 timestamp = timestamp,
                 pinnacle = 1.82 + index * 0.01,
-                crown = 1.79 + index * 0.008,
-                polymarket = 0.53 + index * 0.004
+                crown = 1.79 + index * 0.008
             )
         }
 
@@ -81,8 +79,7 @@ class OddsMonitorService(
                 match = selected,
                 metrics = listOf(
                     OddsMetricDto("handicap home 0.5", "1.93", "+0.04", "pinnacle"),
-                    OddsMetricDto("total over 2.5", "1.87", "-0.02", "crown"),
-                    OddsMetricDto("Polymarket", "57.4%", "+1.6%", "polymarket")
+                    OddsMetricDto("total over 2.5", "1.87", "-0.02", "crown")
                 ),
                 oddsHistory = history
             )
@@ -220,7 +217,7 @@ class OddsMonitorService(
             val markets = marketRepo.findByMatchIdInAndSourceKey(listOf(row.match.id), sourceKey)
                 .ifEmpty { marketRepo.findByMatchIdInAndSourceKey(listOf(platformMatchId), sourceKey) }
                 .ifEmpty { marketRepo.findByPlatformMatchIdInAndSourceKey(listOf(platformMatchId), sourceKey) }
-                .filter { market -> shouldDisplayMarket(sourceKey, market.marketType) }
+                .filter { market -> shouldDisplayMarket(market.marketType) }
             markets.mapNotNull { market ->
                 val snapshot = market.id?.let { snapshotRepo.findTop1ByMarketIdOrderByCapturedAtDesc(it) }
                 snapshot?.let {
@@ -312,7 +309,8 @@ class OddsMonitorService(
 
     @Transactional
     fun saveDataSourceConfigs(configs: List<OddsDataSourceConfigDto>): List<OddsDataSourceConfigDto> {
-        configs.forEach { incoming ->
+        val supportedSourceKeys = defaultSources.map { it.sourceKey }.toSet()
+        configs.filter { it.sourceKey in supportedSourceKeys }.forEach { incoming ->
             val normalized = normalizeConfig(incoming)
             val existing = dataSourceConfigRepository.findBySourceKey(normalized.sourceKey)
             val savedConfig = OddsDataSourceConfig(
@@ -362,8 +360,8 @@ class OddsMonitorService(
                 severity = it.severity,
                 matchName = it.matchId?.toString(),
                 sourceKey = it.sourceKey,
-                title = TextEncodingUtils.repairMojibake(it.title),
-                message = TextEncodingUtils.repairMojibake(it.message),
+                title = displayAlertTitle(it.title, it.message),
+                message = displayAlertMessage(it.message),
                 createdAt = it.createdAt,
                 acknowledged = it.acknowledged
             )
@@ -400,9 +398,58 @@ class OddsMonitorService(
         return when (sourceKey.lowercase(Locale.ROOT)) {
             "pinnacle" -> "平博"
             "crown" -> "皇冠"
-            "polymarket" -> "Polymarket"
             else -> TextEncodingUtils.repairMojibake(displayName).ifBlank { sourceKey }
         }
+    }
+
+    private fun displayAlertTitle(title: String, message: String): String {
+        val repairedTitle = telegramHtmlToPlainText(TextEncodingUtils.repairMojibake(title))
+        if (!containsLegacyTemplateCode(repairedTitle)) {
+            return repairedTitle
+        }
+
+        val matchName = extractMatchNameFromAlertMessage(message)
+        return matchName?.takeIf { it.isNotBlank() }?.let { "赔率变动：$it" } ?: "赔率变动"
+    }
+
+    private fun displayAlertMessage(message: String): String {
+        val repaired = TextEncodingUtils.repairMojibake(message)
+        val cleaned = if (containsLegacyTemplateCode(repaired)) {
+            repaired.lines()
+                .filterNot { line -> containsLegacyTemplateCode(line) }
+                .joinToString("\n")
+        } else {
+            repaired
+        }
+        return telegramHtmlToPlainText(cleaned)
+    }
+
+    private fun extractMatchNameFromAlertMessage(message: String): String? {
+        val plainText = telegramHtmlToPlainText(TextEncodingUtils.repairMojibake(message))
+        return Regex("""比赛[:：]\s*(.*?)(?=\s+(?:进行|比分|盘口|筛选|时间)[:：]|\r?\n|$)""")
+            .find(plainText)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+    }
+
+    private fun containsLegacyTemplateCode(value: String): Boolean {
+        return value.contains("TextEncodingUtils.repairMojibake") ||
+            value.contains("formatMergedOdds(") ||
+            value.contains("escapeHtml(")
+    }
+
+    private fun telegramHtmlToPlainText(value: String): String {
+        var text = value
+        text = Regex("""<a\s+href="[^"]*">([^<]*)</a>""", RegexOption.IGNORE_CASE)
+            .replace(text) { match -> match.groupValues[1] }
+        text = Regex("""</?(?:b|i|code)>""", RegexOption.IGNORE_CASE).replace(text, "")
+        return text
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&")
+            .trim()
     }
 
     private fun passwordValue(value: String?): String? {
@@ -443,8 +490,8 @@ class OddsMonitorService(
         return platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc(sourceKey)
     }
 
-    private fun shouldDisplayMarket(sourceKey: String, marketType: String): Boolean {
-        return marketType.lowercase(Locale.ROOT) != "moneyline" || sourceKey == "polymarket"
+    private fun shouldDisplayMarket(marketType: String): Boolean {
+        return marketType.lowercase(Locale.ROOT) != "moneyline"
     }
 
     private fun OddsPlatformMatch.toDto(): OddsPlatformMatchDto {

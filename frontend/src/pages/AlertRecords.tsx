@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Typography } from 'antd'
+import { Card, Table, Tag, Typography, message } from 'antd'
 import { apiClient } from '../services/api'
 
 const { Title, Text } = Typography
@@ -17,20 +17,41 @@ type AlertRecord = {
   acknowledged: boolean
 }
 
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return '告警记录读取失败'
+}
+
 const AlertRecords = () => {
   const [rows, setRows] = useState<AlertRecord[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    apiClient.post<ApiResponse<AlertRecord[]>>('/odds-monitor/alerts/list', {})
-      .then((response) => setRows(response.data.data))
-      .finally(() => setLoading(false))
+    const loadRows = async () => {
+      setLoading(true)
+      try {
+        const response = await apiClient.post<ApiResponse<AlertRecord[]>>('/odds-monitor/alerts/list', {})
+        const payload = response.data
+        if (payload.code !== 0 || !Array.isArray(payload.data)) {
+          throw new Error(payload.msg || '告警记录读取失败')
+        }
+        setRows(payload.data)
+      } catch (error) {
+        message.error(getErrorMessage(error))
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void loadRows()
   }, [])
 
   return (
     <Card>
       <Title level={3} style={{ marginTop: 0 }}>告警记录</Title>
-      <Text type="secondary">底座阶段预留盘口变化、赔率快速变化、平台差异、Polymarket 偏离和数据源异常。</Text>
+      <Text type="secondary">底座阶段预留盘口变化、赔率快速变化、平台差异和数据源异常。</Text>
       <Table
         style={{ marginTop: 16 }}
         rowKey="id"

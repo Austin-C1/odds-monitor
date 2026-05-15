@@ -51,7 +51,7 @@ class OddsChangeNotificationServiceTest {
                 OddsChangeNotificationItem("pinnacle", BigDecimal("1.06"), BigDecimal("1.09")),
                 OddsChangeNotificationItem("crown", BigDecimal("0.90"), BigDecimal("0.94"))
             ),
-            expectedSources = listOf("pinnacle", "crown", "polymarket"),
+            expectedSources = listOf("pinnacle", "crown"),
             timestampText = "2026-05-03 15:07"
         )
 
@@ -60,7 +60,10 @@ class OddsChangeNotificationServiceTest {
         assertTrue(message.contains("盘口：让球 主队 0.5"))
         assertTrue(message.contains("平博：1.06 -> 1.09"))
         assertTrue(message.contains("皇冠：0.90 -> 0.94"))
-        assertTrue(message.contains("Polymarket：无对应盘口"))
+        assertFalse(message.contains("Polymarket"))
+        assertFalse(message.contains("{"))
+        assertFalse(message.contains("}"))
+        assertFalse(message.contains("TextEncodingUtils"))
         assertTrue(message.contains("筛选：动水通过 / 合水通过"))
         assertTrue(message.contains("时间：2026-05-03 15:07"))
     }
@@ -79,6 +82,8 @@ class OddsChangeNotificationServiceTest {
 
         assertTrue(message.contains("进行：第 23 分钟"))
         assertTrue(message.contains("比分：1-0"))
+        assertFalse(message.contains("{"))
+        assertFalse(message.contains("}"))
     }
 
     @Test
@@ -98,7 +103,7 @@ class OddsChangeNotificationServiceTest {
                     changes = listOf(OddsChangeNotificationItem("pinnacle", BigDecimal("1.833"), BigDecimal("2.02")))
                 )
             ),
-            expectedSources = listOf("pinnacle", "crown", "polymarket"),
+            expectedSources = listOf("pinnacle", "crown"),
             timestampText = "2026-05-03 13:21:28"
         )
 
@@ -691,6 +696,10 @@ class OddsChangeNotificationServiceTest {
         val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
         verify(alertRepository, times(1)).save(captor.capture())
         assertEquals("odds_change", captor.value.alertType)
+        assertEquals("赔率变动：东京 vs 川崎前锋", captor.value.title)
+        assertTrue(captor.value.message.contains("盘口：大小球 大球 3"))
+        assertFalse(captor.value.message.contains("{"))
+        assertFalse(captor.value.message.contains("TextEncodingUtils"))
     }
 
     @Test
@@ -834,7 +843,7 @@ class OddsChangeNotificationServiceTest {
             )
         }
         `when`(
-            marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+            marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
                 100,
                 "crown",
                 "handicap",
@@ -895,7 +904,7 @@ class OddsChangeNotificationServiceTest {
             )
         }
         `when`(
-            marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+            marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
                 100,
                 "crown",
                 "handicap",
@@ -946,7 +955,7 @@ class OddsChangeNotificationServiceTest {
             )
         }
         `when`(
-            marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+            marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
                 100,
                 "crown",
                 "handicap",
@@ -958,7 +967,7 @@ class OddsChangeNotificationServiceTest {
             OddsSnapshot(marketId = 21, sourceKey = "crown", oddsValue = BigDecimal("0.90"))
         )
         `when`(
-            marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+            marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
                 101,
                 "pinnacle",
                 "handicap",
@@ -1037,7 +1046,7 @@ class OddsChangeNotificationServiceTest {
             )
         }
         `when`(
-            marketRepository.findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+            marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
                 100,
                 "crown",
                 "handicap",
@@ -1177,7 +1186,7 @@ class OddsChangeNotificationServiceTest {
         assertEquals(1, Regex("盘口：").findAll(captor.value.message).count())
         assertTrue(captor.value.message.contains("平博：0.91 -> 1.03"))
         assertTrue(captor.value.message.contains("皇冠：0.90 -> 0.99"))
-        assertTrue(captor.value.message.contains("Polymarket：无对应盘口"))
+        assertFalse(captor.value.message.contains("Polymarket"))
     }
 
     @Test

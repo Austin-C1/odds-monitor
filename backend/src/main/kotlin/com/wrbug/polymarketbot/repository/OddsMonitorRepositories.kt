@@ -48,6 +48,12 @@ interface OddsPlatformMatchRepository : JpaRepository<OddsPlatformMatch, Long> {
     fun findTop100BySourceKeyOrderByRawStartTimeAsc(sourceKey: String): List<OddsPlatformMatch>
     fun findTop100BySourceKeyOrderByUpdatedAtDesc(sourceKey: String): List<OddsPlatformMatch>
     fun findTop500BySourceKeyOrderByUpdatedAtDesc(sourceKey: String): List<OddsPlatformMatch>
+    fun findTop1BySourceKeyAndRawLeagueNameAndRawHomeTeamAndRawAwayTeamOrderByUpdatedAtDesc(
+        sourceKey: String,
+        rawLeagueName: String,
+        rawHomeTeam: String,
+        rawAwayTeam: String
+    ): OddsPlatformMatch?
 }
 
 @Repository
@@ -64,7 +70,7 @@ interface OddsMatchLinkRepository : JpaRepository<OddsMatchLink, Long> {
 
 @Repository
 interface OddsMarketRepository : JpaRepository<OddsMarket, Long> {
-    fun findByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionName(
+    fun findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
         matchId: Long,
         sourceKey: String,
         marketType: String,

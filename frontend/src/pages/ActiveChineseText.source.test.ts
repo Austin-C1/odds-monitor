@@ -15,6 +15,8 @@ const activeFiles = [
   'src/pages/DefaultTracking.tsx',
   'src/pages/PinnacleLeagueFilter.tsx',
   'src/pages/CrownLeagueFilter.tsx',
+  'src/pages/CrownBetting.tsx',
+  'src/pages/BettingHistory.tsx',
 ]
 
 const mojibakeMarkers = [
@@ -57,6 +59,9 @@ describe('active page Chinese text', () => {
       '联赛筛选',
       '平博比赛选择',
       '皇冠比赛选择',
+      '皇冠投注',
+      '下注成功',
+      '下注成功记录',
       '数据源设置',
       '数据源状态',
       '告警记录',

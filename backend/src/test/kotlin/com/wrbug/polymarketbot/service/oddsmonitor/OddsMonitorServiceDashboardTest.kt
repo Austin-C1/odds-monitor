@@ -235,8 +235,8 @@ class OddsMonitorServiceDashboardTest {
         ).getDashboard()
 
         assertEquals(1, dashboard.matches.size)
-        assertEquals(3, dashboard.matches.single().sourceCount)
-        assertEquals(listOf("pinnacle", "crown", "polymarket"), dashboard.matches.single().matchedPlatforms)
+        assertEquals(2, dashboard.matches.single().sourceCount)
+        assertEquals(listOf("pinnacle", "crown"), dashboard.matches.single().matchedPlatforms)
         assertTrue(dashboard.selectedMatch?.metrics?.any {
             it.sourceKey == "pinnacle" && it.label == "handicap home 0.5" && it.value == "1.961"
         } == true)
@@ -462,7 +462,7 @@ class OddsMonitorServiceDashboardTest {
     }
 
     @Test
-    fun `dashboard hides pinnacle and crown moneyline but keeps polymarket moneyline`() {
+    fun `dashboard hides moneyline markets from collected monitor sources`() {
         val configRepository = mock(OddsDataSourceConfigRepository::class.java)
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val logRepository = mock(OddsCollectionLogRepository::class.java)
@@ -494,18 +494,6 @@ class OddsMonitorServiceDashboardTest {
                 )
             )
         )
-        `when`(platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("polymarket")).thenReturn(
-            listOf(
-                OddsPlatformMatch(
-                    id = 103,
-                    sourceKey = "polymarket",
-                    sourceMatchId = "pm1",
-                    rawLeagueName = "soccer",
-                    rawHomeTeam = "FC Tokyo",
-                    rawAwayTeam = "Kawasaki Frontale"
-                )
-            )
-        )
         `when`(marketRepository.findByMatchIdInAndSourceKey(listOf(101), "pinnacle")).thenReturn(
             listOf(
                 OddsMarket(id = 201, matchId = 101, sourceKey = "pinnacle", marketType = "moneyline", selectionName = "home")
@@ -516,19 +504,11 @@ class OddsMonitorServiceDashboardTest {
                 OddsMarket(id = 202, matchId = 102, sourceKey = "crown", marketType = "moneyline", selectionName = "home")
             )
         )
-        `when`(marketRepository.findByMatchIdInAndSourceKey(listOf(103), "polymarket")).thenReturn(
-            listOf(
-                OddsMarket(id = 203, matchId = 103, sourceKey = "polymarket", marketType = "moneyline", selectionName = "home")
-            )
-        )
         `when`(snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(201)).thenReturn(
             OddsSnapshot(marketId = 201, sourceKey = "pinnacle", oddsValue = BigDecimal("2.20"), capturedAt = 1000)
         )
         `when`(snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(202)).thenReturn(
             OddsSnapshot(marketId = 202, sourceKey = "crown", oddsValue = BigDecimal("2.10"), capturedAt = 1000)
-        )
-        `when`(snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(203)).thenReturn(
-            OddsSnapshot(marketId = 203, sourceKey = "polymarket", oddsValue = BigDecimal("0.54"), capturedAt = 1000)
         )
 
         val dashboard = OddsMonitorService(
@@ -543,7 +523,6 @@ class OddsMonitorServiceDashboardTest {
         val metrics = dashboard.selectedMatch?.metrics.orEmpty()
         assertTrue(metrics.none { it.sourceKey == "pinnacle" && it.label.startsWith("moneyline") })
         assertTrue(metrics.none { it.sourceKey == "crown" && it.label.startsWith("moneyline") })
-        assertTrue(metrics.any { it.sourceKey == "polymarket" && it.label == "moneyline home" && it.value == "0.54" })
     }
 }
 

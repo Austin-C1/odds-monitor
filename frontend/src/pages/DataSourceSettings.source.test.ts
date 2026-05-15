@@ -15,4 +15,12 @@ describe('data source settings source', () => {
   it('describes that enabled sources are collected by the backend scheduler', () => {
     expect(source).toContain('启用后后端会按间隔自动采集')
   })
+
+  it('does not render Polymarket data source controls', () => {
+    expect(source).toContain("SUPPORTED_SOURCE_KEYS")
+    expect(source).toContain("'pinnacle'")
+    expect(source).toContain("'crown'")
+    expect(source).not.toContain("sourceKey === 'polymarket'")
+    expect(source).not.toContain('查询关键词')
+  })
 })

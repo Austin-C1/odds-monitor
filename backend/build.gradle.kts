@@ -29,7 +29,6 @@ configurations.configureEach {
 dependencies {
     // Spring Boot
     implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-websocket")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     
@@ -39,15 +38,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
     
-    // Retrofit
-    implementation("com.squareup.retrofit2:retrofit:2.9.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
-    
     // OkHttp
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    
-    // WebSocket Client
-    implementation("org.java-websocket:Java-WebSocket:1.5.4")
     
     // Database
     implementation("com.mysql:mysql-connector-j:8.2.0")
@@ -62,12 +54,6 @@ dependencies {
     implementation("org.jsoup:jsoup:1.17.2")
     implementation("com.microsoft.playwright:playwright:1.49.0")
     
-    // Keccak-256 for Ethereum function selector
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
-    
-    // Web3j for Ethereum wallet and EIP-712 signing
-    implementation("org.web3j:core:5.0.0")
-    
     // JWT
     implementation("io.jsonwebtoken:jjwt-api:0.12.3")
     implementation("io.jsonwebtoken:jjwt-impl:0.12.3")
@@ -78,9 +64,6 @@ dependencies {
     
     // Logging
     implementation("org.slf4j:slf4j-api")
-    
-    // Caffeine Cache (LRU)
-    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
     
     // Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")

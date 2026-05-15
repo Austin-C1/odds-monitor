@@ -10,7 +10,7 @@ data class NotificationTemplate(
     val id: Long? = null,
 
     @Column(name = "template_type", unique = true, nullable = false, length = 50)
-    val templateType: String,  // ORDER_SUCCESS, ORDER_FAILED, ORDER_FILTERED, CRYPTO_TAIL_SUCCESS, REDEEM_SUCCESS, REDEEM_NO_RETURN
+    val templateType: String,
 
     @Column(name = "template_content", nullable = false, columnDefinition = "TEXT")
     var templateContent: String,

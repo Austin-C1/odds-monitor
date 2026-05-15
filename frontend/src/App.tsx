@@ -3,7 +3,6 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { ConfigProvider, Spin } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import Layout from './components/Layout'
-import { wsManager } from './services/websocket'
 import { apiService } from './services/api'
 import { hasToken } from './utils'
 
@@ -13,11 +12,12 @@ const OddsMonitor = lazy(() => import('./pages/OddsMonitor'))
 const DefaultTracking = lazy(() => import('./pages/DefaultTracking'))
 const PinnacleLeagueFilter = lazy(() => import('./pages/PinnacleLeagueFilter'))
 const CrownLeagueFilter = lazy(() => import('./pages/CrownLeagueFilter'))
+const CrownBetting = lazy(() => import('./pages/CrownBetting'))
+const BettingHistory = lazy(() => import('./pages/BettingHistory'))
 const DataSourceSettings = lazy(() => import('./pages/DataSourceSettings'))
 const DataSourceStatus = lazy(() => import('./pages/DataSourceStatus'))
 const AlertRecords = lazy(() => import('./pages/AlertRecords'))
 const NotificationSettingsPage = lazy(() => import('./pages/NotificationSettingsPage'))
-const MarketBettingQuery = lazy(() => import('./pages/MarketBettingQuery'))
 const RuntimeLogs = lazy(() => import('./pages/RuntimeLogs'))
 const SystemUpdate = lazy(() => import('./pages/SystemUpdate'))
 
@@ -68,14 +68,6 @@ function App() {
     checkFirstUse()
   }, [])
 
-  useEffect(() => {
-    if (!checking && isFirstUse === false && hasToken() && !wsManager.isConnected()) {
-      wsManager.connect()
-    } else if (!hasToken() && wsManager.isConnected()) {
-      wsManager.disconnect()
-    }
-  }, [checking, isFirstUse])
-
   if (checking) {
     return (
       <ConfigProvider locale={zhCN}>
@@ -110,12 +102,12 @@ function App() {
           <Route path="/default-tracking" element={<ProtectedRoute><LazyRoute><DefaultTracking /></LazyRoute></ProtectedRoute>} />
           <Route path="/pinnacle-league-filter" element={<ProtectedRoute><LazyRoute><PinnacleLeagueFilter /></LazyRoute></ProtectedRoute>} />
           <Route path="/crown-league-filter" element={<ProtectedRoute><LazyRoute><CrownLeagueFilter /></LazyRoute></ProtectedRoute>} />
-          <Route path="/league-filter" element={<ProtectedRoute><Navigate to="/default-tracking" replace /></ProtectedRoute>} />
+          <Route path="/crown-betting" element={<ProtectedRoute><LazyRoute><CrownBetting /></LazyRoute></ProtectedRoute>} />
+          <Route path="/betting-history" element={<ProtectedRoute><LazyRoute><BettingHistory /></LazyRoute></ProtectedRoute>} />
           <Route path="/data-sources/settings" element={<ProtectedRoute><LazyRoute><DataSourceSettings /></LazyRoute></ProtectedRoute>} />
           <Route path="/data-sources/status" element={<ProtectedRoute><LazyRoute><DataSourceStatus /></LazyRoute></ProtectedRoute>} />
           <Route path="/alerts" element={<ProtectedRoute><LazyRoute><AlertRecords /></LazyRoute></ProtectedRoute>} />
           <Route path="/system-settings/notification" element={<ProtectedRoute><LazyRoute><NotificationSettingsPage /></LazyRoute></ProtectedRoute>} />
-          <Route path="/polymarket-query" element={<ProtectedRoute><LazyRoute><MarketBettingQuery /></LazyRoute></ProtectedRoute>} />
           <Route path="/runtime-logs" element={<ProtectedRoute><LazyRoute><RuntimeLogs /></LazyRoute></ProtectedRoute>} />
           <Route path="/system-settings/update" element={<ProtectedRoute><LazyRoute><SystemUpdate /></LazyRoute></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />

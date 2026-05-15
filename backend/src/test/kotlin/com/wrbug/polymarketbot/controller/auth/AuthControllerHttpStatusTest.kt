@@ -5,9 +5,7 @@ import com.wrbug.polymarketbot.dto.ResetPasswordRequest
 import com.wrbug.polymarketbot.enums.ErrorCode
 import com.wrbug.polymarketbot.repository.UserRepository
 import com.wrbug.polymarketbot.service.auth.AuthService
-import com.wrbug.polymarketbot.service.auth.WebSocketTicketService
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
@@ -19,13 +17,11 @@ class AuthControllerHttpStatusTest {
 
     private val authService = mock(AuthService::class.java)
     private val messageSource = mock(MessageSource::class.java)
-    private val webSocketTicketService = mock(WebSocketTicketService::class.java)
     private val userRepository = mock(UserRepository::class.java)
 
     private val controller = AuthController(
         authService = authService,
         messageSource = messageSource,
-        webSocketTicketService = webSocketTicketService,
         userRepository = userRepository
     )
 
@@ -77,6 +73,17 @@ class AuthControllerHttpStatusTest {
     }
 
     @Test
+    fun `local login ignores forwarded loopback header from non loopback request`() {
+        val request = MockHttpServletRequest().apply {
+            remoteAddr = "203.0.113.20"
+            addHeader("X-Forwarded-For", "127.0.0.1")
+        }
+        val response = controller.localLogin(request)
+
+        assertEquals(HttpStatus.FORBIDDEN, response.statusCode)
+    }
+
+    @Test
     fun `reset password returns 400 when reset key is blank`() {
         val response = controller.resetPassword(
             ResetPasswordRequest(resetKey = "", username = "demo", newPassword = "123456"),
@@ -86,10 +93,4 @@ class AuthControllerHttpStatusTest {
         assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
     }
 
-    @Test
-    fun `ws ticket returns 401 when request is unauthenticated`() {
-        val response = controller.getWebSocketTicket(MockHttpServletRequest())
-
-        assertEquals(HttpStatus.UNAUTHORIZED, response.statusCode)
-    }
 }

@@ -22,7 +22,28 @@ class CrownResponseParser {
             status = root.childText("status").orEmpty(),
             uid = root.childText("uid")?.takeIf { it.isNotBlank() },
             messageCode = root.childText("msg")?.takeIf { it.isNotBlank() },
-            message = root.childText("code_message")?.takeIf { it.isNotBlank() }
+            message = root.childText("code_message")?.takeIf { it.isNotBlank() },
+            balance = root.firstDecimalChild(
+                "balance",
+                "credit",
+                "money",
+                "mem_balance",
+                "available_balance",
+                "avail_balance"
+            )
+        )
+    }
+
+    fun parseAccountBalance(xmlText: String): BigDecimal? {
+        val root = parseRoot(xmlText)
+        return root.firstDecimalChild(
+            "maxcredit",
+            "balance",
+            "credit",
+            "money",
+            "mem_balance",
+            "available_balance",
+            "avail_balance"
         )
     }
 
@@ -202,6 +223,12 @@ class CrownResponseParser {
     private fun Element.childText(name: String): String? {
         val nodes = getElementsByTagName(name)
         return (nodes.item(0) as? Element)?.textContent?.trim()
+    }
+
+    private fun Element.firstDecimalChild(vararg names: String): BigDecimal? {
+        return names.firstNotNullOfOrNull { name ->
+            childText(name).toDecimalOrNull()
+        }
     }
 
     private fun Element.childTextMap(): Map<String, String> {

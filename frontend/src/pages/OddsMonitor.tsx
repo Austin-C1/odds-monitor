@@ -13,7 +13,7 @@ import './OddsMonitor.css'
 const { Title, Text } = Typography
 
 type ApiResponse<T> = { code: number; data: T; msg: string }
-type PlatformKey = 'pinnacle' | 'crown' | 'polymarket'
+type PlatformKey = 'pinnacle' | 'crown'
 
 type MatchItem = {
   id: number
@@ -30,11 +30,11 @@ type MatchItem = {
 type MatchDetail = {
   match: MatchItem
   metrics: Array<{ label: string; value: string; trend: string; sourceKey?: PlatformKey }>
-  oddsHistory: Array<{ timestamp: number; pinnacle: number; crown: number; polymarket: number }>
+  oddsHistory: Array<{ timestamp: number; pinnacle: number; crown: number }>
 }
 
 type DashboardData = { matches: MatchItem[]; selectedMatch?: MatchDetail }
-type MatchFilterKey = 'all' | 'three' | 'pinnacle-crown' | 'single' | 'match-risk' | 'market-risk'
+type MatchFilterKey = 'all' | 'both' | 'pinnacle-crown' | 'single' | 'match-risk' | 'market-risk'
 
 type MarketOutcome = {
   selection: string
@@ -61,13 +61,11 @@ type MarketGroup = {
 const platformColors: Record<PlatformKey, string> = {
   pinnacle: '#ef4444',
   crown: '#16a34a',
-  polymarket: '#2563eb',
 }
 
 const platformLabels: Record<PlatformKey, string> = {
   pinnacle: '平博',
   crown: '皇冠',
-  polymarket: 'Polymarket',
 }
 
 const marketTitleLabels: Record<string, string> = {
@@ -88,7 +86,7 @@ const selectionLabels: Record<string, string> = {
 
 const matchFilterLabels: Record<MatchFilterKey, string> = {
   all: '全部',
-  three: '三平台都有',
+  both: '双平台都有',
   'pinnacle-crown': '平博+皇冠',
   single: '只有单平台',
   'match-risk': '疑似匹配失败',
@@ -130,10 +128,9 @@ const statusLabels: Record<string, string> = {
 }
 
 const fallbackPlatformSets: PlatformKey[][] = [
-  ['pinnacle', 'crown', 'polymarket'],
   ['pinnacle', 'crown'],
-  ['crown', 'polymarket'],
   ['pinnacle'],
+  ['crown'],
 ]
 
 const localizeTeamName = (value: string) => teamNameAliases[value.trim().toLowerCase()] || value
@@ -163,23 +160,8 @@ const toAsianOdd = (value?: number) => {
 
 const formatOdd = (value?: number) => (typeof value === 'number' ? value.toFixed(3) : '-')
 const formatAsianOdd = (value?: number) => formatOdd(toAsianOdd(value))
-const normalizePolymarketProbability = (value?: number) => {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
-  return value < 1 ? value : 1 / value
-}
-
-const polymarketProbabilityToAsianOdd = (value?: number) => {
-  const probability = normalizePolymarketProbability(value)
-  if (typeof probability !== 'number') return undefined
-  if (probability >= 1) return 0
-  return 1 / probability - 1
-}
-
-const formatPolymarketAsianOdd = (value?: number) => formatOdd(polymarketProbabilityToAsianOdd(value))
-const formatPolymarketProbability = (value?: number) => {
-  const probability = normalizePolymarketProbability(value)
-  return typeof probability === 'number' ? `${(probability * 100).toFixed(1)}%` : '-'
-}
+const visiblePlatformKeys: PlatformKey[] = ['pinnacle', 'crown']
+const isVisiblePlatform = (value?: string): value is PlatformKey => value === 'pinnacle' || value === 'crown'
 
 const createFallbackHistory = (): MatchDetail['oddsHistory'] => {
   const now = Date.now()
@@ -187,7 +169,6 @@ const createFallbackHistory = (): MatchDetail['oddsHistory'] => {
     timestamp: now - (9 - index) * 5 * 60 * 1000,
     pinnacle: 1.92 + index * 0.015,
     crown: 1.9 + index * 0.012,
-    polymarket: 0.52 + index * 0.005,
   }))
 }
 
@@ -195,9 +176,9 @@ const ensureChartHistory = (history: MatchDetail['oddsHistory']) =>
   history.length > 0 ? history : createFallbackHistory()
 
 const getMatchedPlatforms = (match: MatchItem, index: number): PlatformKey[] => {
-  if (match.matchedPlatforms?.length) return match.matchedPlatforms
-  if (match.sourceCount >= 3) return ['pinnacle', 'crown', 'polymarket']
-  if (match.sourceCount === 2) return index % 2 === 0 ? ['pinnacle', 'crown'] : ['crown', 'polymarket']
+  const visibleMatched = (match.matchedPlatforms || []).filter(isVisiblePlatform)
+  if (visibleMatched.length) return visibleMatched
+  if (match.sourceCount >= 2) return ['pinnacle', 'crown']
   return fallbackPlatformSets[index % fallbackPlatformSets.length].slice(0, 1)
 }
 
@@ -302,9 +283,10 @@ const buildCollectedMarketGroups = (
   const items = selected.metrics.reduce<CollectedMetricItem[]>((result, metric) => {
     const oddsValue = Number(metric.value)
     if (!Number.isFinite(oddsValue)) return result
+    if (!isVisiblePlatform(metric.sourceKey)) return result
     const parsed = parseMetricLabel(metric.label)
     result.push({
-      platform: metric.sourceKey || selected.match.matchedPlatforms?.[0] || 'crown',
+      platform: metric.sourceKey,
       marketType: parsed.marketType || 'odds',
       selection: selectionLabels[parsed.selection] || parsed.selection,
       line: parsed.line,
@@ -334,17 +316,14 @@ const buildCollectedMarketGroups = (
       platform: item.platform,
       label: item.line ? `${item.selection} ${item.line}` : item.selection,
       values: history.map(() => toAsianOdd(item.oddsValue) ?? item.oddsValue),
-      latestText: item.platform === 'polymarket'
-        ? formatPolymarketProbability(item.oddsValue)
-        : formatAsianOdd(item.oddsValue),
+      latestText: formatAsianOdd(item.oddsValue),
     })
     groups.set(item.marketType, group)
   })
 
-  const preferredPlatformOrder: PlatformKey[] = ['pinnacle', 'crown', 'polymarket']
   return Array.from(groups.values()).map((group) => ({
     ...group,
-    platformKeys: preferredPlatformOrder.filter((platform) => group.platformKeys.includes(platform)),
+    platformKeys: visiblePlatformKeys.filter((platform) => group.platformKeys.includes(platform)),
     rows: group.rows.sort((left, right) =>
       `${left.line || ''}:${left.selection}`.localeCompare(`${right.line || ''}:${right.selection}`),
     ),
@@ -359,14 +338,7 @@ const buildMarketGroups = (history: MatchDetail['oddsHistory'], selected?: Match
 
   const pinnacle = history.map((item) => item.pinnacle)
   const crown = history.map((item) => item.crown)
-  const polymarket = history.map((item) => item.polymarket)
   const toAsianSeries = (values: number[]) => values.map((value) => toAsianOdd(value) ?? value)
-  const toPolymarketAsianSeries = (values: number[]) =>
-    values.map((value) => polymarketProbabilityToAsianOdd(value) ?? value)
-  const handicapPolymarket = polymarket.map((value, index) => Math.min(0.95, value + index * 0.002))
-  const totalPolymarket = polymarket.map((value, index) =>
-    Math.min(0.95, Math.max(0.05, value - 0.18 + index * 0.001)),
-  )
   const selectedPlatforms = selected?.match.matchedPlatforms?.length ? selected.match.matchedPlatforms : undefined
 
   const fallbackGroups: MarketGroup[] = [
@@ -374,32 +346,30 @@ const buildMarketGroups = (history: MatchDetail['oddsHistory'], selected?: Match
       key: 'handicap',
       title: '让球盘',
       description: '重复盘口合并显示，可按平台缺失情况自适应。',
-      platformKeys: ['pinnacle', 'crown', 'polymarket'],
+      platformKeys: ['pinnacle', 'crown'],
       rows: [
-        { selection: '主队', line: '-0.5', odds: { pinnacle: 2.31, crown: 2.28, polymarket: 0.426 } },
+        { selection: '主队', line: '-0.5', odds: { pinnacle: 2.31, crown: 2.28 } },
         { selection: '客队', line: '+0.5', odds: { pinnacle: 1.66, crown: 1.68 } },
-        { selection: '主队', line: '-0.25', odds: { pinnacle: 1.94, crown: 1.96, polymarket: 0.524 } },
+        { selection: '主队', line: '-0.25', odds: { pinnacle: 1.94, crown: 1.96 } },
       ],
       series: [
         { platform: 'pinnacle', label: '主队 -0.5', values: toAsianSeries(pinnacle.map((value, index) => value + index * 0.002)), latestText: formatAsianOdd(pinnacle[pinnacle.length - 1] + 0.02) },
         { platform: 'crown', label: '主队 -0.5', values: toAsianSeries(crown.map((value, index) => value + 0.03 - index * 0.001)), latestText: formatAsianOdd(crown[crown.length - 1] + 0.03) },
-        { platform: 'polymarket', label: '主队 -0.5', values: toPolymarketAsianSeries(handicapPolymarket), latestText: formatPolymarketAsianOdd(handicapPolymarket[handicapPolymarket.length - 1]) },
       ],
     },
     {
       key: 'total',
       title: '大小球',
       description: '相同大小球盘口放在同一组，不同平台没有的盘口留空。',
-      platformKeys: ['pinnacle', 'crown', 'polymarket'],
+      platformKeys: ['pinnacle', 'crown'],
       rows: [
-        { selection: '大球', line: '2.5', odds: { pinnacle: 2.99, crown: 2.94, polymarket: 0.331 } },
-        { selection: '小球', line: '2.5', odds: { pinnacle: 1.24, crown: 1.27, polymarket: 0.82 } },
+        { selection: '大球', line: '2.5', odds: { pinnacle: 2.99, crown: 2.94 } },
+        { selection: '小球', line: '2.5', odds: { pinnacle: 1.24, crown: 1.27 } },
         { selection: '大球', line: '2.75', odds: { pinnacle: 2.45, crown: 2.48 } },
       ],
       series: [
         { platform: 'pinnacle', label: '大球 2.5', values: toAsianSeries(pinnacle.map((value, index) => value + 0.7 + index * 0.006)), latestText: formatAsianOdd(pinnacle[pinnacle.length - 1] + 0.76) },
         { platform: 'crown', label: '大球 2.5', values: toAsianSeries(crown.map((value, index) => value + 0.72 + index * 0.004)), latestText: formatAsianOdd(crown[crown.length - 1] + 0.76) },
-        { platform: 'polymarket', label: '大球 2.5', values: toPolymarketAsianSeries(totalPolymarket), latestText: formatPolymarketAsianOdd(totalPolymarket[totalPolymarket.length - 1]) },
       ],
     },
     {
@@ -415,19 +385,6 @@ const buildMarketGroups = (history: MatchDetail['oddsHistory'], selected?: Match
       series: [
         { platform: 'pinnacle', label: '主胜', values: toAsianSeries(pinnacle.map((value, index) => value + 0.09 + index * 0.003)), latestText: formatAsianOdd(pinnacle[pinnacle.length - 1] + 0.12) },
         { platform: 'crown', label: '主胜', values: toAsianSeries(crown.map((value, index) => value + 0.1 + index * 0.004)), latestText: formatAsianOdd(crown[crown.length - 1] + 0.14) },
-      ],
-    },
-    {
-      key: 'polymarket',
-      title: 'Polymarket 概率',
-      description: '用于和传统赔率平台做偏离观察。',
-      platformKeys: ['polymarket'],
-      rows: [
-        { selection: '主队获胜', odds: { polymarket: 0.574 } },
-        { selection: '客队获胜', odds: { polymarket: 0.286 } },
-      ],
-      series: [
-        { platform: 'polymarket', label: '主队概率', values: polymarket.map((value) => value * 100), latestText: formatPolymarketProbability(polymarket[polymarket.length - 1]) },
       ],
     },
   ]
@@ -484,11 +441,11 @@ const OddsMonitor = () => {
   const filteredByPlatform = useMemo(() => {
     return matchViews.filter((match) => {
       const platforms = match.matchedPlatforms || []
-      if (matchFilter === 'three') return platforms.length === 3
+      if (matchFilter === 'both') return platforms.length === 2
       if (matchFilter === 'pinnacle-crown') return platforms.includes('pinnacle') && platforms.includes('crown')
       if (matchFilter === 'single') return platforms.length === 1
       if (matchFilter === 'match-risk') return platforms.length === 1
-      if (matchFilter === 'market-risk') return platforms.length > 1 && platforms.length < 3
+      if (matchFilter === 'market-risk') return platforms.length > 0 && platforms.length < 2
       return true
     })
   }, [matchFilter, matchViews])
@@ -499,18 +456,18 @@ const OddsMonitor = () => {
 
   const statusCounts = useMemo(() => {
     const platformCounts = matches.reduce((counts, match) => {
-      ;(match.matchedPlatforms || []).forEach((platform) => {
+      (match.matchedPlatforms || []).forEach((platform) => {
         counts[platform] += 1
       })
       return counts
-    }, { pinnacle: 0, crown: 0, polymarket: 0 } as Record<PlatformKey, number>)
+    }, { pinnacle: 0, crown: 0 } as Record<PlatformKey, number>)
     return {
       ...platformCounts,
-      allThree: matches.filter((match) => (match.matchedPlatforms || []).length === 3).length,
+      both: matches.filter((match) => (match.matchedPlatforms || []).length === 2).length,
       isolated: matches.filter((match) => (match.matchedPlatforms || []).length === 1).length,
       marketRisk: matches.filter((match) => {
         const count = (match.matchedPlatforms || []).length
-        return count > 1 && count < 3
+        return count > 0 && count < 2
       }).length,
     }
   }, [matches])
@@ -793,8 +750,7 @@ const OddsMonitor = () => {
           <section className="status-strip">
             <span>平博 {statusCounts.pinnacle}</span>
             <span>皇冠 {statusCounts.crown}</span>
-            <span>Polymarket {statusCounts.polymarket}</span>
-            <span>三平台 {statusCounts.allThree}</span>
+            <span>双平台 {statusCounts.both}</span>
             <span>单平台孤立 {statusCounts.isolated}</span>
             <span>疑似盘口缺失 {statusCounts.marketRisk}</span>
           </section>
@@ -850,9 +806,7 @@ const OddsMonitor = () => {
                             <span key={platform} className={platform}>
                               {row.odds[platform] === undefined
                                 ? '无盘口'
-                                : platform === 'polymarket'
-                                  ? formatPolymarketProbability(row.odds.polymarket)
-                                  : formatAsianOdd(row.odds[platform])}
+                                : formatAsianOdd(row.odds[platform])}
                             </span>
                           ))}
                         </div>

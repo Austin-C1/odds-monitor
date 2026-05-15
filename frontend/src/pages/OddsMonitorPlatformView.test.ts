@@ -11,14 +11,14 @@ describe('odds monitor platform views', () => {
         awayTeam: '广岛三箭',
         startTime: 1777700000000,
         status: 'scheduled',
-        sourceCount: 3,
+        sourceCount: 2,
         alertCount: 0,
-        matchedPlatforms: ['pinnacle', 'crown', 'polymarket'],
+        matchedPlatforms: ['pinnacle', 'crown'],
       },
     ])
 
     expect(views.map((view) => view.viewKey)).toEqual(['10'])
-    expect(views[0].matchedPlatforms).toEqual(['pinnacle', 'crown', 'polymarket'])
+    expect(views[0].matchedPlatforms).toEqual(['pinnacle', 'crown'])
   })
 
   it('keeps all platform odds in the detail view', () => {

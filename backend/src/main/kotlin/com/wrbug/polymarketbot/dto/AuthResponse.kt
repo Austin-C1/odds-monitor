@@ -8,7 +8,3 @@ data class CheckFirstUseResponse(
     val isFirstUse: Boolean
 )
 
-data class WebSocketTicketResponse(
-    val ticket: String
-)
-

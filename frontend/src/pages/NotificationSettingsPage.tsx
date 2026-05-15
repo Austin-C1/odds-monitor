@@ -48,6 +48,13 @@ import {
   isTelegramConfigReadyForTest,
   normalizeChatIds,
 } from './notificationSettingsHelpers'
+import {
+  DEFAULT_NOTIFICATION_TEMPLATE_TYPE,
+  FOCUSED_NOTIFICATION_TEMPLATE_TYPES,
+  getDefaultNotificationTemplate,
+  getDefaultNotificationTemplateVariables,
+  getVisibleNotificationTemplateTypes,
+} from './notificationTemplateOptions'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -112,13 +119,8 @@ const filterButtonStyle: React.CSSProperties = {
 
 const CATEGORY_LABELS: Record<string, string> = {
   common: 'notificationSettings.templates.commonVariables',
-  order: 'notificationSettings.templates.orderVariables',
-  copy_trading: 'notificationSettings.templates.copyTradingVariables',
   monitor: 'notificationSettings.templates.monitorVariables',
-  redeem: 'notificationSettings.templates.redeemVariables',
-  error: 'notificationSettings.templates.errorVariables',
-  filter: 'notificationSettings.templates.filterVariables',
-  strategy: 'notificationSettings.templates.strategyVariables',
+  betting: 'notificationSettings.templates.bettingVariables',
 }
 
 const TEST_NOTIFICATION_MESSAGE = '这是一条测试消息'
@@ -216,8 +218,8 @@ const NotificationSettingsPage: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false)
   const [editingConfig, setEditingConfig] = useState<NotificationConfig | null>(null)
   const [testLoading, setTestLoading] = useState(false)
-  const [templateTypes, setTemplateTypes] = useState<TemplateTypeInfo[]>([])
-  const [selectedTemplateType, setSelectedTemplateType] = useState<string>('ORDER_SUCCESS')
+  const [templateTypes, setTemplateTypes] = useState<TemplateTypeInfo[]>(FOCUSED_NOTIFICATION_TEMPLATE_TYPES)
+  const [selectedTemplateType, setSelectedTemplateType] = useState<string>(DEFAULT_NOTIFICATION_TEMPLATE_TYPE)
   const [currentTemplate, setCurrentTemplate] = useState<NotificationTemplate | null>(null)
   const [templateVariables, setTemplateVariables] = useState<TemplateVariablesResponse | null>(null)
   const [templateContent, setTemplateContent] = useState('')
@@ -292,9 +294,10 @@ const NotificationSettingsPage: React.FC = () => {
     try {
       const response = await apiService.notifications.getTemplateTypes()
       if (response.data.code === 0 && response.data.data) {
-        setTemplateTypes(response.data.data)
+        setTemplateTypes(getVisibleNotificationTemplateTypes(response.data.data))
       }
     } catch (error) {
+      setTemplateTypes(FOCUSED_NOTIFICATION_TEMPLATE_TYPES)
       showApiError(error, t('notificationSettings.templates.fetchTypesFailed'))
     }
   }, [showApiError, t])
@@ -307,6 +310,12 @@ const NotificationSettingsPage: React.FC = () => {
         setTemplateContent(response.data.data.templateContent)
       }
     } catch (error) {
+      const fallbackTemplate = getDefaultNotificationTemplate(templateType)
+      if (fallbackTemplate) {
+        setCurrentTemplate(fallbackTemplate)
+        setTemplateContent(fallbackTemplate.templateContent)
+        return
+      }
       setCurrentTemplate(null)
       setTemplateContent('')
       showApiError(error, t('notificationSettings.templates.fetchDetailFailed'))
@@ -320,6 +329,11 @@ const NotificationSettingsPage: React.FC = () => {
         setTemplateVariables(response.data.data)
       }
     } catch (error) {
+      const fallbackVariables = getDefaultNotificationTemplateVariables(templateType)
+      if (fallbackVariables) {
+        setTemplateVariables(fallbackVariables)
+        return
+      }
       setTemplateVariables(null)
       showApiError(error, t('notificationSettings.templates.fetchVariablesFailed'))
     }
@@ -352,7 +366,6 @@ const NotificationSettingsPage: React.FC = () => {
         monitorModeEnabled: false,
         liveOnlyModeEnabled: false,
         prematchWindowMinutes: null,
-        marketBettingQueryEnabled: false,
         handicapCombinedWaterMin: null,
         totalCombinedWaterMin: null,
         handicapOddsMoveMin: null,
@@ -378,7 +391,6 @@ const NotificationSettingsPage: React.FC = () => {
         monitorModeEnabled: Boolean(telegramConfig.monitorModeEnabled),
         liveOnlyModeEnabled: Boolean(telegramConfig.liveOnlyModeEnabled),
         prematchWindowMinutes: normalizePrematchWindow(telegramConfig.prematchWindowMinutes),
-        marketBettingQueryEnabled: Boolean(telegramConfig.marketBettingQueryEnabled),
         handicapCombinedWaterMin: normalizeWaterLimit(telegramConfig.handicapCombinedWaterMin),
         totalCombinedWaterMin: normalizeWaterLimit(telegramConfig.totalCombinedWaterMin),
         handicapOddsMoveMin: normalizeWaterLimit(telegramConfig.handicapOddsMoveMin),
@@ -406,17 +418,11 @@ const NotificationSettingsPage: React.FC = () => {
         monitorModeEnabled: overrides.monitorModeEnabled ?? Boolean(telegramConfig.monitorModeEnabled),
         liveOnlyModeEnabled: overrides.liveOnlyModeEnabled ?? Boolean(telegramConfig.liveOnlyModeEnabled),
         prematchWindowMinutes: overrides.prematchWindowMinutes ?? normalizePrematchWindow(telegramConfig.prematchWindowMinutes),
-        marketBettingQueryEnabled: Boolean(telegramConfig.marketBettingQueryEnabled),
-        marketBettingDailyReportEnabled: Boolean(telegramConfig.marketBettingDailyReportEnabled),
-        marketBettingDailyReportTime: telegramConfig.marketBettingDailyReportTime || '02:00',
         handicapCombinedWaterMin: overrides.handicapCombinedWaterMin ?? normalizeWaterLimit(telegramConfig.handicapCombinedWaterMin),
         totalCombinedWaterMin: overrides.totalCombinedWaterMin ?? normalizeWaterLimit(telegramConfig.totalCombinedWaterMin),
         handicapOddsMoveMin: overrides.handicapOddsMoveMin ?? normalizeWaterLimit(telegramConfig.handicapOddsMoveMin),
         totalOddsMoveMin: overrides.totalOddsMoveMin ?? normalizeWaterLimit(telegramConfig.totalOddsMoveMin),
         moneylineOddsMoveMin: overrides.moneylineOddsMoveMin ?? normalizeWaterLimit(telegramConfig.moneylineOddsMoveMin),
-        copyTradingLeaderGroups: telegramConfig.copyTradingLeaderGroups || [],
-        copyTradingCategories: telegramConfig.copyTradingCategories || [],
-        copyTradingNotificationTypes: telegramConfig.copyTradingNotificationTypes || [],
       },
     }
   }
@@ -640,17 +646,11 @@ const NotificationSettingsPage: React.FC = () => {
           monitorModeEnabled: Boolean(values.config.monitorModeEnabled),
           liveOnlyModeEnabled: Boolean(values.config.liveOnlyModeEnabled),
           prematchWindowMinutes: normalizePrematchWindow(values.config.prematchWindowMinutes),
-          marketBettingQueryEnabled: editingConfig ? Boolean(extractTelegramConfig(editingConfig).marketBettingQueryEnabled) : false,
-          marketBettingDailyReportEnabled: editingConfig ? Boolean(extractTelegramConfig(editingConfig).marketBettingDailyReportEnabled) : false,
-          marketBettingDailyReportTime: editingConfig ? extractTelegramConfig(editingConfig).marketBettingDailyReportTime || '02:00' : '02:00',
           handicapCombinedWaterMin: normalizeWaterLimit(values.config.handicapCombinedWaterMin),
           totalCombinedWaterMin: normalizeWaterLimit(values.config.totalCombinedWaterMin),
           handicapOddsMoveMin: normalizeWaterLimit(values.config.handicapOddsMoveMin),
           totalOddsMoveMin: normalizeWaterLimit(values.config.totalOddsMoveMin),
           moneylineOddsMoveMin: normalizeWaterLimit(values.config.moneylineOddsMoveMin),
-          copyTradingLeaderGroups: editingConfig ? extractTelegramConfig(editingConfig).copyTradingLeaderGroups || [] : [],
-          copyTradingCategories: editingConfig ? extractTelegramConfig(editingConfig).copyTradingCategories || [] : [],
-          copyTradingNotificationTypes: editingConfig ? extractTelegramConfig(editingConfig).copyTradingNotificationTypes || [] : [],
         },
       }
 
@@ -898,7 +898,7 @@ const NotificationSettingsPage: React.FC = () => {
           />
         </Space>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          开启监控模式后生效，Polymarket 独立通道不受合水限制。
+          开启监控模式后生效。
         </Text>
       </Space>
     )

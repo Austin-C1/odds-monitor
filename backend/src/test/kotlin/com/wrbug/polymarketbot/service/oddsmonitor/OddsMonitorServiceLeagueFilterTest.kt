@@ -34,8 +34,7 @@ class OddsMonitorServiceLeagueFilterTest {
                     OddsPlatformMatch(sourceKey = "crown", rawLeagueName = "芬兰甲组联赛"),
                     OddsPlatformMatch(sourceKey = "crown", rawLeagueName = "芬兰杯"),
                     OddsPlatformMatch(sourceKey = "crown", rawLeagueName = "阿尔及利亚甲组联赛")
-                ),
-                "polymarket" to emptyList()
+                )
             )
         )
 
@@ -122,7 +121,7 @@ class OddsMonitorServiceLeagueFilterTest {
         val logRepository = mock(OddsCollectionLogRepository::class.java)
         val platformRepository = mock(OddsPlatformMatchRepository::class.java)
 
-        listOf("pinnacle", "crown", "polymarket").forEach { sourceKey ->
+        listOf("pinnacle", "crown").forEach { sourceKey ->
             `when`(platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc(sourceKey))
                 .thenReturn(platformMatches[sourceKey].orEmpty())
         }

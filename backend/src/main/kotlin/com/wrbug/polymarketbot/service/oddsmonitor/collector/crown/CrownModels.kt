@@ -6,7 +6,15 @@ data class CrownLoginResponse(
     val status: String,
     val uid: String?,
     val messageCode: String?,
-    val message: String?
+    val message: String?,
+    val balance: BigDecimal? = null
+)
+
+data class CrownAccountCheckResult(
+    val status: String,
+    val balance: BigDecimal?,
+    val message: String?,
+    val checkedAt: Long = System.currentTimeMillis()
 )
 
 data class CrownSession(

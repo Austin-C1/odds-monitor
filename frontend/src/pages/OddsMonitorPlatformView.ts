@@ -1,4 +1,4 @@
-export type OddsMonitorPlatformKey = 'pinnacle' | 'crown' | 'polymarket'
+export type OddsMonitorPlatformKey = 'pinnacle' | 'crown'
 
 export type OddsMonitorPlatformMatch = {
   id: number

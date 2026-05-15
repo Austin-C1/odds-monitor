@@ -3,6 +3,7 @@ import { Card, Table, Tag, Typography } from 'antd'
 import { apiClient } from '../services/api'
 
 const { Title, Text } = Typography
+const SUPPORTED_SOURCE_KEYS = new Set(['pinnacle', 'crown'])
 
 type ApiResponse<T> = { code: number; data: T; msg: string }
 type DataSourceStatus = {
@@ -40,7 +41,7 @@ const DataSourceStatus = () => {
 
   useEffect(() => {
     apiClient.post<ApiResponse<DataSourceStatus[]>>('/odds-monitor/data-sources/status/list', {})
-      .then((response) => setRows(response.data.data))
+      .then((response) => setRows(response.data.data.filter((row) => SUPPORTED_SOURCE_KEYS.has(row.sourceKey))))
       .finally(() => setLoading(false))
   }, [])
 

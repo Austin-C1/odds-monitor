@@ -47,30 +47,6 @@ data class ApiResponse<T>(
             return ApiResponse(code = code, data = null, msg = msg)
         }
         
-        @Deprecated("使用 error(ErrorCode.PARAM_ERROR, msg) 替代", ReplaceWith("error(ErrorCode.PARAM_ERROR, msg)"))
-        fun <T> paramError(msg: String): ApiResponse<T> {
-            return error(ErrorCode.PARAM_ERROR, msg)
-        }
-        
-        @Deprecated("使用 error(ErrorCode.AUTH_ERROR, msg) 替代", ReplaceWith("error(ErrorCode.AUTH_ERROR, msg)"))
-        fun <T> authError(msg: String): ApiResponse<T> {
-            return error(ErrorCode.AUTH_ERROR, msg)
-        }
-        
-        @Deprecated("使用 error(ErrorCode.NOT_FOUND, msg) 替代", ReplaceWith("error(ErrorCode.NOT_FOUND, msg)"))
-        fun <T> notFound(msg: String): ApiResponse<T> {
-            return error(ErrorCode.NOT_FOUND, msg)
-        }
-        
-        @Deprecated("使用 error(ErrorCode.BUSINESS_ERROR, msg) 替代", ReplaceWith("error(ErrorCode.BUSINESS_ERROR, msg)"))
-        fun <T> businessError(msg: String): ApiResponse<T> {
-            return error(ErrorCode.BUSINESS_ERROR, msg)
-        }
-        
-        @Deprecated("使用 error(ErrorCode.SERVER_ERROR, msg) 替代", ReplaceWith("error(ErrorCode.SERVER_ERROR, msg)"))
-        fun <T> serverError(msg: String): ApiResponse<T> {
-            return error(ErrorCode.SERVER_ERROR, msg)
-        }
     }
 }
 

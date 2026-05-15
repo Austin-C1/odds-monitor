@@ -7,6 +7,7 @@ import okhttp3.Request
 import okhttp3.Response
 import org.springframework.stereotype.Component
 import java.nio.charset.Charset
+import java.math.BigDecimal
 import java.util.concurrent.TimeUnit
 
 @Component
@@ -19,6 +20,45 @@ class CrownApiClient(
         .build()
 
     override fun login(config: OddsDataSourceConfig): CrownSession {
+        return performLogin(config).second
+    }
+
+    fun checkAccount(config: OddsDataSourceConfig): CrownAccountCheckResult {
+        var session: CrownSession? = null
+        return try {
+            val (_, activeSession) = performLogin(config)
+            session = activeSession
+            val balance = fetchAccountBalance(session)
+                ?: throw CrownCollectionException("failed_balance", "登录正常，但余额未返回，检测后已退出")
+            CrownAccountCheckResult(
+                status = "success",
+                balance = balance,
+                message = accountCheckMessage()
+            )
+        } catch (ex: CrownCollectionException) {
+            CrownAccountCheckResult(
+                status = "error",
+                balance = null,
+                message = ex.message
+            )
+        } catch (ex: Exception) {
+            CrownAccountCheckResult(
+                status = "error",
+                balance = null,
+                message = ex.message ?: "crown account check failed"
+            )
+        } finally {
+            if (session != null) {
+                logout(session)
+            }
+        }
+    }
+
+    private fun accountCheckMessage(): String {
+        return "登录正常，余额已获取，检测后已退出"
+    }
+
+    private fun performLogin(config: OddsDataSourceConfig): Pair<CrownLoginResponse, CrownSession> {
         val username = config.username?.takeIf { it.isNotBlank() }
             ?: throw CrownCollectionException("failed_config", "crown username is empty")
         val password = config.password?.takeIf { it.isNotBlank() }
@@ -46,13 +86,30 @@ class CrownApiClient(
             val suffix = details.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
             throw CrownCollectionException("failed_login", "crown login failed with status ${login.status}$suffix")
         }
-        return CrownSession(
+        val session = CrownSession(
             uid = login.uid,
             cookies = cookieJar.toMap(),
             username = username.trim(),
             baseUrl = baseUrl,
             savedAt = System.currentTimeMillis()
         )
+        return login to session
+    }
+
+    private fun fetchAccountBalance(session: CrownSession): BigDecimal? {
+        val cookieJar = session.cookies.toMutableMap()
+        val response = postForm(
+            baseUrl = session.baseUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_BASE_URL,
+            path = "/transform.php",
+            form = mapOf(
+                "uid" to session.uid,
+                "langx" to "zh-cn",
+                "p" to "get_member_data",
+                "change" to "all"
+            ),
+            cookies = cookieJar
+        )
+        return parser.parseAccountBalance(response)
     }
 
     fun fetchMatches(config: OddsDataSourceConfig, session: CrownSession): List<CrownFootballMatch> {
@@ -150,6 +207,21 @@ class CrownApiClient(
                 throw CrownCollectionException("failed_http", "crown http ${response.code}")
             }
             return decodeResponseBody(response)
+        }
+    }
+
+    private fun logout(session: CrownSession) {
+        runCatching {
+            postForm(
+                baseUrl = session.baseUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_BASE_URL,
+                path = "/transform_nl.php",
+                form = mapOf(
+                    "uid" to session.uid,
+                    "langx" to "zh-cn",
+                    "p" to "logout"
+                ),
+                cookies = session.cookies.toMutableMap()
+            )
         }
     }
 

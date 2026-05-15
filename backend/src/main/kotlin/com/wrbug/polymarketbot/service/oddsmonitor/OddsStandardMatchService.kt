@@ -165,8 +165,7 @@ class OddsStandardMatchService(
         return when (sourceKey) {
             "crown" -> 0
             "pinnacle" -> 1
-            "polymarket" -> 2
-            else -> 3
+            else -> 2
         }
     }
 

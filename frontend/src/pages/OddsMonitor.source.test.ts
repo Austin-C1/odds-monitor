@@ -17,7 +17,7 @@ describe('odds monitor dashboard source', () => {
   })
 
   it('keeps visible monitor labels in Chinese', () => {
-    ;[
+    [
       '全平台赔率监控',
       '比赛列表',
       '搜索比赛、联赛或平台',
@@ -26,7 +26,7 @@ describe('odds monitor dashboard source', () => {
       '胜平负',
       '无盘口',
       '最新赔率显示在走势图最右侧',
-      '三平台都有',
+      '双平台都有',
       '疑似盘口缺失',
       '平博',
       '皇冠',
@@ -61,7 +61,6 @@ describe('odds monitor dashboard source', () => {
   it('keeps the required platform chart colors and latest value labels', () => {
     expect(source).toContain("pinnacle: '#ef4444'")
     expect(source).toContain("crown: '#16a34a'")
-    expect(source).toContain("polymarket: '#2563eb'")
     expect(source).toContain('createSeriesWithLatestLabel')
     expect(source).toContain('toAsianOdd')
     expect(source).toContain('formatAsianOdd')
@@ -92,14 +91,11 @@ describe('odds monitor dashboard source', () => {
     expect(source).toContain('window.setTimeout')
   })
 
-  it('shows Polymarket盘口 as asian water while keeping the probability group as percentages', () => {
-    expect(source).toContain('polymarketProbabilityToAsianOdd')
-    expect(source).toContain('formatPolymarketAsianOdd')
-    expect(source).toContain('formatPolymarketProbability')
-    expect(source).toContain("platform === 'polymarket'")
-    expect(source).toContain('formatPolymarketProbability(row.odds.polymarket)')
-    expect(source).not.toContain('value * 3.8')
-    expect(source).not.toContain('value * 5.1')
+  it('keeps odds monitor focused on pinnacle and crown only', () => {
+    expect(source).toContain("type PlatformKey = 'pinnacle' | 'crown'")
+    expect(source).toContain("visiblePlatformKeys: PlatformKey[] = ['pinnacle', 'crown']")
+    expect(source).not.toContain('Polymarket')
+    expect(source).not.toContain('polymarket')
   })
 
   it('reuses chart instances instead of rebuilding lines on every page state change', () => {
@@ -115,7 +111,7 @@ describe('odds monitor dashboard source', () => {
     expect(source).toContain('metric.value')
     expect(source).toContain('marketTitleLabels')
     expect(source).toContain('selectionLabels')
-    expect(source).toContain('matchedPlatforms?.[0]')
+    expect(source).toContain('isVisiblePlatform(metric.sourceKey)')
   })
 
   it('keeps one match entry and renders platform odds side by side', () => {

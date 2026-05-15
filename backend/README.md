@@ -1,116 +1,43 @@
-# Polymarket Bot Backend
+# Odds Monitor Backend
 
-Polymarket 预测市场机器人后端服务
+全平台赔率监控后端服务。
 
-## 功能特性
+## 功能
 
-- ✅ 封装 Polymarket CLOB API（订单操作、市场数据、交易数据）
-- ✅ 封装 Polymarket Gamma API（市场、事件、系列查询）
-- ✅ WebSocket 转发服务（转发前端 WebSocket 连接到 Polymarket RTDS）
-- ✅ 统一 API 响应格式
-- ✅ 分类验证（仅支持 sports 和 crypto）
-- ✅ 工具类支持（安全转换、数学运算、HTTP 客户端等）
+- 赔率监控数据源配置、状态、联赛筛选和比赛看板。
+- Pinnacle 和 Crown 盘口数据采集。
+- 自动投注信号判断、执行记录和下注成功记录。
+- AdsPower 本地 API 检测、启动 Profile、读取 Crown 登录状态和余额。
+- 通知配置、通知模板、系统配置、更新和登录鉴权。
 
 ## 技术栈
 
 - Spring Boot 3.2.0
 - Kotlin 1.9.20
-- Retrofit 2.9.0
 - OkHttp 4.12.0
-- Java-WebSocket 1.5.4
+- Playwright 1.49.0
+- Jsoup 1.17.2
 - MySQL 8.2.0
-- Flyway（数据库迁移）
+- Flyway
 
-## 项目结构
+## 主要接口
 
-```
-backend/
-├── src/
-│   ├── main/
-│   │   ├── kotlin/com/wrbug/polymarketbot/
-│   │   │   ├── api/              # API 接口定义
-│   │   │   ├── config/           # 配置类
-│   │   │   ├── controller/      # 控制器
-│   │   │   ├── dto/              # 数据传输对象
-│   │   │   ├── service/          # 服务层
-│   │   │   ├── util/             # 工具类
-│   │   │   └── websocket/        # WebSocket 处理
-│   │   └── resources/
-│   │       ├── application.properties
-│   │       └── db/migration/    # Flyway 迁移脚本
-│   └── test/
-└── build.gradle.kts
-```
-
-## 配置说明
-
-### 环境变量
-
-- `DB_USERNAME`: 数据库用户名（默认: root）
-- `DB_PASSWORD`: 数据库密码（默认: password）
-- `SERVER_PORT`: 服务器端口（默认: 8000）
-- `CRYPTO_SECRET_KEY`: 加密密钥（用于加密存储私钥和 API Key，建议设置）
-
-### application.properties
-
-主要配置项：
-- 数据库连接配置
-- Polymarket API 地址配置
-- WebSocket 地址配置
-
-## API 接口
-
-### 市场相关
-
-- `POST /api/markets/list` - 获取市场列表
-- `POST /api/markets/detail` - 获取市场详情
-- `POST /api/markets/search` - 搜索市场
-- `POST /api/markets/sports` - 获取体育市场
-- `POST /api/markets/crypto` - 获取加密货币市场
-
-### WebSocket
-
-- `WS /ws/polymarket` - WebSocket 连接端点（转发到 Polymarket RTDS）
-
-## 响应格式
-
-所有接口统一返回以下格式：
-
-```json
-{
-  "code": 0,
-  "data": {},
-  "msg": ""
-}
-```
-
-- `code`: 0 表示成功，非 0 表示失败
-- `data`: 响应数据
-- `msg`: 响应消息
-
-## 错误码
-
-- `0`: 成功
-- `1001-1999`: 参数错误
-- `2001-2999`: 认证/权限错误
-- `3001-3999`: 资源不存在
-- `4001-4999`: 业务逻辑错误
-- `5001-5999`: 服务器内部错误
+- `POST /api/odds-monitor/dashboard`
+- `POST /api/odds-monitor/data-sources/configs/list`
+- `POST /api/odds-monitor/data-sources/configs/save`
+- `POST /api/auto-betting/signals/odds-monitor`
+- `POST /api/auto-betting/intents/recent`
+- `POST /api/auto-betting/intents/verified-placed`
+- `POST /api/auto-betting/intents/{intentId}/execute-crown`
+- `POST /api/auto-betting/adspower/status`
+- `POST /api/auto-betting/adspower/start-profile`
+- `POST /api/auto-betting/adspower/crown-session`
 
 ## 运行
 
-```bash
-# 构建项目
-./gradlew build
-
-# 运行应用
-./gradlew bootRun
+```powershell
+$env:JAVA_HOME='C:\Users\kesul\Desktop\全平台赔率监控\.tools\jdk-17.0.18+8'
+$env:Path="$env:JAVA_HOME\bin;$env:Path"
+.\gradlew.bat test
+.\gradlew.bat bootRun
 ```
-
-## 注意事项
-
-1. 仅支持 Polymarket 平台
-2. 仅支持 `sports` 和 `crypto` 两个分类
-3. WebSocket 转发需要配置正确的 Polymarket RTDS 地址
-4. 生产环境需要配置正确的 CORS 策略
-

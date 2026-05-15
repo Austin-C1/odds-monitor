@@ -47,8 +47,7 @@ data class OddsMonitorMatchDetailRequest(
 data class OddsHistoryPointDto(
     val timestamp: Long,
     val pinnacle: Double,
-    val crown: Double,
-    val polymarket: Double
+    val crown: Double
 )
 
 data class OddsDataSourceConfigDto(

@@ -16,6 +16,7 @@ class CrownResponseParserTest {
             <serverresponse>
               <status>200</status>
               <uid>abc123</uid>
+              <balance>1234.56</balance>
             </serverresponse>
         """.trimIndent()
 
@@ -23,6 +24,26 @@ class CrownResponseParserTest {
 
         assertEquals("200", login.status)
         assertEquals("abc123", login.uid)
+        assertEquals(BigDecimal("1234.56"), login.balance)
+    }
+
+    @Test
+    fun `parses crown account balance from member data response`() {
+        val response = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <serverresponse>
+              <code>get_all_data</code>
+              <enable>Y</enable>
+              <pay_type>0</pay_type>
+              <currency>RMB</currency>
+              <maxcredit>1</maxcredit>
+              <cash>0</cash>
+            </serverresponse>
+        """.trimIndent()
+
+        val balance = parser.parseAccountBalance(response)
+
+        assertEquals(BigDecimal("1"), balance)
     }
 
     @Test

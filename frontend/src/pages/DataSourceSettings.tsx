@@ -3,6 +3,7 @@ import { Button, Card, Form, Input, InputNumber, message, Space, Switch, Typogra
 import { apiClient } from '../services/api'
 
 const { Title, Text } = Typography
+const SUPPORTED_SOURCE_KEYS = new Set(['pinnacle', 'crown'])
 
 type ApiResponse<T> = { code: number; data: T; msg: string }
 type DataSourceConfig = {
@@ -23,7 +24,9 @@ const DataSourceSettings = () => {
 
   useEffect(() => {
     apiClient.post<ApiResponse<DataSourceConfig[]>>('/odds-monitor/data-sources/configs/list', {})
-      .then((response) => form.setFieldsValue({ configs: response.data.data }))
+      .then((response) => form.setFieldsValue({
+        configs: response.data.data.filter((config) => SUPPORTED_SOURCE_KEYS.has(config.sourceKey)),
+      }))
       .finally(() => setLoading(false))
   }, [form])
 
@@ -59,24 +62,15 @@ const DataSourceSettings = () => {
                     <Form.Item name={[field.name, 'enabled']} label="启用" valuePropName="checked">
                       <Switch />
                     </Form.Item>
-                    {sourceKey !== 'polymarket' && (
-                      <>
-                        <Form.Item name={[field.name, 'username']} label="账号">
-                          <Input autoComplete="off" />
-                        </Form.Item>
-                        <Form.Item name={[field.name, 'password']} label="密码">
-                          <Input.Password autoComplete="new-password" />
-                        </Form.Item>
-                      </>
-                    )}
+                    <Form.Item name={[field.name, 'username']} label="账号">
+                      <Input autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item name={[field.name, 'password']} label="密码">
+                      <Input.Password autoComplete="new-password" />
+                    </Form.Item>
                     {sourceKey === 'crown' && (
                       <Form.Item name={[field.name, 'queryKeyword']} label="平台网址">
                         <Input placeholder="https://hga038.com/" />
-                      </Form.Item>
-                    )}
-                    {sourceKey === 'polymarket' && (
-                      <Form.Item name={[field.name, 'queryKeyword']} label="查询关键词">
-                        <Input placeholder="football" />
                       </Form.Item>
                     )}
                     <Form.Item name={[field.name, 'intervalSeconds']} label="采集间隔（秒）" rules={[{ required: true }]}>

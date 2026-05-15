@@ -76,4 +76,5 @@ class OddsMonitorController(
     fun listCollectionLogs(): ResponseEntity<ApiResponse<List<OddsCollectionLogDto>>> {
         return ResponseEntity.ok(ApiResponse.success(oddsMonitorService.listCollectionLogs()))
     }
+
 }

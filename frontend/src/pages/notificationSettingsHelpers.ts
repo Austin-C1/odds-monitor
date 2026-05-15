@@ -6,17 +6,11 @@ type TelegramConfigShape = {
   monitorModeEnabled?: boolean
   liveOnlyModeEnabled?: boolean
   prematchWindowMinutes?: number | string | null
-  marketBettingQueryEnabled?: boolean
-  marketBettingDailyReportEnabled?: boolean
-  marketBettingDailyReportTime?: string
   handicapCombinedWaterMin?: number | string | null
   totalCombinedWaterMin?: number | string | null
   handicapOddsMoveMin?: number | string | null
   totalOddsMoveMin?: number | string | null
   moneylineOddsMoveMin?: number | string | null
-  copyTradingLeaderGroups?: string[]
-  copyTradingCategories?: string[]
-  copyTradingNotificationTypes?: string[]
 }
 
 export const extractTelegramConfig = (config: NotificationConfig): TelegramConfigShape => {

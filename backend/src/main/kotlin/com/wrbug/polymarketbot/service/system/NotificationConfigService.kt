@@ -200,29 +200,11 @@ class NotificationConfigService(
             "liveOnlyModeEnabled must be a boolean"
         }
         requireOptionalPrematchWindow(config["prematchWindowMinutes"], "prematchWindowMinutes")
-        val marketBettingQueryEnabled = config["marketBettingQueryEnabled"]
-        require(marketBettingQueryEnabled == null || marketBettingQueryEnabled is Boolean) {
-            "marketBettingQueryEnabled must be a boolean"
-        }
-        val marketBettingDailyReportEnabled = config["marketBettingDailyReportEnabled"]
-        require(marketBettingDailyReportEnabled == null || marketBettingDailyReportEnabled is Boolean) {
-            "marketBettingDailyReportEnabled must be a boolean"
-        }
-        val marketBettingDailyReportTime = config["marketBettingDailyReportTime"]
-        require(marketBettingDailyReportTime == null || marketBettingDailyReportTime is String) {
-            "marketBettingDailyReportTime must be a string"
-        }
-        require(marketBettingDailyReportTime == null || isValidDailyReportTime(marketBettingDailyReportTime)) {
-            "marketBettingDailyReportTime must use HH:mm format"
-        }
         requireOptionalWaterLimit(config["handicapCombinedWaterMin"], "handicapCombinedWaterMin")
         requireOptionalWaterLimit(config["totalCombinedWaterMin"], "totalCombinedWaterMin")
         requireOptionalOddsMoveLimit(config["handicapOddsMoveMin"], "handicapOddsMoveMin")
         requireOptionalOddsMoveLimit(config["totalOddsMoveMin"], "totalOddsMoveMin")
         requireOptionalOddsMoveLimit(config["moneylineOddsMoveMin"], "moneylineOddsMoveMin")
-        requireConfigStringList(config["copyTradingCategories"], "copyTradingCategories")
-        requireConfigStringList(config["copyTradingNotificationTypes"], "copyTradingNotificationTypes")
-        requireConfigStringList(config["copyTradingLeaderGroups"], "copyTradingLeaderGroups")
     }
 
     private fun requireOptionalWaterLimit(value: Any?, fieldName: String) {
@@ -247,12 +229,6 @@ class NotificationConfigService(
         require(numericValue != null) { "$fieldName must be an integer" }
         require(numericValue > 0) { "$fieldName must be greater than 0" }
         require(numericValue <= 7 * 24 * 60) { "$fieldName cannot exceed 10080" }
-    }
-
-    private fun requireConfigStringList(value: Any?, fieldName: String) {
-        require(value == null || value is List<*> || value is String) {
-            "$fieldName must be a list or a comma-separated string"
-        }
     }
 
     private fun entityToDto(entity: NotificationConfig): NotificationConfigDto {
@@ -283,25 +259,11 @@ class NotificationConfigService(
                     else -> false
                 }
                 val prematchWindowMinutes = normalizePrematchWindow(configMap["prematchWindowMinutes"])
-                val marketBettingQueryEnabled = when (val raw = configMap["marketBettingQueryEnabled"]) {
-                    is Boolean -> raw
-                    is String -> raw.equals("true", ignoreCase = true)
-                    else -> false
-                }
-                val marketBettingDailyReportEnabled = when (val raw = configMap["marketBettingDailyReportEnabled"]) {
-                    is Boolean -> raw
-                    is String -> raw.equals("true", ignoreCase = true)
-                    else -> false
-                }
-                val marketBettingDailyReportTime = normalizeDailyReportTime(configMap["marketBettingDailyReportTime"]?.toString())
                 val handicapCombinedWaterMin = normalizeWaterLimit(configMap["handicapCombinedWaterMin"])
                 val totalCombinedWaterMin = normalizeWaterLimit(configMap["totalCombinedWaterMin"])
                 val handicapOddsMoveMin = normalizeWaterLimit(configMap["handicapOddsMoveMin"])
                 val totalOddsMoveMin = normalizeWaterLimit(configMap["totalOddsMoveMin"])
                 val moneylineOddsMoveMin = normalizeWaterLimit(configMap["moneylineOddsMoveMin"])
-                val copyTradingCategories = parseStringList(configMap["copyTradingCategories"])
-                val copyTradingNotificationTypes = parseStringList(configMap["copyTradingNotificationTypes"])
-                val copyTradingLeaderGroups = parseStringList(configMap["copyTradingLeaderGroups"])
                 NotificationConfigData.Telegram(
                     TelegramConfigData(
                         botToken = botToken,
@@ -309,17 +271,11 @@ class NotificationConfigService(
                         monitorModeEnabled = monitorModeEnabled,
                         liveOnlyModeEnabled = liveOnlyModeEnabled,
                         prematchWindowMinutes = prematchWindowMinutes,
-                        marketBettingQueryEnabled = marketBettingQueryEnabled,
-                        marketBettingDailyReportEnabled = marketBettingDailyReportEnabled,
-                        marketBettingDailyReportTime = marketBettingDailyReportTime,
                         handicapCombinedWaterMin = handicapCombinedWaterMin,
                         totalCombinedWaterMin = totalCombinedWaterMin,
                         handicapOddsMoveMin = handicapOddsMoveMin,
                         totalOddsMoveMin = totalOddsMoveMin,
-                        moneylineOddsMoveMin = moneylineOddsMoveMin,
-                        copyTradingLeaderGroups = copyTradingLeaderGroups,
-                        copyTradingCategories = copyTradingCategories,
-                        copyTradingNotificationTypes = copyTradingNotificationTypes
+                        moneylineOddsMoveMin = moneylineOddsMoveMin
                     )
                 )
             }
@@ -338,19 +294,6 @@ class NotificationConfigService(
         )
     }
 
-    private fun parseStringList(value: Any?): List<String> {
-        val rawItems = when (value) {
-            is List<*> -> value.mapNotNull { it?.toString() }
-            is String -> value.split(",")
-            else -> emptyList()
-        }
-
-        return rawItems
-            .map { it.trim().lowercase() }
-            .filter { it.isNotEmpty() && it != "all" }
-            .distinct()
-    }
-
     private fun normalizeWaterLimit(value: Any?): String? {
         if (value == null || value == "") return null
         val normalized = value.toString().trim().toBigDecimalOrNull() ?: return null
@@ -362,12 +305,4 @@ class NotificationConfigService(
         return value.toString().trim().toIntOrNull()?.takeIf { it > 0 }
     }
 
-    private fun isValidDailyReportTime(value: Any?): Boolean {
-        return normalizeDailyReportTime(value?.toString()) == value?.toString()?.trim()
-    }
-
-    private fun normalizeDailyReportTime(value: String?): String {
-        val trimmed = value?.trim().orEmpty()
-        return if (Regex("""^([01]\d|2[0-3]):[0-5]\d$""").matches(trimmed)) trimmed else "02:00"
-    }
 }

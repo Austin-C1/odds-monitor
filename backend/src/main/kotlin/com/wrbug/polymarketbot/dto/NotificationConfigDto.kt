@@ -16,17 +16,11 @@ data class TelegramConfigData(
     val monitorModeEnabled: Boolean = false,
     val liveOnlyModeEnabled: Boolean = false,
     val prematchWindowMinutes: Int? = null,
-    val marketBettingQueryEnabled: Boolean = false,
-    val marketBettingDailyReportEnabled: Boolean = false,
-    val marketBettingDailyReportTime: String = "02:00",
     val handicapCombinedWaterMin: String? = null,
     val totalCombinedWaterMin: String? = null,
     val handicapOddsMoveMin: String? = null,
     val totalOddsMoveMin: String? = null,
-    val moneylineOddsMoveMin: String? = null,
-    val copyTradingLeaderGroups: List<String> = emptyList(),
-    val copyTradingCategories: List<String> = emptyList(),
-    val copyTradingNotificationTypes: List<String> = emptyList()
+    val moneylineOddsMoveMin: String? = null
 )
 
 sealed class NotificationConfigData {
