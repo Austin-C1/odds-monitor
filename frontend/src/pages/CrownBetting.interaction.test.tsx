@@ -669,6 +669,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     await screen.findByText('在线')
     expect(apiClient.post).toHaveBeenCalledWith('/auto-betting/adspower/crown-session', {
       profileId: 'profile-active',
+      loginName: 'bound_login',
       loginUrl: 'https://m407.mos077.com/',
     })
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (

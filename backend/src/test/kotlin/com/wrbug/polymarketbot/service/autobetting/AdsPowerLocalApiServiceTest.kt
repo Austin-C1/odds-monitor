@@ -335,6 +335,44 @@ class AdsPowerLocalApiServiceTest {
     }
 
     @Test
+    fun `crown session analyzer reads compact web header balance`() {
+        val result = CrownSessionPageAnalyzer.analyze(
+            """
+            skjd447RMB2,000.00
+            账户历史
+            讯息
+            投注记录
+            """.trimIndent()
+        )
+
+        assertTrue(result.loggedIn)
+        assertEquals("online", result.accountStatus)
+        assertEquals(BigDecimal("2000.00"), result.balance)
+        assertEquals("skjd447", result.loginName)
+    }
+
+    @Test
+    fun `crown session analyzer reports online from logged in web menu without balance`() {
+        val result = CrownSessionPageAnalyzer.analyze(
+            """
+            skjd447
+            账户历史
+            讯息
+            设置
+            账户安全
+            修改密码
+            投注记录
+            """.trimIndent()
+        )
+
+        assertTrue(result.loggedIn)
+        assertEquals("online", result.accountStatus)
+        assertNull(result.balance)
+        assertEquals("skjd447", result.loginName)
+        assertEquals("账号在线，余额未读取到", result.message)
+    }
+
+    @Test
     fun `crown session analyzer reports login required when login form is visible`() {
         val result = CrownSessionPageAnalyzer.analyze("皇冠 登录 账号 密码 Login")
 

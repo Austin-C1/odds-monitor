@@ -204,6 +204,7 @@ class AdsPowerLocalApiService(
     fun checkCrownSession(
         profileId: String,
         loginUrl: String? = null,
+        loginName: String? = null,
         now: Long = System.currentTimeMillis()
     ): AdsPowerCrownSessionDto {
         val active = checkProfileActive(profileId, now)
@@ -243,6 +244,19 @@ class AdsPowerLocalApiService(
                 checkedAt = now
             )
         val analysis = CrownSessionPageAnalyzer.analyze(snapshot.text)
+        val normalizedLoginName = loginName?.trim().orEmpty()
+        if (analysis.loggedIn && normalizedLoginName.isNotBlank() && analysis.loginName.conflictsWithLoginName(normalizedLoginName)) {
+            return AdsPowerCrownSessionDto(
+                profileId = active.profileId,
+                opened = true,
+                loggedIn = false,
+                accountStatus = "crown_account_mismatch",
+                pageUrl = snapshot.pageUrl,
+                message = "浏览器里登录的是 ${analysis.loginName}，不是 $normalizedLoginName",
+                debugPort = debugPort,
+                checkedAt = now
+            )
+        }
         return AdsPowerCrownSessionDto(
             profileId = active.profileId,
             opened = true,
@@ -278,7 +292,7 @@ class AdsPowerLocalApiService(
             val profileCandidates = loadMatchingProfileMetadata(normalizedLoginName)
                 .mapNotNull { profile -> buildCandidateFromProfileMetadata(profile, loginUrl, now) }
             val matched = AdsPowerCrownProfileMatcher.match(normalizedLoginName, profileCandidates)
-                ?: profileCandidates.singleOrNull { it.opened }
+                ?: profileCandidates.singleOrNull { it.opened && !it.pageLoginName.conflictsWithLoginName(normalizedLoginName) }
             if (matched != null) {
                 return matched.toSessionDto(now)
             }
@@ -301,6 +315,7 @@ class AdsPowerLocalApiService(
                 profileName = profile?.name,
                 profileUsername = profile?.username,
                 remark = profile?.remark,
+                pageLoginName = analysis?.loginName,
                 opened = true,
                 loggedIn = analysis?.loggedIn == true,
                 accountStatus = analysis?.accountStatus ?: "crown_page_not_found",
@@ -328,13 +343,26 @@ class AdsPowerLocalApiService(
             )
         }
         val loggedInCount = candidates.count { it.opened && it.loggedIn }
-        val status = if (loggedInCount > 1) "ambiguous_crown_profile" else "no_logged_in_crown_profile"
+        val mismatchedLoginNames = candidates
+            .filter { it.opened && it.loggedIn && it.pageLoginName.conflictsWithLoginName(normalizedLoginName) }
+            .mapNotNull { it.pageLoginName }
+            .distinct()
+        val status = when {
+            mismatchedLoginNames.isNotEmpty() -> "crown_account_mismatch"
+            loggedInCount > 1 -> "ambiguous_crown_profile"
+            else -> "no_logged_in_crown_profile"
+        }
+        val message = if (mismatchedLoginNames.isNotEmpty()) {
+            "浏览器里登录的是 ${mismatchedLoginNames.joinToString("、")}，不是 $normalizedLoginName"
+        } else {
+            status
+        }
         return AdsPowerCrownSessionDto(
             profileId = "",
             opened = loggedInCount > 0,
             loggedIn = false,
             accountStatus = status,
-            message = status,
+            message = message,
             checkedAt = now
         )
     }
@@ -520,6 +548,7 @@ class AdsPowerLocalApiService(
             profileName = profile.name,
             profileUsername = profile.username,
             remark = profile.remark,
+            pageLoginName = analysis?.loginName,
             opened = true,
             loggedIn = analysis?.loggedIn == true,
             accountStatus = analysis?.accountStatus ?: fallbackStatus,
@@ -552,7 +581,28 @@ class AdsPowerLocalApiService(
             JSON.stringify({
               url: window.location.href,
               title: document.title,
-              text: document.body ? document.body.innerText : ''
+              text: (() => {
+                const seen = new Set();
+                const collect = (win) => {
+                  if (!win || seen.has(win)) return [];
+                  seen.add(win);
+                  const doc = win.document;
+                  const parts = [doc.body ? doc.body.innerText : ''];
+                  for (const frame of Array.from(win.frames || [])) {
+                    try {
+                      parts.push(...collect(frame));
+                    } catch (_) {
+                      // Ignore cross-origin frames; same-origin Crown frames still provide account text.
+                    }
+                  }
+                  return parts;
+                };
+                try {
+                  return collect(window).filter(Boolean).join('\n');
+                } catch (_) {
+                  return document.body ? document.body.innerText : '';
+                }
+              })()
             })
         """.trimIndent()
         val command = objectMapper.writeValueAsString(
@@ -1016,6 +1066,11 @@ class AdsPowerLocalApiService(
             .replace(Regex("""\s+"""), "")
     }
 
+    private fun String?.conflictsWithLoginName(loginName: String): Boolean {
+        val normalizedValue = normalizeProfileMatchText(this)
+        return normalizedValue.isNotBlank() && normalizedValue != normalizeProfileMatchText(loginName)
+    }
+
     private fun hostFromUrl(url: String?): String? {
         val raw = url?.trim()?.takeIf { it.isNotBlank() } ?: return null
         return runCatching { URI(raw).host }
@@ -1070,7 +1125,20 @@ internal object AdsPowerCrownProfileMatcher {
         val usable = candidates.filter { it.opened && it.loggedIn }
         if (usable.isEmpty()) return null
         val normalizedLoginName = normalize(loginName)
-        val exactMatches = usable.filter { candidate ->
+        val pageMatches = usable.filter { candidate ->
+            normalize(candidate.pageLoginName) == normalizedLoginName
+        }
+        if (pageMatches.size == 1) {
+            return pageMatches.first()
+        }
+        if (pageMatches.size > 1) {
+            return null
+        }
+        val nonConflicting = usable.filter { candidate ->
+            val pageLoginName = normalize(candidate.pageLoginName)
+            pageLoginName.isBlank() || pageLoginName == normalizedLoginName
+        }
+        val exactMatches = nonConflicting.filter { candidate ->
             listOf(candidate.profileUsername, candidate.profileName, candidate.remark)
                 .map(::normalize)
                 .any { value -> value == normalizedLoginName || value.contains(normalizedLoginName) }
@@ -1081,7 +1149,7 @@ internal object AdsPowerCrownProfileMatcher {
         if (exactMatches.size > 1) {
             return null
         }
-        return usable.singleOrNull()
+        return nonConflicting.singleOrNull()
     }
 
     private fun normalize(value: String?): String {
@@ -1096,18 +1164,28 @@ internal data class CrownSessionAnalysis(
     val loggedIn: Boolean,
     val accountStatus: String,
     val balance: BigDecimal?,
+    val loginName: String? = null,
     val currency: String = "CNY",
     val message: String
 )
 
 internal object CrownSessionPageAnalyzer {
     private val balancePatterns = listOf(
-        Regex("""(?i)\bRMB\s*([0-9][0-9,]*(?:\.\d{1,2})?)"""),
+        Regex("""(?i)RMB\s*([0-9][0-9,]*(?:\.\d{1,2})?)"""),
         Regex("""[¥￥]\s*([0-9][0-9,]*(?:\.\d{1,2})?)"""),
         Regex("""(?:余额|账户余额|可用余额|信用额度|额度)\s*[:：]?\s*(?:RMB|[¥￥])?\s*([0-9][0-9,]*(?:\.\d{1,2})?)""")
     )
     private val loginFormPattern = Regex("""(?:登录|登入|Login).{0,80}(?:密码|Password)""", RegexOption.IGNORE_CASE)
     private val abnormalPattern = Regex("""账号(?:异常|停用|冻结|锁定)|账户(?:异常|停用|冻结|锁定)|封号|被锁定""")
+    private val loggedInMenuMarkers = listOf(
+        "账户历史",
+        "账户安全",
+        "修改密码",
+        "投注记录",
+        "我的赛事",
+        "讯息",
+        "消息"
+    )
 
     fun analyze(text: String): CrownSessionAnalysis {
         val normalized = text.replace('\u00A0', ' ').trim()
@@ -1117,12 +1195,16 @@ internal object CrownSessionPageAnalyzer {
         if (abnormalPattern.containsMatchIn(normalized)) {
             return CrownSessionAnalysis(false, "abnormal", null, message = "账号异常")
         }
+        val loginName = extractLoginName(normalized)
         val balance = extractBalance(normalized)
         if (balance != null) {
-            return CrownSessionAnalysis(true, "online", balance, message = "账号在线，余额已获取")
+            return CrownSessionAnalysis(true, "online", balance, loginName = loginName, message = "账号在线，余额已获取")
         }
         if (loginFormPattern.containsMatchIn(normalized)) {
             return CrownSessionAnalysis(false, "login_required", null, message = "皇冠未登录")
+        }
+        if (hasLoggedInMenu(normalized)) {
+            return CrownSessionAnalysis(true, "online", null, loginName = loginName, message = "账号在线，余额未读取到")
         }
         return CrownSessionAnalysis(false, "unknown", null, message = "未识别到登录状态和余额")
     }
@@ -1133,5 +1215,28 @@ internal object CrownSessionPageAnalyzer {
             return runCatching { BigDecimal(value.replace(",", "")) }.getOrNull()
         }
         return null
+    }
+
+    private fun hasLoggedInMenu(text: String): Boolean {
+        val markerCount = loggedInMenuMarkers.count { marker -> text.contains(marker) }
+        return markerCount >= 2
+    }
+
+    private fun extractLoginName(text: String): String? {
+        Regex("""(?i)([a-z0-9][a-z0-9._-]{2,31})\s*RMB\s*[0-9]""")
+            .find(text)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let { return it }
+
+        val markerStart = loggedInMenuMarkers
+            .map { marker -> text.indexOf(marker).takeIf { it >= 0 } ?: Int.MAX_VALUE }
+            .minOrNull()
+            ?: Int.MAX_VALUE
+        val header = text.take(if (markerStart == Int.MAX_VALUE) text.length else markerStart)
+        return Regex("""(?i)\b[a-z0-9][a-z0-9._-]{2,31}\b""")
+            .findAll(header)
+            .map { it.value }
+            .firstOrNull { candidate -> !candidate.equals("RMB", ignoreCase = true) }
     }
 }

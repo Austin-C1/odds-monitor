@@ -64,6 +64,7 @@ data class AdsPowerStartProfileRequest(
 
 data class AdsPowerCrownSessionRequest(
     val profileId: String,
+    val loginName: String? = null,
     val loginUrl: String? = null
 )
 
@@ -107,6 +108,7 @@ data class AdsPowerCrownSessionCandidateDto(
     val profileName: String? = null,
     val profileUsername: String? = null,
     val remark: String? = null,
+    val pageLoginName: String? = null,
     val opened: Boolean,
     val loggedIn: Boolean,
     val accountStatus: String,

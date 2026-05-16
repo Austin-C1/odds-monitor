@@ -21,6 +21,31 @@ class AdsPowerCrownProfileMatcherTest {
     }
 
     @Test
+    fun `matches login name from the crown page before adspower metadata`() {
+        val result = AdsPowerCrownProfileMatcher.match(
+            loginName = "skjd447",
+            candidates = listOf(
+                candidate(profileId = "profile-a", profileUsername = "other_user", pageLoginName = "skjd447"),
+                candidate(profileId = "profile-b", profileUsername = "skjd447", pageLoginName = "other_user")
+            )
+        )
+
+        assertEquals("profile-a", result?.profileId)
+    }
+
+    @Test
+    fun `does not use a single opened profile when crown page login name is different`() {
+        val result = AdsPowerCrownProfileMatcher.match(
+            loginName = "skjd447",
+            candidates = listOf(
+                candidate(profileId = "profile-a", profileUsername = "skjd447", pageLoginName = "other_user")
+            )
+        )
+
+        assertNull(result)
+    }
+
+    @Test
     fun `does not match closed or logged-out crown profiles`() {
         val result = AdsPowerCrownProfileMatcher.match(
             loginName = "crown_user",
@@ -64,12 +89,14 @@ class AdsPowerCrownProfileMatcherTest {
         loggedIn: Boolean = true,
         profileName: String? = null,
         profileUsername: String? = null,
-        remark: String? = null
+        remark: String? = null,
+        pageLoginName: String? = null
     ) = AdsPowerCrownSessionCandidateDto(
         profileId = profileId,
         profileName = profileName,
         profileUsername = profileUsername,
         remark = remark,
+        pageLoginName = pageLoginName,
         opened = opened,
         loggedIn = loggedIn,
         accountStatus = if (loggedIn) "online" else "login_required",

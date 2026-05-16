@@ -437,7 +437,7 @@ const CrownBetting = () => {
     if (profileId) {
       return apiClient.post<ApiResponse<AdsPowerCrownSessionResponse>>(
         '/auto-betting/adspower/crown-session',
-        { profileId, loginUrl: account.loginUrl },
+        { profileId, loginName: account.loginName, loginUrl: account.loginUrl },
       )
     }
     return apiClient.post<ApiResponse<AdsPowerCrownSessionResponse>>(
