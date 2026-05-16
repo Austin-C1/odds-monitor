@@ -4,6 +4,7 @@ import { apiClient } from '../services/api'
 
 const { Title, Text } = Typography
 const SUPPORTED_SOURCE_KEYS = new Set(['pinnacle', 'crown'])
+const STATUS_REFRESH_INTERVAL_MS = 60_000
 
 type ApiResponse<T> = { code: number; data: T; msg: string }
 type DataSourceStatus = {
@@ -27,6 +28,8 @@ const statusLabels: Record<string, { text: string; color: string }> = {
   failed_config: { text: '配置错误', color: 'orange' },
   failed_empty: { text: '无赔率数据', color: 'orange' },
   failed_http: { text: '接口失败', color: 'red' },
+  failed_network: { text: '网络失败', color: 'red' },
+  failed_timeout: { text: '采集超时', color: 'red' },
   failed_runtime: { text: '运行失败', color: 'red' },
 }
 
@@ -40,9 +43,27 @@ const DataSourceStatus = () => {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    apiClient.post<ApiResponse<DataSourceStatus[]>>('/odds-monitor/data-sources/status/list', {})
-      .then((response) => setRows(response.data.data.filter((row) => SUPPORTED_SOURCE_KEYS.has(row.sourceKey))))
-      .finally(() => setLoading(false))
+    let active = true
+    const loadStatuses = () => {
+      apiClient.post<ApiResponse<DataSourceStatus[]>>('/odds-monitor/data-sources/status/list', {})
+        .then((response) => {
+          if (active) {
+            setRows(response.data.data.filter((row) => SUPPORTED_SOURCE_KEYS.has(row.sourceKey)))
+          }
+        })
+        .finally(() => {
+          if (active) {
+            setLoading(false)
+          }
+        })
+    }
+
+    loadStatuses()
+    const intervalId = window.setInterval(loadStatuses, STATUS_REFRESH_INTERVAL_MS)
+    return () => {
+      active = false
+      window.clearInterval(intervalId)
+    }
   }, [])
 
   return (

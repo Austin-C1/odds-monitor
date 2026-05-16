@@ -5,18 +5,35 @@ import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 import java.nio.charset.Charset
 import java.math.BigDecimal
 import java.util.concurrent.TimeUnit
 
 @Component
-class CrownApiClient(
-    private val parser: CrownResponseParser
+open class CrownApiClient(
+    private val parser: CrownResponseParser,
+    @Value("\${odds-monitor.crown.fetch-timeout-millis:55000}")
+    private val fetchTimeoutMillis: Long,
+    @Value("\${odds-monitor.crown.http-call-timeout-seconds:20}")
+    private val httpCallTimeoutSeconds: Long
 ) : CrownMatchGateway {
+    private var nowMillis: () -> Long = System::currentTimeMillis
+
+    internal constructor(
+        parser: CrownResponseParser,
+        fetchTimeoutMillis: Long,
+        httpCallTimeoutSeconds: Long,
+        nowMillis: () -> Long
+    ) : this(parser, fetchTimeoutMillis, httpCallTimeoutSeconds) {
+        this.nowMillis = nowMillis
+    }
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(httpCallTimeoutSeconds.coerceAtLeast(1), TimeUnit.SECONDS)
         .build()
 
     override fun login(config: OddsDataSourceConfig): CrownSession {
@@ -117,6 +134,7 @@ class CrownApiClient(
     }
 
     override fun fetchMatchesWithSession(config: OddsDataSourceConfig, session: CrownSession): CrownFetchResult {
+        val deadlineAt = nowMillis() + fetchTimeoutMillis.coerceAtLeast(1)
         val baseUrl = session.baseUrl?.takeIf { it.isNotBlank() } ?: config.crownBaseUrl()
         val cookieJar = session.cookies.toMutableMap()
         val listResponse = postForm(
@@ -152,37 +170,50 @@ class CrownApiClient(
             )
         }
 
-        val matches = parser.parseGameList(listResponse).flatMap { item ->
-            val detailResponse = postForm(
-                baseUrl = baseUrl,
-                path = "/transform.php",
-                form = mapOf(
-                    "uid" to session.uid,
-                    "langx" to "zh-cn",
-                    "p" to "get_game_more",
-                    "gtype" to "ft",
-                    "showtype" to if (item.isLive) "live" else "today",
-                    "isRB" to (item.isRb ?: if (item.isLive) "Y" else "N"),
-                    "lid" to item.lid,
-                    "ecid" to item.detailId,
-                    "filter" to "All",
-                    "mode" to "NORMAL",
-                    "from" to "game_more"
-                ),
-                cookies = cookieJar
-            )
-            parser.parseSessionFailure(detailResponse)?.let { reason ->
-                throw CrownCollectionException("failed_login", "crown session expired: $reason")
+        val matches = mutableListOf<CrownFootballMatch>()
+        parser.parseGameList(listResponse)
+            .distinctBy { CrownGameDetailKey(it.lid, it.detailId, it.isLive) }
+            .forEach { item ->
+                ensureWithinFetchBudget(deadlineAt)
+                val detailResponse = postForm(
+                    baseUrl = baseUrl,
+                    path = "/transform.php",
+                    form = mapOf(
+                        "uid" to session.uid,
+                        "langx" to "zh-cn",
+                        "p" to "get_game_more",
+                        "gtype" to "ft",
+                        "showtype" to if (item.isLive) "live" else "today",
+                        "isRB" to (item.isRb ?: if (item.isLive) "Y" else "N"),
+                        "lid" to item.lid,
+                        "ecid" to item.detailId,
+                        "filter" to "All",
+                        "mode" to "NORMAL",
+                        "from" to "game_more"
+                    ),
+                    cookies = cookieJar
+                )
+                parser.parseSessionFailure(detailResponse)?.let { reason ->
+                    throw CrownCollectionException("failed_login", "crown session expired: $reason")
+                }
+                matches += parser.parseDetailGames(detailResponse, item.isLive, item.elapsedMinutes)
             }
-            parser.parseDetailGames(detailResponse, item.isLive, item.elapsedMinutes)
-        }
         return CrownFetchResult(
             matches = matches,
             session = session.copy(cookies = cookieJar.toMap(), savedAt = System.currentTimeMillis())
         )
     }
 
-    private fun postForm(
+    private fun ensureWithinFetchBudget(deadlineAt: Long) {
+        if (nowMillis() >= deadlineAt) {
+            throw CrownCollectionException(
+                "failed_timeout",
+                "crown collection exceeded ${fetchTimeoutMillis.coerceAtLeast(1) / 1000} seconds"
+            )
+        }
+    }
+
+    protected open fun postForm(
         baseUrl: String,
         path: String,
         form: Map<String, String>,
@@ -260,4 +291,10 @@ class CrownApiClient(
     companion object {
         const val DEFAULT_BASE_URL = "https://m407.mos077.com"
     }
+
+    private data class CrownGameDetailKey(
+        val lid: String,
+        val detailId: String,
+        val isLive: Boolean
+    )
 }

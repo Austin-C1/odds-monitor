@@ -15,6 +15,7 @@ import com.wrbug.polymarketbot.service.oddsmonitor.OddsStandardMatchService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
+import java.io.IOException
 
 @Component
 class CrownCollector(
@@ -61,6 +62,11 @@ class CrownCollector(
         } catch (ex: CrownCollectionException) {
             saveFailure(startedAt, ex.status, ex.message)
             CrownCollectionResult(ex.status, ex.message, 0)
+        } catch (ex: IOException) {
+            val message = "crown network error: ${ex.message ?: ex.javaClass.simpleName}"
+            logger.warn(message, ex)
+            saveFailure(startedAt, "failed_network", message)
+            CrownCollectionResult("failed_network", message, 0)
         } catch (ex: RuntimeException) {
             val message = "crown collection error: ${ex.message ?: ex.javaClass.simpleName}"
             logger.warn(message, ex)
