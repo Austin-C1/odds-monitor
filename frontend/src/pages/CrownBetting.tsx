@@ -976,7 +976,7 @@ const CrownBetting = () => {
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        AdsPower Profile ID：{account.adsPowerProfileId}
+                        AdsPower Profile ID / 编号：{account.adsPowerProfileId}
                       </Text>
                     ) : null}
                     {account.adsPowerMessage && account.adsPowerStatus === 'error' ? (
@@ -1286,10 +1286,10 @@ const CrownBetting = () => {
             <Input placeholder="皇冠登录账号" />
           </Form.Item>
           <Form.Item
-            label="AdsPower Profile ID"
+            label="AdsPower Profile ID / 编号"
             name="adsPowerProfileId"
           >
-            <Input placeholder="可不填，程序会自动匹配已登录环境" />
+            <Input placeholder="可不填；也可填 AdsPower 环境ID或左侧编号，程序会自动匹配已登录环境" />
           </Form.Item>
           <Form.Item
             label="登录网站"

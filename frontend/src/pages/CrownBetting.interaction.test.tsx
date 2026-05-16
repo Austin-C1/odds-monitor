@@ -681,7 +681,8 @@ describe('CrownBetting auto betting execution interaction', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /添加皇冠账号/ }))
 
-    await screen.findByText('AdsPower Profile ID')
+    await screen.findByText('AdsPower Profile ID / 编号')
+    expect(screen.getByPlaceholderText(/左侧编号/)).toBeTruthy()
     expect(screen.queryByText('登录密码')).toBeNull()
     expect(screen.getByDisplayValue('https://m407.mos077.com/')).toBeTruthy()
   }, 30000)

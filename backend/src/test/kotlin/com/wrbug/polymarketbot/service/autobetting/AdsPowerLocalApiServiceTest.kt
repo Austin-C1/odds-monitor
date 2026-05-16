@@ -111,6 +111,45 @@ class AdsPowerLocalApiServiceTest {
     }
 
     @Test
+    fun `start profile accepts visible AdsPower serial number`() {
+        TestAdsPowerServer().use { server ->
+            server.onGet("/api/v1/browser/start") { exchange ->
+                val query = exchange.queryParams()
+                if (query["user_id"] == "27") {
+                    exchange.respondJson("""{"code":-1,"msg":"failed","data":{}}""")
+                    return@onGet
+                }
+                assertEquals("27", query["serial_number"])
+                exchange.respondJson(
+                    """
+                    {
+                      "code": 0,
+                      "msg": "success",
+                      "data": {
+                        "ws": {
+                          "selenium": "127.0.0.1:39555"
+                        }
+                      }
+                    }
+                    """.trimIndent()
+                )
+            }
+            val service = AdsPowerLocalApiService(
+                objectMapper = jacksonObjectMapper(),
+                baseUrl = server.baseUrl,
+                apiKey = null
+            )
+
+            val result = service.startProfile(profileId = "27", now = 3460)
+
+            assertTrue(result.opened)
+            assertEquals("27", result.profileId)
+            assertEquals("39555", result.debugPort)
+            assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test
     fun `active profile check reports opened browser and returns debug port`() {
         TestAdsPowerServer().use { server ->
             server.onGet("/api/v1/browser/active") { exchange ->
@@ -147,6 +186,46 @@ class AdsPowerLocalApiServiceTest {
     }
 
     @Test
+    fun `active profile check accepts visible AdsPower serial number`() {
+        TestAdsPowerServer().use { server ->
+            server.onGet("/api/v1/browser/active") { exchange ->
+                val query = exchange.queryParams()
+                if (query["user_id"] == "27") {
+                    exchange.respondJson("""{"code":-1,"msg":"failed","data":{}}""")
+                    return@onGet
+                }
+                assertEquals("27", query["serial_number"])
+                exchange.respondJson(
+                    """
+                    {
+                      "code": 0,
+                      "msg": "success",
+                      "data": {
+                        "status": "Active",
+                        "ws": {
+                          "selenium": "127.0.0.1:39555"
+                        }
+                      }
+                    }
+                    """.trimIndent()
+                )
+            }
+            val service = AdsPowerLocalApiService(
+                objectMapper = jacksonObjectMapper(),
+                baseUrl = server.baseUrl,
+                apiKey = null
+            )
+
+            val result = service.checkProfileActive(profileId = "27", now = 5679)
+
+            assertTrue(result.opened)
+            assertEquals("27", result.profileId)
+            assertEquals("39555", result.debugPort)
+            assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test
     fun `active profile check reports closed browser`() {
         TestAdsPowerServer().use { server ->
             server.onGet("/api/v1/browser/active") { exchange ->
@@ -174,6 +253,68 @@ class AdsPowerLocalApiServiceTest {
             assertEquals("profile-002", result.profileId)
             assertEquals("success", result.message)
             assertEquals(6789, result.checkedAt)
+        }
+    }
+
+    @Test
+    fun `match crown session falls back to named profile when local active list is empty`() {
+        TestAdsPowerServer().use { server ->
+            server.onGet("/api/v1/browser/local-active") { exchange ->
+                exchange.respondJson("""{"code":0,"msg":"success","data":{"list":[]}}""")
+            }
+            server.onGet("/api/v1/user/list") { exchange ->
+                val query = exchange.queryParams()
+                if (query["page_size"] == "100") {
+                    exchange.respondJson(
+                        """
+                        {
+                          "code": 0,
+                          "msg": "success",
+                          "data": {
+                            "list": [
+                              {
+                                "serial_number": "27",
+                                "user_id": "real-profile-id",
+                                "name": "skjd447",
+                                "username": "",
+                                "remark": ""
+                              }
+                            ]
+                          }
+                        }
+                        """.trimIndent()
+                    )
+                    return@onGet
+                }
+                exchange.respondJson("""{"code":0,"msg":"success","data":{"list":[]}}""")
+            }
+            server.onGet("/api/v1/browser/active") { exchange ->
+                val query = exchange.queryParams()
+                assertEquals("real-profile-id", query["user_id"])
+                exchange.respondJson(
+                    """
+                    {
+                      "code": 0,
+                      "msg": "success",
+                      "data": {
+                        "status": "Active",
+                        "debug_port": "39556"
+                      }
+                    }
+                    """.trimIndent()
+                )
+            }
+            val service = AdsPowerLocalApiService(
+                objectMapper = jacksonObjectMapper(),
+                baseUrl = server.baseUrl,
+                apiKey = null
+            )
+
+            val result = service.matchCrownSession(loginName = "skjd447", loginUrl = "https://m407.mos077.com/", now = 6780)
+
+            assertEquals("real-profile-id", result.profileId)
+            assertTrue(result.opened)
+            assertEquals("crown_page_not_found", result.accountStatus)
         }
     }
 

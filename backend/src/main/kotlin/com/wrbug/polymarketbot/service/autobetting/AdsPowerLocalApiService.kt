@@ -81,15 +81,48 @@ class AdsPowerLocalApiService(
             )
         }
 
+        val byUserId = startProfileBy("user_id", normalizedProfileId, normalizedProfileId, now)
+        if (byUserId.opened || !normalizedProfileId.isAdsPowerSerialNumber()) {
+            return byUserId
+        }
+        val bySerialNumber = startProfileBy("serial_number", normalizedProfileId, normalizedProfileId, now)
+        return if (bySerialNumber.opened) bySerialNumber else byUserId
+    }
+
+    fun checkProfileActive(profileId: String, now: Long = System.currentTimeMillis()): AdsPowerProfileActiveDto {
+        val normalizedProfileId = profileId.trim()
+        if (normalizedProfileId.isBlank()) {
+            return AdsPowerProfileActiveDto(
+                profileId = "",
+                opened = false,
+                message = "profile_id_required",
+                checkedAt = now
+            )
+        }
+
+        val byUserId = checkProfileActiveBy("user_id", normalizedProfileId, normalizedProfileId, now)
+        if (byUserId.opened || !normalizedProfileId.isAdsPowerSerialNumber()) {
+            return byUserId
+        }
+        val bySerialNumber = checkProfileActiveBy("serial_number", normalizedProfileId, normalizedProfileId, now)
+        return if (bySerialNumber.opened) bySerialNumber else byUserId
+    }
+
+    private fun startProfileBy(
+        parameterName: String,
+        parameterValue: String,
+        profileId: String,
+        now: Long
+    ): AdsPowerBrowserSessionDto {
         val endpoint = buildUrl("/api/v1/browser/start")
             ?.newBuilder()
-            ?.addQueryParameter("user_id", normalizedProfileId)
+            ?.addQueryParameter(parameterName, parameterValue)
             ?.addQueryParameter("open_tabs", "1")
             ?.addQueryParameter("ip_tab", "1")
             ?.addQueryParameter("headless", "0")
             ?.build()
             ?: return AdsPowerBrowserSessionDto(
-                profileId = normalizedProfileId,
+                profileId = profileId,
                 opened = false,
                 message = "invalid_adspower_base_url",
                 openedAt = now
@@ -105,16 +138,16 @@ class AdsPowerLocalApiService(
                     ?: if (response.isSuccessful) "success" else "http_${response.code}"
                 val data = root?.path("data")
                 AdsPowerBrowserSessionDto(
-                    profileId = normalizedProfileId,
+                    profileId = profileId,
                     opened = response.isSuccessful && code == 0,
                     message = message,
-                    debugPort = data?.path("debug_port")?.textOrNull(),
+                    debugPort = data.debugPortOrNull(),
                     openedAt = now
                 )
             }
         } catch (error: Exception) {
             AdsPowerBrowserSessionDto(
-                profileId = normalizedProfileId,
+                profileId = profileId,
                 opened = false,
                 message = error.message ?: "adspower_start_failed",
                 openedAt = now
@@ -122,23 +155,18 @@ class AdsPowerLocalApiService(
         }
     }
 
-    fun checkProfileActive(profileId: String, now: Long = System.currentTimeMillis()): AdsPowerProfileActiveDto {
-        val normalizedProfileId = profileId.trim()
-        if (normalizedProfileId.isBlank()) {
-            return AdsPowerProfileActiveDto(
-                profileId = "",
-                opened = false,
-                message = "profile_id_required",
-                checkedAt = now
-            )
-        }
-
+    private fun checkProfileActiveBy(
+        parameterName: String,
+        parameterValue: String,
+        profileId: String,
+        now: Long
+    ): AdsPowerProfileActiveDto {
         val endpoint = buildUrl("/api/v1/browser/active")
             ?.newBuilder()
-            ?.addQueryParameter("user_id", normalizedProfileId)
+            ?.addQueryParameter(parameterName, parameterValue)
             ?.build()
             ?: return AdsPowerProfileActiveDto(
-                profileId = normalizedProfileId,
+                profileId = profileId,
                 opened = false,
                 message = "invalid_adspower_base_url",
                 checkedAt = now
@@ -155,17 +183,17 @@ class AdsPowerLocalApiService(
                 val data = root?.path("data")
                 val status = data?.path("status")?.textOrNull()
                 AdsPowerProfileActiveDto(
-                    profileId = normalizedProfileId,
+                    profileId = profileId,
                     opened = response.isSuccessful && code == 0 && status?.equals("Active", ignoreCase = true) == true,
                     message = message,
                     status = status,
-                    debugPort = data?.path("debug_port")?.textOrNull(),
+                    debugPort = data.debugPortOrNull(),
                     checkedAt = now
                 )
             }
         } catch (error: Exception) {
             AdsPowerProfileActiveDto(
-                profileId = normalizedProfileId,
+                profileId = profileId,
                 opened = false,
                 message = error.message ?: "adspower_profile_active_failed",
                 checkedAt = now
@@ -247,6 +275,13 @@ class AdsPowerLocalApiService(
         }
         val activeProfiles = listLocalActiveProfiles(now)
         if (activeProfiles.isEmpty()) {
+            val profileCandidates = loadMatchingProfileMetadata(normalizedLoginName)
+                .mapNotNull { profile -> buildCandidateFromProfileMetadata(profile, loginUrl, now) }
+            val matched = AdsPowerCrownProfileMatcher.match(normalizedLoginName, profileCandidates)
+                ?: profileCandidates.singleOrNull { it.opened }
+            if (matched != null) {
+                return matched.toSessionDto(now)
+            }
             return AdsPowerCrownSessionDto(
                 profileId = "",
                 opened = false,
@@ -421,6 +456,7 @@ class AdsPowerLocalApiService(
                         val node = root.path("data").path("list").firstOrNull() ?: return@use null
                         AdsPowerProfileMetadata(
                             profileId = node.path("user_id").textOrNull() ?: profileId,
+                            serialNumber = node.path("serial_number").textOrNull(),
                             name = node.path("name").textOrNull(),
                             username = node.path("username").textOrNull(),
                             remark = node.path("remark").textOrNull()
@@ -437,9 +473,75 @@ class AdsPowerLocalApiService(
         return metadata
     }
 
+    private fun loadMatchingProfileMetadata(loginName: String): List<AdsPowerProfileMetadata> {
+        val endpoint = buildUrl("/api/v1/user/list")
+            ?.newBuilder()
+            ?.addQueryParameter("page", "1")
+            ?.addQueryParameter("page_size", "100")
+            ?.build() ?: return emptyList()
+        val request = requestBuilder(endpoint).get().build()
+        return try {
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val root = objectMapper.readTree(response.body?.string().orEmpty())
+                if (root.path("code").asInt(-1) != 0) return emptyList()
+                root.path("data").path("list").takeIf { it.isArray }?.mapNotNull { node ->
+                    val profileId = node.path("user_id").textOrNull() ?: return@mapNotNull null
+                    AdsPowerProfileMetadata(
+                        profileId = profileId,
+                        serialNumber = node.path("serial_number").textOrNull(),
+                        name = node.path("name").textOrNull(),
+                        username = node.path("username").textOrNull(),
+                        remark = node.path("remark").textOrNull()
+                    )
+                }.orEmpty().filter { it.matchesLoginName(loginName) }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun buildCandidateFromProfileMetadata(
+        profile: AdsPowerProfileMetadata,
+        loginUrl: String?,
+        now: Long
+    ): AdsPowerCrownSessionCandidateDto? {
+        val activeByProfileId = checkProfileActive(profile.profileId, now)
+        val active = if (activeByProfileId.opened) {
+            activeByProfileId
+        } else {
+            profile.serialNumber?.let { checkProfileActive(it, now) }?.takeIf { it.opened }
+        } ?: return null
+        val snapshot = active.debugPort?.let { readCrownPageSnapshot(it, loginUrl) }
+        val analysis = snapshot?.let { CrownSessionPageAnalyzer.analyze(it.text) }
+        val fallbackStatus = if (active.debugPort.isNullOrBlank()) "browser_debug_port_missing" else "crown_page_not_found"
+        return AdsPowerCrownSessionCandidateDto(
+            profileId = profile.profileId,
+            profileName = profile.name,
+            profileUsername = profile.username,
+            remark = profile.remark,
+            opened = true,
+            loggedIn = analysis?.loggedIn == true,
+            accountStatus = analysis?.accountStatus ?: fallbackStatus,
+            balance = analysis?.balance,
+            currency = analysis?.currency ?: "CNY",
+            pageUrl = snapshot?.pageUrl,
+            message = analysis?.message ?: fallbackStatus,
+            debugPort = active.debugPort,
+            checkedAt = now
+        )
+    }
+
     private fun parseDebugPort(value: String?): String? {
         val raw = value?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        return raw.substringAfterLast(':').takeIf { it.toIntOrNull() in 1..65535 }
+        raw.toIntOrNull()?.takeIf { it in 1..65535 }?.let { return it.toString() }
+        runCatching { URI(raw).port }
+            .getOrNull()
+            ?.takeIf { it in 1..65535 }
+            ?.let { return it.toString() }
+        return raw.substringAfterLast(':')
+            .substringBefore('/')
+            .takeIf { it.toIntOrNull() in 1..65535 }
     }
 
     private fun readPageSnapshotViaCdp(wsUrl: String, target: BrowserTarget): CrownPageSnapshot? {
@@ -874,6 +976,46 @@ class AdsPowerLocalApiService(
         return takeIf { !it.isMissingNode && !it.isNull }?.asText()?.takeIf { it.isNotBlank() }
     }
 
+    private fun com.fasterxml.jackson.databind.JsonNode?.debugPortOrNull(): String? {
+        val data = this ?: return null
+        return data.path("debug_port").textOrNull()
+            ?: parseDebugPort(data.path("ws").path("selenium").textOrNull())
+            ?: parseDebugPort(data.path("ws").path("puppeteer").textOrNull())
+    }
+
+    private fun String.isAdsPowerSerialNumber(): Boolean {
+        return isNotBlank() && all { it.isDigit() }
+    }
+
+    private fun AdsPowerCrownSessionCandidateDto.toSessionDto(now: Long): AdsPowerCrownSessionDto {
+        return AdsPowerCrownSessionDto(
+            profileId = profileId,
+            opened = opened,
+            loggedIn = loggedIn,
+            accountStatus = accountStatus,
+            balance = balance,
+            currency = currency,
+            pageUrl = pageUrl,
+            message = message,
+            debugPort = debugPort,
+            checkedAt = now
+        )
+    }
+
+    private fun AdsPowerProfileMetadata.matchesLoginName(loginName: String): Boolean {
+        val normalizedLoginName = normalizeProfileMatchText(loginName)
+        return listOf(username, name, remark)
+            .map(::normalizeProfileMatchText)
+            .any { value -> value == normalizedLoginName || value.contains(normalizedLoginName) }
+    }
+
+    private fun normalizeProfileMatchText(value: String?): String {
+        return value.orEmpty()
+            .trim()
+            .lowercase()
+            .replace(Regex("""\s+"""), "")
+    }
+
     private fun hostFromUrl(url: String?): String? {
         val raw = url?.trim()?.takeIf { it.isNotBlank() } ?: return null
         return runCatching { URI(raw).host }
@@ -909,6 +1051,7 @@ class AdsPowerLocalApiService(
 
     private data class AdsPowerProfileMetadata(
         val profileId: String,
+        val serialNumber: String?,
         val name: String?,
         val username: String?,
         val remark: String?
