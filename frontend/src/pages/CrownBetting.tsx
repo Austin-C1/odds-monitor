@@ -433,16 +433,10 @@ const CrownBetting = () => {
   }, [])
 
   const matchAdsPowerCrownSession = useCallback(async (account: CrownAccount) => {
-    const profileId = account.adsPowerProfileId?.trim()
-    if (profileId) {
-      return apiClient.post<ApiResponse<AdsPowerCrownSessionResponse>>(
-        '/auto-betting/adspower/crown-session',
-        { profileId, loginName: account.loginName, loginUrl: account.loginUrl },
-      )
-    }
+    const preferredProfileId = account.adsPowerProfileId?.trim()
     return apiClient.post<ApiResponse<AdsPowerCrownSessionResponse>>(
       '/auto-betting/adspower/crown-session/match',
-      { loginName: account.loginName, loginUrl: account.loginUrl },
+      { loginName: account.loginName, loginUrl: account.loginUrl, preferredProfileId: preferredProfileId || undefined },
     )
   }, [])
 
@@ -469,7 +463,7 @@ const CrownBetting = () => {
         status: nextAccountStatus,
         balance: typeof result.balance === 'number' ? result.balance : null,
         currency: result.currency || account.currency,
-        adsPowerProfileId: result.profileId || account.adsPowerProfileId,
+        adsPowerProfileId: result.loggedIn && result.profileId ? result.profileId : account.adsPowerProfileId,
         adsPowerStatus: nextAdsPowerStatus,
         adsPowerMessage: result.message,
         adsPowerUpdatedAt: checkedAt,
@@ -516,7 +510,7 @@ const CrownBetting = () => {
         status: result.loggedIn ? 'success' : (isClosed ? 'unchecked' : 'error'),
         balance: typeof result.balance === 'number' ? result.balance : null,
         currency: result.currency || account.currency,
-        adsPowerProfileId: result.profileId || account.adsPowerProfileId,
+        adsPowerProfileId: result.loggedIn && result.profileId ? result.profileId : account.adsPowerProfileId,
         adsPowerStatus: result.opened ? 'opened' : (isClosed ? 'closed' : 'error'),
         adsPowerMessage: result.message,
         adsPowerUpdatedAt: checkedAt,

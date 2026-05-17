@@ -373,6 +373,24 @@ class AdsPowerLocalApiServiceTest {
     }
 
     @Test
+    fun `crown session analyzer does not read sport counts as login name`() {
+        val result = CrownSessionPageAnalyzer.analyze(
+            """
+            滚球 27
+            今日 333
+            早盘 298
+            账户历史
+            讯息
+            修改密码
+            """.trimIndent()
+        )
+
+        assertTrue(result.loggedIn)
+        assertEquals("online", result.accountStatus)
+        assertNull(result.loginName)
+    }
+
+    @Test
     fun `crown session analyzer reports login required when login form is visible`() {
         val result = CrownSessionPageAnalyzer.analyze("皇冠 登录 账号 密码 Login")
 

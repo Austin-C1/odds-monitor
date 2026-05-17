@@ -481,18 +481,18 @@ describe('CrownBetting auto betting execution interaction', () => {
     })
 
     const calls = vi.mocked(apiClient.post).mock.calls
-    const checkCalls = calls.filter(([url]) => url === '/auto-betting/adspower/crown-session')
+    const checkCalls = calls.filter(([url]) => url === '/auto-betting/adspower/crown-session/match')
     const signalCalls = calls.filter(([url]) => url === '/auto-betting/signals/odds-monitor')
     const executeCalls = calls.filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-    const firstCheckIndex = calls.findIndex(([url]) => url === '/auto-betting/adspower/crown-session')
+    const firstCheckIndex = calls.findIndex(([url]) => url === '/auto-betting/adspower/crown-session/match')
     const firstSignalIndex = calls.findIndex(([url]) => url === '/auto-betting/signals/odds-monitor')
     const firstExecuteIndex = calls.findIndex(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
 
     expect(checkCalls).toHaveLength(1)
-    expect(checkCalls[0][1]).toEqual(expect.objectContaining({ profileId: 'profile-a' }))
+    expect(checkCalls[0][1]).toEqual(expect.objectContaining({ loginName: 'demo_a', preferredProfileId: 'profile-a' }))
     expect(signalCalls[0][1]).toEqual(expect.objectContaining({ accountKey: 'account-a', stakeAmount: 50 }))
     expect(executeCalls).toHaveLength(1)
-    expect(executeCalls[0][1]).toEqual(expect.objectContaining({ profileId: 'profile-a', oddsTolerance: 0.02 }))
+    expect(executeCalls[0][1]).toEqual(expect.objectContaining({ profileId: 'matched-profile', oddsTolerance: 0.02 }))
     expect(firstCheckIndex).toBeGreaterThan(-1)
     expect(firstSignalIndex).toBeGreaterThan(firstCheckIndex)
     expect(firstExecuteIndex).toBeGreaterThan(firstSignalIndex)
@@ -667,10 +667,10 @@ describe('CrownBetting auto betting execution interaction', () => {
     await screen.findByText(/账号在线，余额已获取/)
     await screen.findByText(/2,000.00/)
     await screen.findByText('在线')
-    expect(apiClient.post).toHaveBeenCalledWith('/auto-betting/adspower/crown-session', {
-      profileId: 'profile-active',
+    expect(apiClient.post).toHaveBeenCalledWith('/auto-betting/adspower/crown-session/match', {
       loginName: 'bound_login',
       loginUrl: 'https://m407.mos077.com/',
+      preferredProfileId: 'profile-active',
     })
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
       url === '/odds-monitor/crown/accounts/check'

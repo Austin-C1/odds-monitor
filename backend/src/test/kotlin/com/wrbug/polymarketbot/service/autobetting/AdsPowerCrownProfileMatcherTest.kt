@@ -46,6 +46,20 @@ class AdsPowerCrownProfileMatcherTest {
     }
 
     @Test
+    fun `uses preferred serial number when page login name is not available`() {
+        val result = AdsPowerCrownProfileMatcher.match(
+            loginName = "skjd447",
+            preferredProfileId = "27",
+            candidates = listOf(
+                candidate(profileId = "profile-a", profileSerialNumber = "18", profileUsername = "profile-a"),
+                candidate(profileId = "profile-b", profileSerialNumber = "27", profileUsername = "profile-b")
+            )
+        )
+
+        assertEquals("profile-b", result?.profileId)
+    }
+
+    @Test
     fun `does not match closed or logged-out crown profiles`() {
         val result = AdsPowerCrownProfileMatcher.match(
             loginName = "crown_user",
@@ -90,9 +104,11 @@ class AdsPowerCrownProfileMatcherTest {
         profileName: String? = null,
         profileUsername: String? = null,
         remark: String? = null,
+        profileSerialNumber: String? = null,
         pageLoginName: String? = null
     ) = AdsPowerCrownSessionCandidateDto(
         profileId = profileId,
+        profileSerialNumber = profileSerialNumber,
         profileName = profileName,
         profileUsername = profileUsername,
         remark = remark,

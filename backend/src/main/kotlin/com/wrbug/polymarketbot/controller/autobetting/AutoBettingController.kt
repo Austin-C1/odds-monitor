@@ -78,7 +78,7 @@ class AutoBettingController(
         @RequestBody request: AdsPowerCrownSessionMatchRequest
     ): ResponseEntity<ApiResponse<AdsPowerCrownSessionDto>> {
         return ResponseEntity.ok(ApiResponse.success(
-            adsPowerLocalApiService.matchCrownSession(request.loginName, request.loginUrl)
+            adsPowerLocalApiService.matchCrownSession(request.loginName, request.loginUrl, request.preferredProfileId)
         ))
     }
 }

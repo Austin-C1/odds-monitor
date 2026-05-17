@@ -70,7 +70,8 @@ data class AdsPowerCrownSessionRequest(
 
 data class AdsPowerCrownSessionMatchRequest(
     val loginName: String,
-    val loginUrl: String? = null
+    val loginUrl: String? = null,
+    val preferredProfileId: String? = null
 )
 
 data class AdsPowerBrowserSessionDto(
@@ -105,6 +106,7 @@ data class AdsPowerCrownSessionDto(
 
 data class AdsPowerCrownSessionCandidateDto(
     val profileId: String,
+    val profileSerialNumber: String? = null,
     val profileName: String? = null,
     val profileUsername: String? = null,
     val remark: String? = null,
