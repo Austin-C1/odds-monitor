@@ -73,7 +73,7 @@ class AdsPowerCrownProfileMatcherTest {
     }
 
     @Test
-    fun `uses the only opened logged-in crown profile when no exact metadata match exists`() {
+    fun `does not use the only opened logged-in crown profile without exact account evidence`() {
         val result = AdsPowerCrownProfileMatcher.match(
             loginName = "crown_user",
             candidates = listOf(
@@ -81,7 +81,7 @@ class AdsPowerCrownProfileMatcherTest {
             )
         )
 
-        assertEquals("profile-a", result?.profileId)
+        assertNull(result)
     }
 
     @Test

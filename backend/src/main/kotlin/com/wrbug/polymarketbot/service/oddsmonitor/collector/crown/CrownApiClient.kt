@@ -5,6 +5,7 @@ import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 import java.nio.charset.Charset
@@ -12,7 +13,7 @@ import java.math.BigDecimal
 import java.util.concurrent.TimeUnit
 
 @Component
-open class CrownApiClient(
+open class CrownApiClient @Autowired constructor(
     private val parser: CrownResponseParser,
     @Value("\${odds-monitor.crown.fetch-timeout-millis:55000}")
     private val fetchTimeoutMillis: Long,

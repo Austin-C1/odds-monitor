@@ -391,6 +391,53 @@ class AdsPowerLocalApiServiceTest {
     }
 
     @Test
+    fun `crown session analyzer does not read timezone or navigation labels as login name`() {
+        val result = CrownSessionPageAnalyzer.analyze(
+            """
+            In-Play
+            Hot
+            Today
+            Soon
+            Early
+            Outrights
+            My Bets
+            RMB
+            2,000.00
+            EVENT DISPLAY TIME
+            System Time (GMT-4)
+            PHONE
+            +852 5808 9063
+            """.trimIndent()
+        )
+
+        assertTrue(result.loggedIn)
+        assertEquals("online", result.accountStatus)
+        assertEquals(BigDecimal("2000.00"), result.balance)
+        assertNull(result.loginName)
+    }
+
+    @Test
+    fun `crown session analyzer reads login name from crown browser tab title`() {
+        val result = CrownSessionPageAnalyzer.analyze(
+            text = """
+            In-Play
+            Hot
+            Today
+            RMB
+            2,000.00
+            EVENT DISPLAY TIME
+            System Time (GMT-4)
+            """.trimIndent(),
+            pageTitle = "skjd447"
+        )
+
+        assertTrue(result.loggedIn)
+        assertEquals("online", result.accountStatus)
+        assertEquals(BigDecimal("2000.00"), result.balance)
+        assertEquals("skjd447", result.loginName)
+    }
+
+    @Test
     fun `crown session analyzer reports login required when login form is visible`() {
         val result = CrownSessionPageAnalyzer.analyze("皇冠 登录 账号 密码 Login")
 

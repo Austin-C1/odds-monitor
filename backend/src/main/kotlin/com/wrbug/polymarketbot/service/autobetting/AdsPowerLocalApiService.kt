@@ -243,7 +243,7 @@ class AdsPowerLocalApiService(
                 debugPort = debugPort,
                 checkedAt = now
             )
-        val analysis = CrownSessionPageAnalyzer.analyze(snapshot.text)
+        val analysis = CrownSessionPageAnalyzer.analyze(snapshot.text, snapshot.title)
         val normalizedLoginName = loginName?.trim().orEmpty()
         if (analysis.loggedIn && normalizedLoginName.isNotBlank() && analysis.loginName.conflictsWithLoginName(normalizedLoginName)) {
             return AdsPowerCrownSessionDto(
@@ -304,7 +304,7 @@ class AdsPowerLocalApiService(
         val candidates = activeProfiles.map { active ->
             val profile = metadata[active.profileId]
             val snapshot = active.debugPort?.let { readCrownPageSnapshot(it, loginUrl) }
-            val analysis = snapshot?.let { CrownSessionPageAnalyzer.analyze(it.text) }
+            val analysis = snapshot?.let { CrownSessionPageAnalyzer.analyze(it.text, it.title) }
             AdsPowerCrownSessionCandidateDto(
                 profileId = active.profileId,
                 profileSerialNumber = profile?.serialNumber,
@@ -346,18 +346,25 @@ class AdsPowerLocalApiService(
         candidates: List<AdsPowerCrownSessionCandidateDto>,
         now: Long
     ): AdsPowerCrownSessionDto {
-        val loggedInCount = candidates.count { it.opened && it.loggedIn }
-        val mismatchedLoginNames = candidates
-            .filter { it.opened && it.loggedIn && it.pageLoginName.conflictsWithLoginName(loginName) }
-            .mapNotNull { it.pageLoginName }
-            .distinct()
+        val loggedInCandidates = candidates.filter { it.opened && it.loggedIn }
+        val loggedInCount = loggedInCandidates.size
+        val knownLoginNames = loggedInCandidates
+            .flatMap { candidate ->
+                listOf(candidate.pageLoginName, candidate.profileUsername, candidate.profileName)
+                    .mapNotNull { it.asConfiguredLoginName() }
+            }
+            .distinctBy(::normalizeProfileMatchText)
+        val mismatchedLoginNames = knownLoginNames.filter { it.conflictsWithLoginName(loginName) }
         val status = when {
+            loggedInCount == 0 -> "no_logged_in_crown_profile"
             mismatchedLoginNames.isNotEmpty() -> "no_matching_crown_profile"
             loggedInCount > 1 -> "ambiguous_crown_profile"
-            else -> "no_logged_in_crown_profile"
+            else -> "no_matching_crown_profile"
         }
         val message = if (mismatchedLoginNames.isNotEmpty()) {
             "已检查所有已打开环境，未找到 $loginName；已登录账号：${mismatchedLoginNames.joinToString("、")}"
+        } else if (loggedInCount > 0) {
+            "已检查所有已打开环境，未找到 $loginName；有环境已登录，但没有读取到匹配的登录账号"
         } else {
             status
         }
@@ -388,7 +395,7 @@ class AdsPowerLocalApiService(
         }
         val snapshot = readPageSnapshotViaCdp(wsUrl, target)
             ?: return CrownBetPlacementResult(false, false, null, "crown_page_not_found")
-        val session = CrownSessionPageAnalyzer.analyze(snapshot.text)
+        val session = CrownSessionPageAnalyzer.analyze(snapshot.text, snapshot.title)
         if (!session.loggedIn) {
             return CrownBetPlacementResult(false, false, null, session.accountStatus)
         }
@@ -545,7 +552,7 @@ class AdsPowerLocalApiService(
             profile.serialNumber?.let { checkProfileActive(it, now) }?.takeIf { it.opened }
         } ?: return null
         val snapshot = active.debugPort?.let { readCrownPageSnapshot(it, loginUrl) }
-        val analysis = snapshot?.let { CrownSessionPageAnalyzer.analyze(it.text) }
+        val analysis = snapshot?.let { CrownSessionPageAnalyzer.analyze(it.text, it.title) }
         val fallbackStatus = if (active.debugPort.isNullOrBlank()) "browser_debug_port_missing" else "crown_page_not_found"
         return AdsPowerCrownSessionCandidateDto(
             profileId = profile.profileId,
@@ -1076,6 +1083,11 @@ class AdsPowerLocalApiService(
         return normalizedValue.isNotBlank() && normalizedValue != normalizeProfileMatchText(loginName)
     }
 
+    private fun String?.asConfiguredLoginName(): String? {
+        val candidate = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        return candidate.takeIf { it.matches(Regex("""(?i)[a-z0-9][a-z0-9._-]{2,31}""")) }
+    }
+
     private fun hostFromUrl(url: String?): String? {
         val raw = url?.trim()?.takeIf { it.isNotBlank() } ?: return null
         return runCatching { URI(raw).host }
@@ -1162,7 +1174,7 @@ internal object AdsPowerCrownProfileMatcher {
                     .map(::normalize)
                     .any { it == normalizedPreferredProfileId }
         }?.let { return it }
-        return nonConflicting.singleOrNull()
+        return null
     }
 
     private fun normalize(value: String?): String {
@@ -1200,7 +1212,7 @@ internal object CrownSessionPageAnalyzer {
         "消息"
     )
 
-    fun analyze(text: String): CrownSessionAnalysis {
+    fun analyze(text: String, pageTitle: String? = null): CrownSessionAnalysis {
         val normalized = text.replace('\u00A0', ' ').trim()
         if (normalized.isBlank()) {
             return CrownSessionAnalysis(false, "unknown", null, message = "皇冠页面未返回内容")
@@ -1208,7 +1220,7 @@ internal object CrownSessionPageAnalyzer {
         if (abnormalPattern.containsMatchIn(normalized)) {
             return CrownSessionAnalysis(false, "abnormal", null, message = "账号异常")
         }
-        val loginName = extractLoginName(normalized)
+        val loginName = extractLoginName(normalized, pageTitle)
         val balance = extractBalance(normalized)
         if (balance != null) {
             return CrownSessionAnalysis(true, "online", balance, loginName = loginName, message = "账号在线，余额已获取")
@@ -1235,29 +1247,81 @@ internal object CrownSessionPageAnalyzer {
         return markerCount >= 2
     }
 
-    private fun extractLoginName(text: String): String? {
+    private fun extractLoginName(text: String, pageTitle: String?): String? {
+        normalizeLoginCandidate(pageTitle)?.let { return it }
+
         val compactHeaderLoginName = Regex("""(?i)([a-z0-9][a-z0-9._-]{2,31})\s*RMB\s*[0-9]""")
             .find(text)
             ?.groupValues
             ?.getOrNull(1)
-        if (compactHeaderLoginName?.containsAsciiLetter() == true) {
-            return compactHeaderLoginName
-        }
+        normalizeLoginCandidate(compactHeaderLoginName)?.let { return it }
+
+        val labeledLoginName = Regex("""(?i)(?:登录账号|会员账号|账号|账户|username|login\s*name|account)\s*[:：]?\s*([a-z0-9][a-z0-9._-]{2,31})""")
+            .find(text)
+            ?.groupValues
+            ?.getOrNull(1)
+        normalizeLoginCandidate(labeledLoginName)?.let { return it }
 
         val markerStart = loggedInMenuMarkers
             .map { marker -> text.indexOf(marker).takeIf { it >= 0 } ?: Int.MAX_VALUE }
             .minOrNull()
             ?: Int.MAX_VALUE
-        val header = text.take(if (markerStart == Int.MAX_VALUE) text.length else markerStart)
+        if (markerStart == Int.MAX_VALUE) {
+            return null
+        }
+
+        val header = text.take(markerStart)
         return Regex("""(?i)\b[a-z0-9][a-z0-9._-]{2,31}\b""")
             .findAll(header)
             .map { it.value }
-            .firstOrNull { candidate ->
-                !candidate.equals("RMB", ignoreCase = true) && candidate.containsAsciiLetter()
-            }
+            .firstNotNullOfOrNull(::normalizeLoginCandidate)
+    }
+
+    private fun normalizeLoginCandidate(value: String?): String? {
+        val candidate = value
+            ?.trim()
+            ?.trim('-', '_', '.', ':', '：')
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        if (!candidate.matches(Regex("""(?i)[a-z0-9][a-z0-9._-]{2,31}"""))) return null
+        if (!candidate.containsAsciiLetter()) return null
+        val normalized = candidate.lowercase()
+        if (normalized.startsWith("gmt")) return null
+        if (normalized in nonLoginTokens) return null
+        return candidate
     }
 
     private fun String.containsAsciiLetter(): Boolean {
         return any { char -> char in 'a'..'z' || char in 'A'..'Z' }
     }
+
+    private val nonLoginTokens = setOf(
+        "rmb",
+        "cny",
+        "welcome",
+        "login",
+        "password",
+        "account",
+        "username",
+        "in-play",
+        "hot",
+        "today",
+        "soon",
+        "early",
+        "outrights",
+        "parlay",
+        "events",
+        "bets",
+        "sports",
+        "soccer",
+        "basketball",
+        "football",
+        "tennis",
+        "volleyball",
+        "esports",
+        "system",
+        "language",
+        "phone",
+        "email"
+    )
 }
