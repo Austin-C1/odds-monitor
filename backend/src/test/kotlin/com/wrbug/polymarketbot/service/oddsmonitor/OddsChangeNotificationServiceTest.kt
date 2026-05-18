@@ -1009,7 +1009,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `selected league odds move alert is not blocked by combined water limit`() {
+    fun `odds move alert is suppressed when combined water limit is not reached`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -1066,7 +1066,7 @@ class OddsChangeNotificationServiceTest {
         )
         Thread.sleep(1_800)
 
-        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
     }
 
     @Test

@@ -354,10 +354,11 @@ class OddsChangeNotificationService(
         currentOdds: BigDecimal,
         configs: List<NotificationConfigDto>
     ): List<NotificationConfigDto> {
-        val pairSelectionName = pairSelectionName(market.marketType, market.selectionName) ?: return configs
         if (activeCombinedWaterLimits(market.marketType, configs).isEmpty()) {
             return configs
         }
+        val pairSelectionName = pairSelectionName(market.marketType, market.selectionName)
+            ?: return configsWithoutCombinedWaterLimit(market.marketType, configs)
 
         val pairMarket = marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
             matchId = market.matchId,
@@ -393,18 +394,9 @@ class OddsChangeNotificationService(
         currentOdds: BigDecimal,
         configs: List<NotificationConfigDto>
     ): List<NotificationConfigDto> {
-        val unrestrictedConfigs = configs.filter { config ->
-            activeOddsMoveLimits(market.marketType, listOf(config)).isEmpty() &&
-                activeCombinedWaterLimits(market.marketType, listOf(config)).isEmpty()
-        }
-        val oddsMoveConfigs = configs
-            .filter { config -> activeOddsMoveLimits(market.marketType, listOf(config)).isNotEmpty() }
+        return configs
             .let { filterConfigsByOddsMove(market, previousOdds, currentOdds, it) }
-        val combinedWaterConfigs = configs
-            .filter { config -> activeCombinedWaterLimits(market.marketType, listOf(config)).isNotEmpty() }
-            .let { configsQualifiedByCombinedWater(market, currentOdds, it) }
-
-        return (unrestrictedConfigs + oddsMoveConfigs + combinedWaterConfigs)
+            .let { filterConfigsByCombinedWater(market, currentOdds, it) }
             .distinctBy { config -> config.id?.toString() ?: config.name }
     }
 
