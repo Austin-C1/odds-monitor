@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+﻿// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { apiClient } from '../services/api'
@@ -43,11 +43,11 @@ const dashboardFor = (status: 'scheduled' | 'live') => ({
     platformMatches: [],
   },
 })
-
 const mockApiState = vi.hoisted(() => ({
   dashboard: null as any,
   alerts: [] as any[],
   crownSession: null as any,
+  executionResults: [] as any[],
   intentId: 9000,
 }))
 
@@ -145,16 +145,24 @@ vi.mock('../services/api', () => ({
         })
       }
       if (/^\/auto-betting\/intents\/\d+\/execute-crown$/.test(url)) {
+        const executionResult = mockApiState.executionResults.length > 0
+          ? mockApiState.executionResults.shift()
+          : {
+              status: 'placed',
+              reason: 'crown_history_verified',
+              crownHistoryVerified: true,
+              crownBetReference: 'CROWN-10001',
+            }
         return Promise.resolve({
           data: {
             code: 0,
             data: {
               id: Number(url.split('/')[3]),
-              status: 'placed',
-              reason: 'crown_history_verified',
-              crownHistoryVerified: true,
+              status: executionResult.status,
+              reason: executionResult.reason,
+              crownHistoryVerified: executionResult.crownHistoryVerified,
               crownHistoryCheckedAt: Date.now(),
-              crownBetReference: 'CROWN-10001',
+              crownBetReference: executionResult.crownBetReference,
             },
           },
         })
@@ -251,6 +259,7 @@ describe('CrownBetting auto betting execution interaction', () => {
       },
     ]
     mockApiState.crownSession = null
+    mockApiState.executionResults = []
     const storage = new Map<string, string>()
     Object.defineProperty(window, 'localStorage', {
       writable: true,
@@ -286,9 +295,7 @@ describe('CrownBetting auto betting execution interaction', () => {
       autoEnabled: true,
       perAccountLimit: 50,
       betLimit: 100,
-      minimumEdge: 0.03,
       minimumBetOdds: 0.70,
-      oddsTolerance: 0.02,
     }))
     writeAccounts()
   })
@@ -350,8 +357,9 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(executeCalls.every(([, body]) => (
       body.profileId &&
       body.loginUrl === 'https://m407.mos077.com/' &&
-      body.oddsTolerance === 0.02
+      body.minimumTargetOdds === 0.70
     ))).toBe(true)
+    expect(executeCalls.every(([, , config]) => config?.timeout === 120000)).toBe(true)
 
     mockApiState.alerts = [
       {
@@ -416,7 +424,7 @@ describe('CrownBetting auto betting execution interaction', () => {
   }, 30000)
 
   it('runs live checks from the latest crown alert rise without pinnacle', async () => {
-    const alertCreatedAt = 1_700_000_000_000
+    const alertCreatedAt = Date.now()
     mockApiState.alerts = [{ ...mockApiState.alerts[0], createdAt: alertCreatedAt }]
     render(<CrownBetting />)
 
@@ -429,9 +437,13 @@ describe('CrownBetting auto betting execution interaction', () => {
       expect(screen.getAllByText('已下注').length).toBe(2)
     })
 
+    await waitFor(() => {
+      const signalCalls = vi.mocked(apiClient.post).mock.calls
+        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
+      expect(signalCalls).toHaveLength(2)
+    })
     const signalCalls = vi.mocked(apiClient.post).mock.calls
       .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-    expect(signalCalls).toHaveLength(2)
     expect(signalCalls.every(([, body]) => (
       body.bettingMode === 'live' &&
       body.matchPhase === 'live' &&
@@ -449,6 +461,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     const executeCalls = vi.mocked(apiClient.post).mock.calls
       .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
     expect(executeCalls).toHaveLength(2)
+    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 0.70)).toBe(true)
   }, 30000)
 
   it('checks enabled account login before sending one betting signal', async () => {
@@ -503,7 +516,10 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(checkCalls[0][1]).toEqual(expect.objectContaining({ loginName: 'demo_a', preferredProfileId: 'profile-a' }))
     expect(signalCalls[0][1]).toEqual(expect.objectContaining({ accountKey: 'account-a', stakeAmount: 50 }))
     expect(executeCalls).toHaveLength(1)
-    expect(executeCalls[0][1]).toEqual(expect.objectContaining({ profileId: 'matched-profile', oddsTolerance: 0.02 }))
+    expect(executeCalls[0][1]).toEqual(expect.objectContaining({
+      profileId: 'matched-profile',
+      minimumTargetOdds: 0.70,
+    }))
     expect(firstCheckIndex).toBeGreaterThan(-1)
     expect(firstSignalIndex).toBeGreaterThan(firstCheckIndex)
     expect(firstExecuteIndex).toBeGreaterThan(firstSignalIndex)
@@ -515,9 +531,7 @@ describe('CrownBetting auto betting execution interaction', () => {
       autoEnabled: true,
       perAccountLimit: 50,
       betLimit: 100,
-      minimumEdge: 0.03,
       minimumBetOdds: 0.70,
-      oddsTolerance: 0.02,
     }))
 
     render(<CrownBetting />)
@@ -538,6 +552,72 @@ describe('CrownBetting auto betting execution interaction', () => {
       .filter(([url]) => url === '/odds-monitor/alerts/list')
       .length
     expect(alertCallsAfterStateUpdates).toBe(1)
+  }, 30000)
+
+  it('retries the same alert after a failed crown execution', async () => {
+    const originalNow = Date.now()
+    let nowSpy: ReturnType<typeof vi.spyOn> | null = null
+    try {
+      window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
+        autoMode: 'live',
+        autoEnabled: true,
+        perAccountLimit: 50,
+        betLimit: 50,
+        minimumBetOdds: 0.70,
+        signalMaxAgeSeconds: 600,
+      }))
+      writeAccounts([
+        {
+          id: 'account-a',
+          displayName: 'Enabled account',
+          loginName: 'demo_a',
+          loginUrl: 'https://m407.mos077.com/',
+          adsPowerProfileId: 'profile-a',
+          adsPowerStatus: 'opened',
+          bettingEnabled: true,
+          status: 'success',
+          balance: 900,
+          currency: 'CNY',
+          lastCheckedAt: Date.now(),
+        },
+      ])
+      mockApiState.executionResults = [
+        {
+          status: 'rejected',
+          reason: 'crown_execution_timeout',
+          crownHistoryVerified: false,
+          crownBetReference: null,
+        },
+        {
+          status: 'placed',
+          reason: 'crown_history_verified',
+          crownHistoryVerified: true,
+          crownBetReference: 'CROWN-20001',
+        },
+      ]
+
+      render(<CrownBetting />)
+
+      await screen.findByText('自动化接入投注功能')
+      await waitFor(() => {
+        const executeCalls = vi.mocked(apiClient.post).mock.calls
+          .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+        expect(executeCalls).toHaveLength(1)
+      })
+
+      nowSpy = vi.spyOn(Date, 'now').mockReturnValue(originalNow + 31_000)
+      const amountInputs = screen.getAllByRole('spinbutton') as HTMLInputElement[]
+      fireEvent.change(amountInputs[3], { target: { value: '601' } })
+
+      await waitFor(() => {
+        const executeCalls = vi.mocked(apiClient.post).mock.calls
+          .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+        expect(executeCalls).toHaveLength(2)
+      }, { timeout: 1000 })
+      expect(screen.getByText(/CROWN-20001/)).toBeTruthy()
+    } finally {
+      nowSpy?.mockRestore()
+    }
   }, 30000)
 
   it('blocks execution when no crown alert matches the selected mode', async () => {
@@ -563,9 +643,7 @@ describe('CrownBetting auto betting execution interaction', () => {
       autoEnabled: false,
       perAccountLimit: 50,
       betLimit: 100,
-      minimumEdge: 0.03,
       minimumBetOdds: 0.70,
-      oddsTolerance: 0.02,
     }))
 
     render(<CrownBetting />)
@@ -583,15 +661,13 @@ describe('CrownBetting auto betting execution interaction', () => {
     ))).toBe(false)
   }, 30000)
 
-  it('hides crown alert candidates that do not meet the current settings', async () => {
+  it('hides crown alert candidates below the configured minimum target water', async () => {
     window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
       autoMode: 'live',
       autoEnabled: true,
       perAccountLimit: 50,
       betLimit: 100,
-      minimumEdge: 0.10,
-      minimumBetOdds: 1.01,
-      oddsTolerance: 0.02,
+      minimumBetOdds: 1.20,
     }))
 
     render(<CrownBetting />)
@@ -605,16 +681,118 @@ describe('CrownBetting auto betting execution interaction', () => {
     ))).toBe(false)
   }, 30000)
 
-  it('does not backfill an older qualified alert when the newest crown alert is below settings', async () => {
+  it('executes a crown alert by minimum target water without requiring edge', async () => {
+    window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
+      autoMode: 'live',
+      autoEnabled: true,
+      perAccountLimit: 50,
+      betLimit: 100,
+      minimumBetOdds: 1.01,
+      signalMaxAgeSeconds: 600,
+    }))
+    mockApiState.alerts = [
+      {
+        id: 1301,
+        alertType: 'odds_change',
+        severity: 'info',
+        title: '赔率变动：伯恩茅斯 vs 曼城',
+        message: `滚球赔率变动
+
+联赛：英格兰超级联赛
+比赛：伯恩茅斯 vs 曼城
+进行：第 35 分钟
+比分：0-0
+
+盘口：让球 客队 1
+皇冠：1.07 -> 1.08
+
+筛选：动水通过 / 合水通过
+时间：2026-05-19 20:10:10`,
+        createdAt: Date.now(),
+        acknowledged: false,
+      },
+    ]
+
+    render(<CrownBetting />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('伯恩茅斯 vs 曼城').length).toBeGreaterThan(0)
+    })
+    await waitFor(() => {
+      const signalCalls = vi.mocked(apiClient.post).mock.calls
+        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
+        .slice(-2)
+      expect(signalCalls).toHaveLength(2)
+    })
+    const signalCalls = vi.mocked(apiClient.post).mock.calls
+      .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
+      .slice(-2)
+    expect(signalCalls.every(([, body]) => (
+      body.matchTitle === '伯恩茅斯 vs 曼城' &&
+      body.targetOdds === 1.08 &&
+      body.minimumTargetOdds === 1.01
+    ))).toBe(true)
+    const executeCalls = vi.mocked(apiClient.post).mock.calls
+      .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+    expect(executeCalls).toHaveLength(2)
+    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 1.01)).toBe(true)
+    expect(executeCalls.every(([, , config]) => config?.timeout === 120000)).toBe(true)
+  }, 30000)
+
+  it('does not send expired crown alerts to backend betting decisions', async () => {
     const now = Date.now()
     window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
       autoMode: 'live',
       autoEnabled: true,
       perAccountLimit: 50,
       betLimit: 100,
-      minimumEdge: 0.03,
+      minimumBetOdds: 0.70,
+      signalMaxAgeSeconds: 600,
+    }))
+    mockApiState.alerts = [
+      {
+        id: 1201,
+        alertType: 'odds_change',
+        severity: 'info',
+        title: '赔率变动：赫尔辛堡 vs 华保斯',
+        message: `滚球赔率变动
+
+联赛：瑞典超级甲组联赛
+比赛：赫尔辛堡 vs 华保斯
+进行：第 53 分钟
+比分：1-2
+
+盘口：让球 主队 0
+皇冠：1.15 -> 1.19
+
+筛选：动水通过 / 合水通过
+时间：2026-05-19 19:09:54`,
+        createdAt: now - 601_000,
+        acknowledged: false,
+      },
+    ]
+
+    render(<CrownBetting />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('暂无符合配置的候选盘口').length).toBeGreaterThan(0)
+    })
+    const decisionCalls = vi.mocked(apiClient.post).mock.calls
+      .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
+    expect(decisionCalls).toHaveLength(0)
+    expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
+      url === '/auto-betting/signals/odds-monitor'
+    ))).toBe(false)
+  }, 30000)
+
+  it('uses the newest qualified alert inside signal validity when the latest alert is below settings', async () => {
+    const now = Date.now()
+    window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
+      autoMode: 'live',
+      autoEnabled: true,
+      perAccountLimit: 50,
+      betLimit: 100,
       minimumBetOdds: 1.01,
-      oddsTolerance: 0.02,
       signalMaxAgeSeconds: 600,
     }))
     mockApiState.alerts = [
@@ -663,11 +841,24 @@ describe('CrownBetting auto betting execution interaction', () => {
     render(<CrownBetting />)
 
     await waitFor(() => {
-      expect(screen.getAllByText('暂无符合配置的候选盘口').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('奥尔格里特 vs IFK哥德堡').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('大球').length).toBeGreaterThan(0)
     })
-    expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
-      url === '/auto-betting/signals/odds-monitor'
-    ))).toBe(false)
+    await waitFor(() => {
+      const signalCalls = vi.mocked(apiClient.post).mock.calls
+        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
+      expect(signalCalls).toHaveLength(2)
+    })
+    const signalCalls = vi.mocked(apiClient.post).mock.calls
+      .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
+    expect(signalCalls.every(([, body]) => (
+      body.matchTitle === '奥尔格里特 vs IFK哥德堡' &&
+      body.marketType === 'total' &&
+      body.lineValue === '4' &&
+      body.selectionName === '大球' &&
+      body.referenceOdds === 1.04 &&
+      body.targetOdds === 1.11
+    ))).toBe(true)
   }, 30000)
 
   it('saves automation amount settings across a reload', async () => {
@@ -677,18 +868,16 @@ describe('CrownBetting auto betting execution interaction', () => {
     const amountInputs = screen.getAllByRole('spinbutton') as HTMLInputElement[]
     fireEvent.change(amountInputs[0], { target: { value: '420' } })
     fireEvent.change(amountInputs[1], { target: { value: '880' } })
-    fireEvent.change(amountInputs[2], { target: { value: '0.04' } })
-    fireEvent.change(amountInputs[3], { target: { value: '0.06' } })
-    fireEvent.change(amountInputs[4], { target: { value: '0.70' } })
-    fireEvent.change(amountInputs[5], { target: { value: '900' } })
+    fireEvent.change(amountInputs[2], { target: { value: '0.70' } })
+    fireEvent.change(amountInputs[3], { target: { value: '900' } })
     fireEvent.click(screen.getByRole('button', { name: /保存设置/ }))
 
     expect(window.localStorage.getItem('crown-betting-automation-settings')).toContain('"perAccountLimit":420')
     expect(window.localStorage.getItem('crown-betting-automation-settings')).toContain('"betLimit":880')
-    expect(window.localStorage.getItem('crown-betting-automation-settings')).toContain('"oddsTolerance":0.04')
-    expect(window.localStorage.getItem('crown-betting-automation-settings')).toContain('"minimumEdge":0.06')
     expect(window.localStorage.getItem('crown-betting-automation-settings')).toContain('"minimumBetOdds":0.7')
     expect(window.localStorage.getItem('crown-betting-automation-settings')).toContain('"signalMaxAgeSeconds":900')
+    expect(window.localStorage.getItem('crown-betting-automation-settings')).not.toContain('oddsTolerance')
+    expect(window.localStorage.getItem('crown-betting-automation-settings')).not.toContain('minimumEdge')
 
     unmount()
     render(<CrownBetting />)
@@ -696,10 +885,8 @@ describe('CrownBetting auto betting execution interaction', () => {
     const reloadedInputs = screen.getAllByRole('spinbutton') as HTMLInputElement[]
     expect(reloadedInputs[0].value).toBe('420')
     expect(reloadedInputs[1].value).toBe('880')
-    expect(reloadedInputs[2].value).toBe('0.04')
-    expect(reloadedInputs[3].value).toBe('0.06')
-    expect(reloadedInputs[4].value).toBe('0.70')
-    expect(reloadedInputs[5].value).toBe('900')
+    expect(reloadedInputs[2].value).toBe('0.70')
+    expect(reloadedInputs[3].value).toBe('900')
   }, 30000)
 
   it('defaults betting amount controls to 50 per account and 100 total', async () => {

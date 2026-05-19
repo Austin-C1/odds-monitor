@@ -21,7 +21,7 @@ import { apiClient } from '../services/api'
 import {
   buildAutoBettingExecutionPlan,
   extractCrownAlertSignalCandidates,
-  filterLatestCrownAlertSignalBatch,
+  filterFreshCrownAlertSignals,
   formatAutoBettingReason,
   type AutoBettingMode,
   type AutoBettingExecutionPlan,
@@ -127,9 +127,7 @@ type AutomationSettings = {
   autoEnabled: boolean
   perAccountLimit: number
   betLimit: number
-  minimumEdge: number
   minimumBetOdds: number
-  oddsTolerance: number
   signalMaxAgeSeconds: number
 }
 
@@ -138,9 +136,7 @@ const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   autoEnabled: false,
   perAccountLimit: 50,
   betLimit: 100,
-  minimumEdge: 0.03,
   minimumBetOdds: 0.70,
-  oddsTolerance: 0.02,
   signalMaxAgeSeconds: 600,
 }
 
@@ -246,8 +242,6 @@ const formatDateTime = (value: number) =>
     minute: '2-digit',
   })
 
-const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`
-
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const autoBettingSignalKey = (signal: AutoBettingSignal) => {
@@ -292,9 +286,7 @@ const readStoredAutomationSettings = (): AutomationSettings => {
         500,
       ),
       betLimit: normalizeNumberSetting(parsed.betLimit, DEFAULT_AUTOMATION_SETTINGS.betLimit, 10),
-      minimumEdge: normalizeNumberSetting(parsed.minimumEdge, DEFAULT_AUTOMATION_SETTINGS.minimumEdge, 0.01),
       minimumBetOdds: normalizeNumberSetting(parsed.minimumBetOdds, DEFAULT_AUTOMATION_SETTINGS.minimumBetOdds, 0.01),
-      oddsTolerance: normalizeNumberSetting(parsed.oddsTolerance, DEFAULT_AUTOMATION_SETTINGS.oddsTolerance, 0.01),
       signalMaxAgeSeconds: normalizeNumberSetting(
         parsed.signalMaxAgeSeconds,
         DEFAULT_AUTOMATION_SETTINGS.signalMaxAgeSeconds,
@@ -393,9 +385,7 @@ const CrownBetting = () => {
     autoEnabled,
     perAccountLimit,
     betLimit,
-    minimumEdge,
     minimumBetOdds,
-    oddsTolerance,
     signalMaxAgeSeconds,
   } = automationSettings
 
@@ -660,7 +650,6 @@ const CrownBetting = () => {
   const [executionRunning, setExecutionRunning] = useState(false)
   const executionRunningRef = useRef(false)
   const automationPollingRef = useRef(false)
-  const processedSignalKeysRef = useRef<Set<string>>(new Set())
   const attemptedSignalAtRef = useRef<Map<string, number>>(new Map())
 
   const executeLatestCrownSignal = useCallback(async () => {
@@ -677,17 +666,17 @@ const CrownBetting = () => {
       if (alertResponse.data.code !== 0) {
         throw new Error(alertResponse.data.msg || '监控信号读取失败')
       }
-      const candidates = filterLatestCrownAlertSignalBatch(
+      const candidates = filterFreshCrownAlertSignals(
         extractCrownAlertSignalCandidates(alertResponse.data.data, autoMode),
+        Date.now(),
+        signalMaxAgeSeconds,
       )
       const qualifiedCandidates = candidates.filter((candidate) => (
-        candidate.edge >= minimumEdge &&
         candidate.targetOdds >= minimumBetOdds
       ))
       setSignalCandidates(qualifiedCandidates)
       const signal = qualifiedCandidates[0] || null
       const signalKey = signal ? autoBettingSignalKey(signal) : null
-      if (signalKey && processedSignalKeysRef.current.has(signalKey)) return
       if (signalKey) {
         const lastAttemptAt = attemptedSignalAtRef.current.get(signalKey) || 0
         if (Date.now() - lastAttemptAt < AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS) return
@@ -718,9 +707,7 @@ const CrownBetting = () => {
         enabled: autoEnabled,
         perAccountLimit,
         betLimit,
-        minimumEdge,
         minimumBetOdds,
-        oddsTolerance,
         accounts: checkedAccounts.map((account) => ({
           id: account.id,
           displayName: account.displayName,
@@ -734,28 +721,25 @@ const CrownBetting = () => {
       if (!nextPlan.canExecute) {
         return
       }
-      if (signalKey) {
-        processedSignalKeysRef.current.add(signalKey)
-      }
 
-        const checkedRows = await Promise.all(nextPlan.rows.map(async (row) => {
-          if (row.status !== 'passed' || row.stakeAmount <= 0) return row
-          try {
-            const checkedAccount = checkedAccountById.get(row.id)
-            const profileId = checkedAccount?.adsPowerProfileId?.trim()
-            if (!profileId) {
-              return {
-                ...row,
-                status: 'skipped' as const,
-                statusLabel: '跳过',
-                stakeAmount: 0,
-                reason: '未绑定 AdsPower Profile',
-              }
+      const checkedRows = await Promise.all(nextPlan.rows.map(async (row) => {
+        if (row.status !== 'passed' || row.stakeAmount <= 0) return row
+        try {
+          const checkedAccount = checkedAccountById.get(row.id)
+          const profileId = checkedAccount?.adsPowerProfileId?.trim()
+          if (!profileId) {
+            return {
+              ...row,
+              status: 'skipped' as const,
+              statusLabel: '跳过',
+              stakeAmount: 0,
+              reason: '未绑定 AdsPower Profile',
             }
-            const signalResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
-              '/auto-betting/signals/odds-monitor',
-              {
-                signalSource: 'odds_monitor',
+          }
+          const signalResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
+            '/auto-betting/signals/odds-monitor',
+            {
+              signalSource: 'odds_monitor',
               accountKey: row.id,
               bettingMode: row.bettingMode,
               matchPhase: row.matchPhase,
@@ -775,66 +759,67 @@ const CrownBetting = () => {
               maxSignalAgeSeconds: signalMaxAgeSeconds,
             },
           )
-            if (signalResponse.data.code !== 0 || !signalResponse.data.data) {
-              throw new Error(signalResponse.data.msg || '后端投注判断失败')
-            }
-            const decision = signalResponse.data.data
-            if (decision.status !== 'ready' || typeof decision.id !== 'number') {
-              return {
-                ...row,
-                status: 'skipped' as const,
-                statusLabel: '跳过',
-                stakeAmount: 0,
-                reason: formatAutoBettingReason(decision.reason),
-              }
-            }
-            const executionResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
-              `/auto-betting/intents/${decision.id}/execute-crown`,
-              {
-                profileId,
-                loginUrl: checkedAccount?.loginUrl,
-                oddsTolerance: row.oddsTolerance,
-              },
-            )
-            if (executionResponse.data.code !== 0 || !executionResponse.data.data) {
-              throw new Error(executionResponse.data.msg || '皇冠实际下注失败')
-            }
-            const executionDecision = executionResponse.data.data
-            const historyVerified = executionDecision.status === 'placed' && executionDecision.crownHistoryVerified === true
-            return {
-              ...row,
-              status: historyVerified ? 'passed' as const : 'skipped' as const,
-              statusLabel: historyVerified ? '已下注' : '跳过',
-              stakeAmount: historyVerified ? row.stakeAmount : 0,
-              reason: executionDecision.crownBetReference
-                ? `${formatAutoBettingReason(executionDecision.reason)} ${executionDecision.crownBetReference}`
-                : formatAutoBettingReason(executionDecision.reason),
-            }
-          } catch (error: any) {
+          if (signalResponse.data.code !== 0 || !signalResponse.data.data) {
+            throw new Error(signalResponse.data.msg || '后端投注判断失败')
+          }
+          const decision = signalResponse.data.data
+          if (decision.status !== 'ready' || typeof decision.id !== 'number') {
             return {
               ...row,
               status: 'skipped' as const,
               statusLabel: '跳过',
               stakeAmount: 0,
-              reason: error.response?.data?.msg || error.message || '皇冠实际下注失败',
+              reason: formatAutoBettingReason(decision.reason),
             }
           }
-        }))
-        const placedRows = checkedRows.filter((row) => row.status === 'passed')
-        const placedStake = placedRows.reduce((total, row) => total + row.stakeAmount, 0)
-        setExecutionPlan({
-          ...nextPlan,
-          rows: checkedRows,
-          canExecute: placedRows.length > 0,
-          totalStake: placedStake,
-          availableAccountCount: placedRows.length,
-          summary: placedRows.length > 0 ? `下注成功 ${placedRows.length} 个账号` : '没有确认成功的下注',
-        })
-        if (placedRows.length > 0) {
-          message.success('下注成功，已核对皇冠投注历史')
-        } else {
-          message.warning('没有确认成功的下注')
+          const executionResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
+            `/auto-betting/intents/${decision.id}/execute-crown`,
+            {
+              profileId,
+              loginUrl: checkedAccount?.loginUrl,
+              minimumTargetOdds: minimumBetOdds,
+            },
+            { timeout: 120000 },
+          )
+          if (executionResponse.data.code !== 0 || !executionResponse.data.data) {
+            throw new Error(executionResponse.data.msg || '皇冠实际下注失败')
+          }
+          const executionDecision = executionResponse.data.data
+          const historyVerified = executionDecision.status === 'placed' && executionDecision.crownHistoryVerified === true
+          return {
+            ...row,
+            status: historyVerified ? 'passed' as const : 'skipped' as const,
+            statusLabel: historyVerified ? '已下注' : '跳过',
+            stakeAmount: historyVerified ? row.stakeAmount : 0,
+            reason: executionDecision.crownBetReference
+              ? `${formatAutoBettingReason(executionDecision.reason)} ${executionDecision.crownBetReference}`
+              : formatAutoBettingReason(executionDecision.reason),
+          }
+        } catch (error: any) {
+          return {
+            ...row,
+            status: 'skipped' as const,
+            statusLabel: '跳过',
+            stakeAmount: 0,
+            reason: error.response?.data?.msg || error.message || '皇冠实际下注失败',
+          }
         }
+      }))
+      const placedRows = checkedRows.filter((row) => row.status === 'passed')
+      const placedStake = placedRows.reduce((total, row) => total + row.stakeAmount, 0)
+      setExecutionPlan({
+        ...nextPlan,
+        rows: checkedRows,
+        canExecute: placedRows.length > 0,
+        totalStake: placedStake,
+        availableAccountCount: placedRows.length,
+        summary: placedRows.length > 0 ? `下注成功 ${placedRows.length} 个账号` : '没有确认成功的下注',
+      })
+      if (placedRows.length > 0) {
+        message.success('下注成功，已确认皇冠下注成功')
+      } else {
+        message.warning('没有确认成功的下注')
+      }
     } catch (error: any) {
       message.error(error.response?.data?.msg || error.message || '监控信号读取失败')
     } finally {
@@ -849,8 +834,6 @@ const CrownBetting = () => {
     autoMode,
     betLimit,
     minimumBetOdds,
-    minimumEdge,
-    oddsTolerance,
     perAccountLimit,
     signalMaxAgeSeconds,
     verifyAccountBeforeBetting,
@@ -866,6 +849,15 @@ const CrownBetting = () => {
   }, [autoEnabled, enabledBettingAccounts.length, executeLatestCrownSignal])
 
   const currentExecutionSignal = executionPlan?.signal
+  const hasExecutionAttemptResult = executionPlan
+    ? executionPlan.summary.startsWith('下注成功') || executionPlan.summary === '没有确认成功的下注'
+    : false
+  const executionAccountTagLabel = executionPlan
+    ? `${hasExecutionAttemptResult ? '已下注账号' : '可投账号'} ${executionPlan.availableAccountCount} 个`
+    : ''
+  const executionAccountTagColor = hasExecutionAttemptResult
+    ? executionPlan && executionPlan.availableAccountCount > 0 ? 'success' : 'default'
+    : 'blue'
 
   return (
     <div>
@@ -1096,28 +1088,6 @@ const CrownBetting = () => {
             />
           </div>
           <div style={automationFieldStyle}>
-            <Text strong>赔率波动容忍</Text>
-            <InputNumber
-              min={0.01}
-              step={0.01}
-              precision={2}
-              value={oddsTolerance}
-              onChange={(value) => updateAutomationSetting('oddsTolerance', Number(value || 0))}
-              style={{ width: '100%', marginTop: 8 }}
-            />
-          </div>
-          <div style={automationFieldStyle}>
-            <Text strong>最低赔率优势</Text>
-            <InputNumber
-              min={0.01}
-              step={0.01}
-              precision={2}
-              value={minimumEdge}
-              onChange={(value) => updateAutomationSetting('minimumEdge', Number(value || 0))}
-              style={{ width: '100%', marginTop: 8 }}
-            />
-          </div>
-          <div style={automationFieldStyle}>
             <Text strong>最低投注水位</Text>
             <InputNumber
               min={0.01}
@@ -1221,7 +1191,6 @@ const CrownBetting = () => {
                   <Tag color={candidate.matchPhase === 'prematch' ? 'blue' : 'orange'}>{candidate.modeLabel}</Tag>
                   <Space direction="vertical" size={0}>
                     <Text>{candidate.marketTitle}</Text>
-                    <Text type="secondary">优势 {formatPercent(candidate.edge)}</Text>
                   </Space>
                   <Text>{candidate.selectionName}</Text>
                   <Text>{candidate.referenceOdds.toFixed(3)} → {candidate.targetOdds.toFixed(3)}</Text>
@@ -1241,7 +1210,7 @@ const CrownBetting = () => {
               <>
                 <Tag color="processing">{executionPlan.modeLabel}</Tag>
                 <Tag color="blue">总金额 {formatCurrency(executionPlan.totalStake)}</Tag>
-                  <Tag color="success">成功账号 {executionPlan.availableAccountCount} 个</Tag>
+                <Tag color={executionAccountTagColor}>{executionAccountTagLabel}</Tag>
                 <Text type="secondary">{executionPlan.summary}</Text>
               </>
             ) : null}
@@ -1268,9 +1237,7 @@ const CrownBetting = () => {
                 <Text>{row.matchTitle}</Text>
                 <Space direction="vertical" size={0}>
                   <Text>{row.marketTitle}</Text>
-                  <Text type="secondary">
-                    {row.selectionName} / 优势 {formatPercent(row.edge)} / 波动 ±{row.oddsTolerance.toFixed(2)}
-                  </Text>
+                  <Text type="secondary">{row.selectionName}</Text>
                   <Text type="secondary">{row.bettingLogic}</Text>
                 </Space>
                 <Text>{row.odds.toFixed(3)}</Text>

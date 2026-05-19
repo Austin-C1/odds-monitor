@@ -30,6 +30,31 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
+    fun `crown placement disables native print dialogs during order confirmation`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("private fun buildUrl")
+
+        assertTrue(placementBlock.contains("disableNativePrint"))
+        assertTrue(placementBlock.contains("win.print"))
+        assertTrue(placementBlock.contains("win.open"))
+        assertTrue(
+            placementBlock.indexOf("disableNativePrint();").let { guardIndex ->
+                guardIndex >= 0 && guardIndex < placementBlock.indexOf("clickElement(orderButton)")
+            }
+        )
+    }
+
+    @Test
+    fun `crown placement treats confirmed receipt reference as verified placement`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("private fun buildUrl")
+
+        assertTrue(placementBlock.contains("receiptVerified"))
+        assertTrue(placementBlock.contains("ticketReference && receiptVerified"))
+        assertTrue(placementBlock.contains("message: 'crown_receipt_verified'"))
+    }
+
+    @Test
     fun `crown target selection parses page hosts and avoids arbitrary first page fallback`() {
         val selectionBlock = source.substringAfter("private fun selectCrownTarget")
             .substringBefore("private fun readPageSnapshotViaCdp")
@@ -72,12 +97,14 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
-    fun `crown placement accepts better odds and only rejects worse odds outside tolerance`() {
+    fun `crown placement rejects only when current odds are below configured minimum odds`() {
         val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
             .substringBefore("const beforeWagerCount")
 
         assertFalse(placementBlock.contains("Math.abs(Number((currentOdds - Number(args.targetOdds)).toFixed(4)))"))
-        assertTrue(placementBlock.contains("currentOdds + Number(args.oddsTolerance) < Number(args.targetOdds)"))
+        assertFalse(placementBlock.contains("args.oddsTolerance"))
+        assertTrue(placementBlock.contains("currentOdds < Number(args.targetOdds)"))
+        assertTrue(placementBlock.contains("target_odds_below_minimum"))
     }
 
     @Test

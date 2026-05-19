@@ -3,6 +3,7 @@ import {
   buildAutoBettingExecutionPlan,
   extractCrownAlertSignalCandidates,
   extractLatestCrownAlertSignal,
+  filterFreshCrownAlertSignals,
   filterLatestCrownAlertSignalBatch,
   formatAutoBettingReason,
   type AutoBettingSignal,
@@ -179,6 +180,25 @@ describe('crown betting execution plan', () => {
     expect(filterLatestCrownAlertSignalBatch([newestSignal, olderSignal])).toEqual([newestSignal])
   })
 
+  it('drops crown alert candidates older than the configured signal age', () => {
+    const freshSignal = {
+      ...prematchSignal,
+      sourceAlertId: 21,
+      sourceAlertCreatedAt: 1_000_000,
+    }
+    const expiredSignal = {
+      ...prematchSignal,
+      sourceAlertId: 20,
+      sourceAlertCreatedAt: 399_999,
+    }
+
+    expect(filterFreshCrownAlertSignals(
+      [freshSignal, expiredSignal],
+      1_000_000,
+      600,
+    )).toEqual([freshSignal])
+  })
+
   it('parses crown alert signal candidates from default telegram blocks with pinnacle before crown', () => {
     const candidates = extractCrownAlertSignalCandidates([
       {
@@ -237,9 +257,7 @@ describe('crown betting execution plan', () => {
       enabled: true,
       perAccountLimit: 300,
       betLimit: 500,
-      minimumEdge: 0.03,
       minimumBetOdds: 0.7,
-      oddsTolerance: 0.02,
       accounts: [
         { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
         { id: 'b', displayName: '副账号', status: 'success', adsPowerProfileId: 'profile-b', adsPowerStatus: 'opened' },
@@ -265,9 +283,7 @@ describe('crown betting execution plan', () => {
       enabled: true,
       perAccountLimit: 300,
       betLimit: 500,
-      minimumEdge: 0.03,
       minimumBetOdds: 0.7,
-      oddsTolerance: 0.02,
       accounts: [
         { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
       ],
@@ -285,9 +301,7 @@ describe('crown betting execution plan', () => {
       enabled: true,
       perAccountLimit: 300,
       betLimit: 500,
-      minimumEdge: 0.03,
       minimumBetOdds: 0.7,
-      oddsTolerance: 0.02,
       accounts: [
         { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
       ],
@@ -305,9 +319,7 @@ describe('crown betting execution plan', () => {
       enabled: true,
       perAccountLimit: 300,
       betLimit: 500,
-      minimumEdge: 0.03,
       minimumBetOdds: 0.7,
-      oddsTolerance: 0.02,
       accounts: [
         { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
       ],
@@ -320,10 +332,37 @@ describe('crown betting execution plan', () => {
     ])
   })
 
+  it('allows execution by target water even when edge is below the configured edge value', () => {
+    const result = buildAutoBettingExecutionPlan({
+      signal: { ...prematchSignal, referenceOdds: 1.07, targetOdds: 1.08, odds: 1.08, edge: 0.01 },
+      mode: 'prematch',
+      enabled: true,
+      perAccountLimit: 300,
+      betLimit: 500,
+      minimumBetOdds: 1.01,
+      accounts: [
+        { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
+      ],
+    })
+
+    expect(result.canExecute).toBe(true)
+    expect(result.summary).toBe('已检查 1 个账号')
+    expect(result.rows).toEqual([
+      expect.objectContaining({ status: 'passed', statusLabel: '待下注', stakeAmount: 300, reason: '盘口和水位通过，等待下单' }),
+    ])
+  })
+
   it('formats backend betting failure codes for operators', () => {
     expect(formatAutoBettingReason('crown_line_mismatch')).toBe('皇冠盘口已变化')
+    expect(formatAutoBettingReason('crown_receipt_verified')).toBe('已确认皇冠回执')
     expect(formatAutoBettingReason('stale_signal')).toBe('信号已过期')
     expect(formatAutoBettingReason('crown_execution_timeout')).toBe('皇冠执行确认超时')
+    expect(formatAutoBettingReason('target_odds_below_minimum')).toBe('皇冠当前水位低于最低投注水位')
     expect(formatAutoBettingReason('unknown_reason')).toBe('unknown_reason')
+  })
+
+  it('does not keep removed auto betting restriction reason labels', () => {
+    expect(formatAutoBettingReason('crown_odds_moved')).toBe('crown_odds_moved')
+    expect(formatAutoBettingReason('duplicate_active_intent')).toBe('duplicate_active_intent')
   })
 })

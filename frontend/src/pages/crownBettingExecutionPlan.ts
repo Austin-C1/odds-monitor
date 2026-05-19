@@ -46,9 +46,7 @@ export type AutoBettingExecutionPlanOptions = {
   enabled: boolean
   perAccountLimit: number
   betLimit: number
-  minimumEdge: number
   minimumBetOdds: number
-  oddsTolerance: number
   accounts: ExecutionAccount[]
 }
 
@@ -75,7 +73,6 @@ export type AutoBettingExecutionPlanRow = {
   oddsChangeDirection?: 'rise' | 'drop'
   bettingLogic: string
   capturedAt: number
-  oddsTolerance: number
   stakeAmount: number
   reason: string
 }
@@ -100,10 +97,10 @@ const modeLabels: Record<AutoBettingMode, string> = {
 const autoBettingReasonLabels: Record<string, string> = {
   accepted: '已接收',
   crown_history_verified: '已确认下注',
+  crown_receipt_verified: '已确认皇冠回执',
   crown_line_mismatch: '皇冠盘口已变化',
   crown_market_not_found: '皇冠盘口未找到',
   crown_market_locked: '皇冠盘口已锁盘',
-  crown_odds_moved: '皇冠水位已变化',
   crown_odds_missing: '皇冠水位未读取到',
   crown_place_button_disabled: '皇冠下注按钮不可用',
   crown_stake_input_missing: '皇冠金额输入框未找到',
@@ -114,9 +111,8 @@ const autoBettingReasonLabels: Record<string, string> = {
   crown_execution_timeout: '皇冠执行确认超时',
   crown_history_unverified: '下注后未确认到历史记录',
   stale_signal: '信号已过期',
-  duplicate_active_intent: '重复信号已跳过',
-  target_odds_below_minimum: '目标水位低于最低投注水位',
-  edge_below_minimum: '赔率优势不足',
+  duplicate_placed_intent: '已成功投注，重复信号已跳过',
+  target_odds_below_minimum: '皇冠当前水位低于最低投注水位',
 }
 
 export const formatAutoBettingReason = (reason?: string | null): string => {
@@ -165,6 +161,18 @@ export const filterLatestCrownAlertSignalBatch = (
   const latestCreatedAt = candidates[0]?.sourceAlertCreatedAt
   if (typeof latestCreatedAt !== 'number') return candidates
   return candidates.filter((candidate) => candidate.sourceAlertCreatedAt === latestCreatedAt)
+}
+
+export const filterFreshCrownAlertSignals = (
+  candidates: AutoBettingSignal[],
+  now: number,
+  maxSignalAgeSeconds: number,
+): AutoBettingSignal[] => {
+  const maxAgeMillis = Math.max(1, Math.min(3600, Number(maxSignalAgeSeconds) || 1)) * 1000
+  return candidates.filter((candidate) => (
+    typeof candidate.sourceAlertCreatedAt !== 'number' ||
+    now - candidate.sourceAlertCreatedAt <= maxAgeMillis
+  ))
 }
 
 const extractCrownAlertSignalsFromAlert = (
@@ -245,7 +253,7 @@ export const buildAutoBettingExecutionPlan = (
   const executionAccounts = options.accounts.filter((account) => account.bettingEnabled !== false)
   const availableAccounts = executionAccounts.filter(isAutomationReady)
   const skipRows = (reason: (account: ExecutionAccount) => string) => executionAccounts.map((account) => (
-    skippedRow(account, signal, options.oddsTolerance, reason(account))
+    skippedRow(account, signal, reason(account))
   ))
 
   if (!options.enabled) {
@@ -269,18 +277,6 @@ export const buildAutoBettingExecutionPlan = (
       availableAccountCount: 0,
       signal,
       rows: skipRows(unavailableReason),
-    }
-  }
-
-  if (signal.edge < options.minimumEdge) {
-    return {
-      canExecute: false,
-      modeLabel,
-      summary: '赔率优势不足',
-      totalStake: 0,
-      availableAccountCount: availableAccounts.length,
-      signal,
-      rows: skipRows(() => '赔率优势不足'),
     }
   }
 
@@ -315,16 +311,16 @@ export const buildAutoBettingExecutionPlan = (
   let availableIndex = 0
   const rows = executionAccounts.map((account) => {
     if (account.bettingEnabled === false) {
-      return skippedRow(account, signal, options.oddsTolerance, '投注未启用')
+      return skippedRow(account, signal, '投注未启用')
     }
     if (!hasAdsPowerProfile(account)) {
-      return skippedRow(account, signal, options.oddsTolerance, '未绑定 AdsPower Profile')
+      return skippedRow(account, signal, '未绑定 AdsPower Profile')
     }
     if (account.adsPowerStatus !== 'opened') {
-      return skippedRow(account, signal, options.oddsTolerance, 'AdsPower 环境未打开')
+      return skippedRow(account, signal, 'AdsPower 环境未打开')
     }
     if (account.status !== 'success') {
-      return skippedRow(account, signal, options.oddsTolerance, '账号未在线')
+      return skippedRow(account, signal, '账号未在线')
     }
     const stakeAmount = stakeByAccount[availableIndex] || 0
     availableIndex += 1
@@ -332,7 +328,7 @@ export const buildAutoBettingExecutionPlan = (
       id: account.id,
       accountName: account.displayName,
       status: 'passed' as const,
-      statusLabel: '通过',
+      statusLabel: '待下注',
       modeLabel: signal.modeLabel,
       bettingMode: signal.bettingMode,
       matchPhase: signal.matchPhase,
@@ -351,9 +347,8 @@ export const buildAutoBettingExecutionPlan = (
       oddsChangeDirection: signal.oddsChangeDirection,
       bettingLogic: signal.bettingLogic,
       capturedAt: signal.sourceAlertCreatedAt || Date.now(),
-      oddsTolerance: options.oddsTolerance,
       stakeAmount,
-      reason: '实际测试通过',
+      reason: '盘口和水位通过，等待下单',
     }
   })
 
@@ -474,7 +469,6 @@ const unavailableReason = (account: ExecutionAccount) => {
 const skippedRow = (
   account: ExecutionAccount,
   signal: AutoBettingSignal,
-  oddsTolerance: number,
   reason: string,
 ): AutoBettingExecutionPlanRow => ({
   id: account.id,
@@ -499,7 +493,6 @@ const skippedRow = (
   oddsChangeDirection: signal.oddsChangeDirection,
   bettingLogic: signal.bettingLogic,
   capturedAt: signal.sourceAlertCreatedAt || Date.now(),
-  oddsTolerance,
   stakeAmount: 0,
   reason,
 })

@@ -13,26 +13,28 @@ import java.util.Locale
 class AutoBettingDecisionService(
     private val intentRepository: AutoBettingIntentRepository
 ) {
-    private val activeStatuses = listOf("ready", "placing", "placed_unverified", "placed")
+    private val lockedStatuses = listOf("placed")
     private val supportedPhases = setOf("prematch", "live")
     private val supportedMarkets = setOf("handicap", "total")
     private val defaultMaxSignalAgeMillis = 30_000L
     private val maxConfigurableSignalAgeSeconds = 3_600L
     private val maxSignalFutureSkewMillis = 5_000L
     private val maxSingleStake = BigDecimal("500.00")
-    private val minimumDecimalEdge = BigDecimal("0.02")
+    private val staleReadyTimeoutMillis = 180_000L
+    private val stalePlacingTimeoutMillis = 180_000L
 
     @Synchronized
     fun createIntent(request: AutoBettingSignalRequest, now: Long = System.currentTimeMillis()): AutoBettingDecisionDto {
         val normalized = normalize(request)
+        rejectStaleExecutionIntents(now)
         val targetDecimalOdds = normalizeTargetDecimalOdds(normalized.targetSourceKey, normalized.targetOdds)
         val decimalEdge = decimalEdge(normalized, targetDecimalOdds)
         val dedupeKey = dedupeKey(normalized)
-        val decision = decide(normalized, decimalEdge, dedupeKey, now)
+        val decision = decide(normalized, dedupeKey, now)
         val intent = intentRepository.save(
             AutoBettingIntent(
                 dedupeKey = dedupeKey,
-                activeDedupeKey = dedupeKey.takeIf { decision.status in activeStatuses },
+                activeDedupeKey = null,
                 signalSource = normalized.signalSource,
                 bettingMode = normalized.bettingMode,
                 matchPhase = normalized.matchPhase,
@@ -45,9 +47,9 @@ class AutoBettingDecisionService(
                 referenceSourceKey = normalized.referenceSourceKey,
                 targetSourceKey = normalized.targetSourceKey,
                 referenceOdds = scaleOdds(normalized.referenceOdds),
-            targetOdds = scaleOdds(normalized.targetOdds),
-            targetDecimalOdds = targetDecimalOdds,
-            decimalEdge = decimalEdge,
+                targetOdds = scaleOdds(normalized.targetOdds),
+                targetDecimalOdds = targetDecimalOdds,
+                decimalEdge = decimalEdge,
                 stakeAmount = normalized.stakeAmount.setScale(4, RoundingMode.HALF_UP),
                 status = decision.status,
                 rejectReason = decision.reason.takeIf { decision.status == STATUS_REJECTED },
@@ -74,7 +76,6 @@ class AutoBettingDecisionService(
 
     private fun decide(
         request: AutoBettingSignalRequest,
-        decimalEdge: BigDecimal,
         dedupeKey: String,
         now: Long
     ): Decision {
@@ -102,6 +103,7 @@ class AutoBettingDecisionService(
         if (request.referenceOdds <= BigDecimal.ZERO || request.targetOdds <= BigDecimal.ZERO) {
             return Decision(STATUS_REJECTED, "invalid_odds")
         }
+        rejectStaleReadyIntent(dedupeKey, request, now)
         if (request.minimumTargetOdds != null && request.targetOdds < request.minimumTargetOdds) {
             return Decision(STATUS_REJECTED, "target_odds_below_minimum")
         }
@@ -120,11 +122,8 @@ class AutoBettingDecisionService(
         if (request.stakeAmount > maxSingleStake) {
             return Decision(STATUS_REJECTED, "stake_over_single_limit")
         }
-        if (decimalEdge < minimumDecimalEdge) {
-            return Decision(STATUS_REJECTED, "edge_below_minimum")
-        }
-        if (intentRepository.existsByDedupeKeyAndStatusIn(dedupeKey, activeStatuses)) {
-            return Decision(STATUS_REJECTED, "duplicate_active_intent")
+        if (intentRepository.existsByDedupeKeyAndStatusIn(dedupeKey, lockedStatuses)) {
+            return Decision(STATUS_REJECTED, "duplicate_placed_intent")
         }
         return Decision(STATUS_READY, "accepted")
     }
@@ -184,6 +183,34 @@ class AutoBettingDecisionService(
             ?: defaultMaxSignalAgeMillis
     }
 
+    private fun rejectStaleReadyIntent(dedupeKey: String, request: AutoBettingSignalRequest, now: Long) {
+        intentRepository.rejectStaleReadyIntentByDedupeKey(
+            dedupeKey = dedupeKey,
+            readyStatus = STATUS_READY,
+            capturedBefore = now - maxSignalAgeMillis(request.maxSignalAgeSeconds),
+            rejectedStatus = STATUS_REJECTED,
+            rejectReason = "stale_signal",
+            updatedAt = now
+        )
+    }
+
+    private fun rejectStaleExecutionIntents(now: Long) {
+        intentRepository.rejectStaleReadyIntents(
+            readyStatus = STATUS_READY,
+            updatedBefore = now - staleReadyTimeoutMillis,
+            rejectedStatus = STATUS_REJECTED,
+            rejectReason = "stale_signal",
+            updatedAt = now
+        )
+        intentRepository.rejectStalePlacingIntents(
+            placingStatus = STATUS_PLACING,
+            updatedBefore = now - stalePlacingTimeoutMillis,
+            rejectedStatus = STATUS_REJECTED,
+            rejectReason = "crown_execution_timeout",
+            updatedAt = now
+        )
+    }
+
     private fun normalizeKeyPart(value: String, keepDash: Boolean = false): String {
         val pattern = if (keepDash) Regex("""[^\p{L}\p{N}-]+""") else Regex("""[^\p{L}\p{N}]+""")
         return value.lowercase(Locale.ROOT).replace(pattern, "")
@@ -231,6 +258,7 @@ class AutoBettingDecisionService(
     companion object {
         const val STATUS_READY = "ready"
         const val STATUS_REJECTED = "rejected"
+        const val STATUS_PLACING = "placing"
         const val STATUS_PLACED = "placed"
         private const val DEFAULT_ACCOUNT_KEY = "default"
         private val supportedReferenceSources = setOf("pinnacle", "crown")

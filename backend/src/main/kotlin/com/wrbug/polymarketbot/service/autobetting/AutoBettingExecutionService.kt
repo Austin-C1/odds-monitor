@@ -17,7 +17,7 @@ import java.util.Locale
 data class AutoBettingExecutionRequest(
     val profileId: String,
     val loginUrl: String? = null,
-    val oddsTolerance: BigDecimal = BigDecimal("0.02")
+    val minimumTargetOdds: BigDecimal? = null
 )
 
 data class CrownBetPlacementCommand(
@@ -26,7 +26,6 @@ data class CrownBetPlacementCommand(
     val betElementId: String,
     val stakeAmount: BigDecimal,
     val targetOdds: BigDecimal,
-    val oddsTolerance: BigDecimal,
     val lineValue: String?
 )
 
@@ -54,12 +53,15 @@ class AutoBettingExecutionService(
     private val objectMapper: ObjectMapper,
     private val crownBetPlacementGateway: CrownBetPlacementGateway
 ) {
-    @Synchronized
+    private val staleReadyTimeoutMillis = 180_000L
+    private val stalePlacingTimeoutMillis = 180_000L
+
     fun executeCrownIntent(
         intentId: Long,
         request: AutoBettingExecutionRequest,
         now: Long = System.currentTimeMillis()
     ): AutoBettingDecisionDto {
+        rejectStaleExecutionIntents(now)
         val intent = intentRepository.findById(intentId).orElse(null)
             ?: return missingIntent(intentId)
         if (intent.status == STATUS_PLACED && intent.crownHistoryVerified) {
@@ -77,6 +79,16 @@ class AutoBettingExecutionService(
             return reject(intent, "profile_id_required", now)
         }
 
+        val markedPlacing = intentRepository.markReadyIntentPlacingById(
+            intentId = intent.id ?: return missingIntent(intentId),
+            readyStatus = STATUS_READY,
+            placingStatus = STATUS_PLACING,
+            updatedAt = now
+        )
+        if (markedPlacing != 1) {
+            val latest = intentRepository.findById(intentId).orElse(intent)
+            return latest.toDecision(latest.rejectReason ?: "intent_not_ready")
+        }
         val placing = intentRepository.save(intent.copy(status = STATUS_PLACING, updatedAt = now))
         val command = buildCommand(placing, request)
             ?: return reject(placing, "crown_market_not_found", now)
@@ -87,17 +99,19 @@ class AutoBettingExecutionService(
         }
 
         if (placement.placed && placement.historyVerified) {
+            val reason = shortReason(placement.message.ifBlank { "crown_history_verified" })
             val placed = intentRepository.save(
                 placing.copy(
                     status = STATUS_PLACED,
                     rejectReason = null,
+                    activeDedupeKey = placing.dedupeKey,
                     crownHistoryVerified = true,
                     crownHistoryCheckedAt = now,
                     crownBetReference = placement.ticketReference,
                     updatedAt = now
                 )
             )
-            return placed.toDecision("crown_history_verified")
+            return placed.toDecision(reason)
         }
 
         if (placement.placed) {
@@ -128,8 +142,7 @@ class AutoBettingExecutionService(
             loginUrl = request.loginUrl?.trim()?.takeIf { it.isNotBlank() },
             betElementId = betElementId,
             stakeAmount = intent.stakeAmount.setScale(4, RoundingMode.HALF_UP),
-            targetOdds = intent.targetOdds.setScale(8, RoundingMode.HALF_UP),
-            oddsTolerance = request.oddsTolerance.max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP),
+            targetOdds = (request.minimumTargetOdds ?: intent.targetOdds).setScale(8, RoundingMode.HALF_UP),
             lineValue = intent.lineValue
         )
     }
@@ -292,6 +305,23 @@ class AutoBettingExecutionService(
             crownHistoryVerified = crownHistoryVerified,
             crownHistoryCheckedAt = crownHistoryCheckedAt,
             crownBetReference = crownBetReference
+        )
+    }
+
+    private fun rejectStaleExecutionIntents(now: Long) {
+        intentRepository.rejectStaleReadyIntents(
+            readyStatus = STATUS_READY,
+            updatedBefore = now - staleReadyTimeoutMillis,
+            rejectedStatus = STATUS_REJECTED,
+            rejectReason = "stale_signal",
+            updatedAt = now
+        )
+        intentRepository.rejectStalePlacingIntents(
+            placingStatus = STATUS_PLACING,
+            updatedBefore = now - stalePlacingTimeoutMillis,
+            rejectedStatus = STATUS_REJECTED,
+            rejectReason = "crown_execution_timeout",
+            updatedAt = now
         )
     }
 

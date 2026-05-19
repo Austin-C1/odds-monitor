@@ -24,7 +24,7 @@ class AutoBettingDecisionServiceTest {
             targetOdds = BigDecimal("0.95"),
             stakeAmount = BigDecimal("50.00")
         )
-        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", activeStatuses()))
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
             .thenReturn(false)
         val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
         `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
@@ -39,7 +39,7 @@ class AutoBettingDecisionServiceTest {
         assertEquals(BigDecimal("0.05000000"), decision.decimalEdge)
         assertEquals("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", decision.dedupeKey)
         assertEquals("ready", captor.value.status)
-        assertEquals(decision.dedupeKey, captor.value.activeDedupeKey)
+        assertEquals(null, captor.value.activeDedupeKey)
     }
 
     @Test
@@ -56,7 +56,7 @@ class AutoBettingDecisionServiceTest {
             targetOdds = BigDecimal("0.76"),
             stakeAmount = BigDecimal("50.00")
         )
-        `when`(repository.existsByDedupeKeyAndStatusIn("default:live:瑞典杯米亚尔比vs哈马比:handicap:-0.5:米亚尔比", activeStatuses()))
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:live:瑞典杯米亚尔比vs哈马比:handicap:-0.5:米亚尔比", lockedStatuses()))
             .thenReturn(false)
         val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
         `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
@@ -87,7 +87,7 @@ class AutoBettingDecisionServiceTest {
             oddsChangeDirection = "drop",
             stakeAmount = BigDecimal("50.00")
         )
-        `when`(repository.existsByDedupeKeyAndStatusIn("default:live:英超曼城vs利物浦:handicap:-0.5:利物浦", activeStatuses()))
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:live:英超曼城vs利物浦:handicap:-0.5:利物浦", lockedStatuses()))
             .thenReturn(false)
         val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
         `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
@@ -98,7 +98,7 @@ class AutoBettingDecisionServiceTest {
         assertEquals("accepted", decision.reason)
         assertEquals(BigDecimal("0.04000000"), decision.decimalEdge)
         assertEquals("ready", captor.value.status)
-        assertEquals(decision.dedupeKey, captor.value.activeDedupeKey)
+        assertEquals(null, captor.value.activeDedupeKey)
     }
 
     @Test
@@ -118,7 +118,7 @@ class AutoBettingDecisionServiceTest {
     @Test
     fun `signal age limit can be extended by the betting settings`() {
         val request = baseRequest(capturedAt = 1_000, maxSignalAgeSeconds = 120)
-        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", activeStatuses()))
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
             .thenReturn(false)
         val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
         `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
@@ -137,6 +137,25 @@ class AutoBettingDecisionServiceTest {
 
         val decision = service.createIntent(request, now = 122_001)
 
+        assertEquals("rejected", decision.status)
+        assertEquals("stale_signal", decision.reason)
+    }
+
+    @Test
+    fun `stale incoming signal still releases stale ready intent for the same signal`() {
+        val request = baseRequest(capturedAt = 1_000, maxSignalAgeSeconds = 120)
+        `when`(repository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 122_001)
+
+        verify(repository).rejectStaleReadyIntentByDedupeKey(
+            dedupeKey = "default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home",
+            readyStatus = "ready",
+            capturedBefore = 2_001,
+            rejectedStatus = "rejected",
+            rejectReason = "stale_signal",
+            updatedAt = 122_001
+        )
         assertEquals("rejected", decision.status)
         assertEquals("stale_signal", decision.reason)
     }
@@ -164,15 +183,17 @@ class AutoBettingDecisionServiceTest {
     }
 
     @Test
-    fun `weak crown edge is rejected`() {
+    fun `weak crown edge is accepted when target water is above the configured floor`() {
         val request = baseRequest(referenceOdds = BigDecimal("1.94"), targetOdds = BigDecimal("0.95"))
-        `when`(repository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
 
         val decision = service.createIntent(request, now = 1_000_000)
 
-        assertEquals("rejected", decision.status)
-        assertEquals("edge_below_minimum", decision.reason)
+        assertEquals("ready", decision.status)
+        assertEquals("accepted", decision.reason)
         assertEquals(BigDecimal("0.01000000"), decision.decimalEdge)
+        assertEquals(null, captor.value.activeDedupeKey)
     }
 
     @Test
@@ -194,16 +215,74 @@ class AutoBettingDecisionServiceTest {
     }
 
     @Test
-    fun `duplicate active intent for the same account match market and selection is rejected`() {
+    fun `duplicate placed intent for the same account match market and selection is rejected`() {
         val request = baseRequest()
-        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", activeStatuses()))
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
             .thenReturn(true)
         `when`(repository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
 
         val decision = service.createIntent(request, now = 1_000_000)
 
         assertEquals("rejected", decision.status)
-        assertEquals("duplicate_active_intent", decision.reason)
+        assertEquals("duplicate_placed_intent", decision.reason)
+    }
+
+    @Test
+    fun `qualifying signal is accepted even when the same signal already has an active intent`() {
+        val request = baseRequest()
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
+            .thenReturn(false)
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 1_000_000)
+
+        assertEquals("ready", decision.status)
+        assertEquals("accepted", decision.reason)
+        assertEquals(null, captor.value.activeDedupeKey)
+    }
+
+    @Test
+    fun `crown signal at requested minimum target odds is accepted without a minimum edge requirement`() {
+        val request = baseRequest(
+            referenceSourceKey = "crown",
+            targetSourceKey = "crown",
+            referenceOdds = BigDecimal("1.07"),
+            targetOdds = BigDecimal("1.08"),
+            minimumTargetOdds = BigDecimal("1.08")
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 1_000_000)
+
+        assertEquals("ready", decision.status)
+        assertEquals("accepted", decision.reason)
+        assertEquals(BigDecimal("0.01000000"), decision.decimalEdge)
+        assertEquals(null, captor.value.activeDedupeKey)
+    }
+
+    @Test
+    fun `stale ready intent for the same signal is released before duplicate check`() {
+        val request = baseRequest(capturedAt = 990_000, maxSignalAgeSeconds = 600)
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
+            .thenReturn(false)
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 1_000_000)
+
+        verify(repository).rejectStaleReadyIntentByDedupeKey(
+            dedupeKey = "default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home",
+            readyStatus = "ready",
+            capturedBefore = 400_000,
+            rejectedStatus = "rejected",
+            rejectReason = "stale_signal",
+            updatedAt = 1_000_000
+        )
+        assertEquals("ready", decision.status)
+        assertEquals("accepted", decision.reason)
+        assertEquals(null, captor.value.activeDedupeKey)
     }
 
     @Test
@@ -418,5 +497,5 @@ class AutoBettingDecisionServiceTest {
         maxSignalAgeSeconds = maxSignalAgeSeconds
     )
 
-    private fun activeStatuses() = listOf("ready", "placing", "placed_unverified", "placed")
+    private fun lockedStatuses() = listOf("placed")
 }

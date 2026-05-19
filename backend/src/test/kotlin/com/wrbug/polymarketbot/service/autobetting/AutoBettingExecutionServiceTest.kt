@@ -5,6 +5,7 @@ import com.wrbug.polymarketbot.entity.AutoBettingIntent
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.repository.AutoBettingIntentRepository
 import com.wrbug.polymarketbot.repository.OddsPlatformMatchRepository
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
@@ -12,6 +13,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import java.math.BigDecimal
+import java.lang.reflect.Modifier
 import java.util.Optional
 
 class AutoBettingExecutionServiceTest {
@@ -25,8 +27,29 @@ class AutoBettingExecutionServiceTest {
         crownBetPlacementGateway = gateway
     )
 
+    @BeforeEach
+    fun setUp() {
+        `when`(
+            intentRepository.markReadyIntentPlacingById(
+                21L,
+                "ready",
+                "placing",
+                2_000_000
+            )
+        ).thenReturn(1)
+    }
+
     @Test
-    fun `ready crown intent is marked placed only after crown history verification`() {
+    fun `crown execution does not block all accounts behind one synchronized request`() {
+        val method = AutoBettingExecutionService::class.java.methods.first {
+            it.name == "executeCrownIntent" && it.parameterTypes.size == 3
+        }
+
+        assertEquals(false, Modifier.isSynchronized(method.modifiers))
+    }
+
+    @Test
+    fun `ready crown intent keeps verified receipt reason after placement`() {
         val intent = liveHandicapIntent()
         val match = crownPlatformMatch()
         `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
@@ -46,7 +69,6 @@ class AutoBettingExecutionServiceTest {
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
-                    oddsTolerance = BigDecimal("0.02"),
                     lineValue = "0/0.5"
                 )
             )
@@ -55,7 +77,7 @@ class AutoBettingExecutionServiceTest {
                 placed = true,
                 historyVerified = true,
                 ticketReference = "CROWN-10001",
-                message = "crown_history_verified",
+                message = "crown_receipt_verified",
                 currentOdds = BigDecimal("0.87000000")
             )
         )
@@ -66,14 +88,13 @@ class AutoBettingExecutionServiceTest {
             intentId = 21L,
             request = AutoBettingExecutionRequest(
                 profileId = "k1chipm1",
-                loginUrl = "https://m407.mos077.com/",
-                oddsTolerance = BigDecimal("0.02")
+                loginUrl = "https://m407.mos077.com/"
             ),
             now = 2_000_000
         )
 
         assertEquals("placed", result.status)
-        assertEquals("crown_history_verified", result.reason)
+        assertEquals("crown_receipt_verified", result.reason)
         assertEquals(true, result.crownHistoryVerified)
         assertEquals(2_000_000, result.crownHistoryCheckedAt)
         assertEquals("CROWN-10001", result.crownBetReference)
@@ -82,7 +103,7 @@ class AutoBettingExecutionServiceTest {
     }
 
     @Test
-    fun `intent is rejected when crown odds moved outside tolerance before placement`() {
+    fun `intent is rejected when crown current odds are below minimum target odds before placement`() {
         val intent = liveHandicapIntent()
         `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
         `when`(
@@ -101,7 +122,6 @@ class AutoBettingExecutionServiceTest {
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
-                    oddsTolerance = BigDecimal("0.02"),
                     lineValue = "0/0.5"
                 )
             )
@@ -110,7 +130,7 @@ class AutoBettingExecutionServiceTest {
                 placed = false,
                 historyVerified = false,
                 ticketReference = null,
-                message = "crown_odds_moved",
+                message = "target_odds_below_minimum",
                 currentOdds = BigDecimal("0.84000000")
             )
         )
@@ -121,18 +141,59 @@ class AutoBettingExecutionServiceTest {
             intentId = 21L,
             request = AutoBettingExecutionRequest(
                 profileId = "k1chipm1",
-                loginUrl = "https://m407.mos077.com/",
-                oddsTolerance = BigDecimal("0.02")
+                loginUrl = "https://m407.mos077.com/"
             ),
             now = 2_000_000
         )
 
         assertEquals("rejected", result.status)
-        assertEquals("crown_odds_moved", result.reason)
+        assertEquals("target_odds_below_minimum", result.reason)
         assertEquals(false, result.crownHistoryVerified)
         assertEquals(null, result.crownBetReference)
         assertEquals(listOf("placing", "rejected"), captor.allValues.map { it.status })
         assertEquals(null, captor.allValues.last().activeDedupeKey)
+    }
+
+    @Test
+    fun `execution uses requested minimum target odds instead of original signal odds`() {
+        val intent = liveHandicapIntent()
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        stubCrownPlatformMatchFor(intent)
+        `when`(
+            gateway.placeBet(
+                CrownBetPlacementCommand(
+                    profileId = "k1chipm1",
+                    loginUrl = "https://m407.mos077.com/",
+                    betElementId = "bet_8764315_11049615_REH",
+                    stakeAmount = BigDecimal("10.0000"),
+                    targetOdds = BigDecimal("0.80000000"),
+                    lineValue = "0/0.5"
+                )
+            )
+        ).thenReturn(
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = true,
+                ticketReference = "CROWN-10004",
+                message = "crown_history_verified",
+                currentOdds = BigDecimal("0.82000000")
+            )
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/",
+                minimumTargetOdds = BigDecimal("0.80")
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("placed", result.status)
+        assertEquals("CROWN-10004", result.crownBetReference)
     }
 
     @Test
@@ -148,7 +209,6 @@ class AutoBettingExecutionServiceTest {
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
-                    oddsTolerance = BigDecimal("0.02"),
                     lineValue = "0/0.5"
                 )
             )
@@ -168,8 +228,7 @@ class AutoBettingExecutionServiceTest {
             intentId = 21L,
             request = AutoBettingExecutionRequest(
                 profileId = "k1chipm1",
-                loginUrl = "https://m407.mos077.com/",
-                oddsTolerance = BigDecimal("0.02")
+                loginUrl = "https://m407.mos077.com/"
             ),
             now = 2_000_000
         )
@@ -196,7 +255,6 @@ class AutoBettingExecutionServiceTest {
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
-                    oddsTolerance = BigDecimal("0.02"),
                     lineValue = "0/0.5"
                 )
             )
@@ -208,8 +266,7 @@ class AutoBettingExecutionServiceTest {
             intentId = 21L,
             request = AutoBettingExecutionRequest(
                 profileId = "k1chipm1",
-                loginUrl = "https://m407.mos077.com/",
-                oddsTolerance = BigDecimal("0.02")
+                loginUrl = "https://m407.mos077.com/"
             ),
             now = 2_000_000
         )
@@ -250,7 +307,6 @@ class AutoBettingExecutionServiceTest {
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
-                    oddsTolerance = BigDecimal("0.02"),
                     lineValue = "0/0.5"
                 )
             )
@@ -270,8 +326,7 @@ class AutoBettingExecutionServiceTest {
             intentId = 21L,
             request = AutoBettingExecutionRequest(
                 profileId = "k1chipm1",
-                loginUrl = "https://m407.mos077.com/",
-                oddsTolerance = BigDecimal("0.02")
+                loginUrl = "https://m407.mos077.com/"
             ),
             now = 2_000_000
         )

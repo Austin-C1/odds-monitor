@@ -748,11 +748,15 @@ class AdsPowerLocalApiService(
                 latch.countDown()
             }
         })
-        if (!latch.await(timeoutSeconds, TimeUnit.SECONDS)) {
+        return try {
+            if (!latch.await(timeoutSeconds, TimeUnit.SECONDS)) {
+                null
+            } else {
+                resultRef.get()
+            }
+        } finally {
             webSocket.cancel()
-            return null
         }
-        return resultRef.get()
     }
 
     private fun crownBetExecutionScript(argsJson: String): String {
@@ -822,6 +826,60 @@ class AdsPowerLocalApiService(
               const currentRawText = () => allInDocuments((doc) => [doc.body ? doc.body.textContent : ''])
                 .filter(Boolean)
                 .join('\n');
+              const disableNativePrint = () => {
+                const guardWindow = (win) => {
+                  const noop = () => {};
+                  try {
+                    Object.defineProperty(win, 'print', {
+                      configurable: true,
+                      writable: true,
+                      value: noop
+                    });
+                  } catch (_) {
+                    win.print = noop;
+                  }
+                  try {
+                    if (!win.__autoBetOriginalOpen && typeof win.open === 'function') {
+                      win.__autoBetOriginalOpen = win.open.bind(win);
+                    }
+                    const openWindow = win.__autoBetOriginalOpen;
+                    if (typeof openWindow === 'function') {
+                      Object.defineProperty(win, 'open', {
+                        configurable: true,
+                        writable: true,
+                        value: (...openArgs) => {
+                          const popup = openWindow(...openArgs);
+                          try {
+                            if (popup) {
+                              guardWindow(popup);
+                              setTimeout(() => guardWindow(popup), 50);
+                              setTimeout(() => guardWindow(popup), 250);
+                            }
+                          } catch (_) {
+                            // Ignore popup access failures.
+                          }
+                          return popup;
+                        }
+                      });
+                    }
+                  } catch (_) {
+                    // Ignore window.open guard failures.
+                  }
+                  win.onbeforeprint = null;
+                  win.onafterprint = null;
+                  if (win.document) {
+                    win.document.onbeforeprint = null;
+                    win.document.onafterprint = null;
+                  }
+                };
+                for (const win of accessibleWindows()) {
+                  try {
+                    guardWindow(win);
+                  } catch (_) {
+                    // Ignore cross-frame print guard failures.
+                  }
+                }
+              };
               const readWagerCount = () => {
                 const countText = [
                   findElementById('wager_count')?.innerText,
@@ -835,6 +893,14 @@ class AdsPowerLocalApiService(
                 if (ticketMatch) return ticketMatch[1];
                 const fantasyMatch = String(text || '').match(/\b(?:OU|HDP|FS|FT|BK)[A-Z0-9]*\d{6,}\b/i);
                 return fantasyMatch ? fantasyMatch[0] : null;
+              };
+              const receiptVerified = (text) => {
+                const value = String(text || '');
+                if (/Rejected|Failed to Place|not placed|incorrect|maximum|minimum/i.test(value)) return false;
+                if (/successfully placed|YOUR BETS HAVE BEEN SUCCESSFULLY PLACED|BET RECEIPT|Ticket No:/i.test(value)) {
+                  return true;
+                }
+                return /Confirmed/i.test(value) && Boolean(extractReceiptReference(value));
               };
                 const clickElement = (element) => {
                   element.scrollIntoView({ block: 'center', inline: 'center' });
@@ -993,6 +1059,7 @@ class AdsPowerLocalApiService(
                   }
                   return waitFor(() => findElementById(args.betElementId), 8000, 300);
                 };
+                disableNativePrint();
                 await clearExistingSlip();
                 const betElement = await openLiveSoccer();
                 if (!betElement) {
@@ -1017,11 +1084,11 @@ class AdsPowerLocalApiService(
                 if (!Number.isFinite(currentOdds)) {
                   return finish({ placed: false, historyVerified: false, message: 'crown_odds_missing' });
                 }
-                if (currentOdds + Number(args.oddsTolerance) < Number(args.targetOdds)) {
+                if (currentOdds < Number(args.targetOdds)) {
                   return finish({
                     placed: false,
                     historyVerified: false,
-                  message: 'crown_odds_moved',
+                    message: 'target_odds_below_minimum',
                   currentOdds
                 });
               }
@@ -1078,21 +1145,25 @@ class AdsPowerLocalApiService(
                   }
                   return finish({ placed: false, historyVerified: false, message: 'crown_place_button_disabled', currentOdds });
                 }
+                disableNativePrint();
               clickElement(orderButton);
+              disableNativePrint();
               await confirmBetIfPrompted();
+              disableNativePrint();
 
               const receiptText = await waitFor(() => {
+                disableNativePrint();
                 const confirmVisible = isVisible(findElementById('alert_confirm'))
                   || isVisible(findElementById('C_alert_confirm'));
                 if (confirmVisible) {
                   confirmBetIfPrompted();
                 }
                 const text = currentText();
-                if (/successfully placed|BET RECEIPT|Ticket No:/i.test(text)) return text;
+                if (receiptVerified(text)) return text;
                 if (/Rejected|Failed to Place|not placed|incorrect|maximum|minimum/i.test(text)) return text;
                 return null;
               }, 18000, 500);
-              if (!receiptText || !/successfully placed|BET RECEIPT|Ticket No:/i.test(receiptText)) {
+              if (!receiptText || !receiptVerified(receiptText)) {
                 return finish({
                   placed: false,
                   historyVerified: false,
@@ -1102,6 +1173,15 @@ class AdsPowerLocalApiService(
                 });
               }
               const ticketReference = extractReceiptReference(receiptText);
+              if (ticketReference && receiptVerified(receiptText)) {
+                return finish({
+                  placed: true,
+                  historyVerified: true,
+                  ticketReference,
+                  message: 'crown_receipt_verified',
+                  currentOdds
+                });
+              }
 
               const historyButton = findElementById('header_todaywagers')
                 || findElementById('menu_todaywagers');
