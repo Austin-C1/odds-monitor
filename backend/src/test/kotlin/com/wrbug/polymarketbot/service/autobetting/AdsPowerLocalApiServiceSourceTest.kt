@@ -39,4 +39,14 @@ class AdsPowerLocalApiServiceSourceTest {
         assertFalse(selectionBlock.contains("?: pageTargets.firstOrNull()"))
         assertTrue(hostEqualsBlock.contains("hostFromUrl(this)"))
     }
+
+    @Test
+    fun `crown session matching checks every crown page target instead of only the first one`() {
+        val matchBlock = source.substringAfter("fun matchCrownSession")
+            .substringBefore("private fun noMatchedCrownSession")
+
+        assertTrue(source.contains("readCrownPageSnapshots"))
+        assertTrue(matchBlock.contains("flatMap"))
+        assertFalse(matchBlock.contains("val snapshot = active.debugPort?.let { readCrownPageSnapshot"))
+    }
 }

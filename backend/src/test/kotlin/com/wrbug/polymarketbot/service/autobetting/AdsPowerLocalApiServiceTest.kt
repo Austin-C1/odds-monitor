@@ -352,6 +352,23 @@ class AdsPowerLocalApiServiceTest {
     }
 
     @Test
+    fun `crown session analyzer prefers visible account header over stale page title`() {
+        val result = CrownSessionPageAnalyzer.analyze(
+            text = """
+            skjd447RMB2,000.00
+            STATEMENT
+            MESSAGES
+            """.trimIndent(),
+            pageTitle = "cs1"
+        )
+
+        assertTrue(result.loggedIn)
+        assertEquals("online", result.accountStatus)
+        assertEquals(BigDecimal("2000.00"), result.balance)
+        assertEquals("skjd447", result.loginName)
+    }
+
+    @Test
     fun `crown session analyzer reports online from logged in web menu without balance`() {
         val result = CrownSessionPageAnalyzer.analyze(
             """

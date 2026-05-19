@@ -233,7 +233,10 @@ class AdsPowerLocalApiService(
             )
         }
 
-        val snapshot = readCrownPageSnapshot(debugPort, loginUrl)
+        val normalizedLoginName = loginName?.trim().orEmpty()
+        val analyzedSnapshot = readCrownPageSnapshots(debugPort, loginUrl)
+            .map { CrownAnalyzedSnapshot(it, CrownSessionPageAnalyzer.analyze(it.text, it.title)) }
+            .selectForLoginName(normalizedLoginName)
             ?: return AdsPowerCrownSessionDto(
                 profileId = active.profileId,
                 opened = true,
@@ -243,8 +246,8 @@ class AdsPowerLocalApiService(
                 debugPort = debugPort,
                 checkedAt = now
             )
-        val analysis = CrownSessionPageAnalyzer.analyze(snapshot.text, snapshot.title)
-        val normalizedLoginName = loginName?.trim().orEmpty()
+        val snapshot = analyzedSnapshot.snapshot
+        val analysis = analyzedSnapshot.analysis
         if (analysis.loggedIn && normalizedLoginName.isNotBlank() && analysis.loginName.conflictsWithLoginName(normalizedLoginName)) {
             return AdsPowerCrownSessionDto(
                 profileId = active.profileId,
@@ -292,36 +295,36 @@ class AdsPowerLocalApiService(
         val activeProfiles = listLocalActiveProfiles(now)
         if (activeProfiles.isEmpty()) {
             val profileCandidates = loadProfileMetadataPage()
-                .mapNotNull { profile -> buildCandidateFromProfileMetadata(profile, loginUrl, now) }
+                .flatMap { profile -> buildCandidatesFromProfileMetadata(profile, loginUrl, now) }
             val matched = AdsPowerCrownProfileMatcher.match(normalizedLoginName, profileCandidates, normalizedPreferredProfileId)
-                ?: profileCandidates.singleOrNull { it.opened && !it.pageLoginName.conflictsWithLoginName(normalizedLoginName) }
+                ?: profileCandidates.singleOrNull {
+                    it.opened &&
+                        it.hasConfiguredLoginEvidence(normalizedLoginName) &&
+                        !it.pageLoginName.conflictsWithLoginName(normalizedLoginName)
+                }
             if (matched != null) {
                 return matched.toSessionDto(now)
             }
             return noMatchedCrownSession(normalizedLoginName, profileCandidates, now)
         }
         val metadata = loadProfileMetadata(activeProfiles.map { it.profileId })
-        val candidates = activeProfiles.map { active ->
+        val candidates = activeProfiles.flatMap { active ->
             val profile = metadata[active.profileId]
-            val snapshot = active.debugPort?.let { readCrownPageSnapshot(it, loginUrl) }
-            val analysis = snapshot?.let { CrownSessionPageAnalyzer.analyze(it.text, it.title) }
-            AdsPowerCrownSessionCandidateDto(
-                profileId = active.profileId,
-                profileSerialNumber = profile?.serialNumber,
-                profileName = profile?.name,
-                profileUsername = profile?.username,
-                remark = profile?.remark,
-                pageLoginName = analysis?.loginName,
-                opened = true,
-                loggedIn = analysis?.loggedIn == true,
-                accountStatus = analysis?.accountStatus ?: "crown_page_not_found",
-                balance = analysis?.balance,
-                currency = analysis?.currency ?: "CNY",
-                pageUrl = snapshot?.pageUrl,
-                message = analysis?.message ?: "crown_page_not_found",
-                debugPort = active.debugPort,
-                checkedAt = now
-            )
+            val snapshots = active.debugPort?.let { readCrownPageSnapshots(it, loginUrl) }.orEmpty()
+            if (snapshots.isEmpty()) {
+                listOf(buildCrownSessionCandidate(active.profileId, profile, active.debugPort, null, null, now))
+            } else {
+                snapshots.map { snapshot ->
+                    buildCrownSessionCandidate(
+                        profileId = active.profileId,
+                        profile = profile,
+                        debugPort = active.debugPort,
+                        snapshot = snapshot,
+                        analysis = CrownSessionPageAnalyzer.analyze(snapshot.text, snapshot.title),
+                        now = now
+                    )
+                }
+            }
         }
         val matched = AdsPowerCrownProfileMatcher.match(normalizedLoginName, candidates, normalizedPreferredProfileId)
         if (matched != null) {
@@ -423,14 +426,29 @@ class AdsPowerLocalApiService(
         return readPageSnapshotViaCdp(wsUrl, target)
     }
 
+    private fun readCrownPageSnapshots(debugPort: String, loginUrl: String?): List<CrownPageSnapshot> {
+        return readCrownPageTargets(debugPort, loginUrl).mapNotNull { target ->
+            val wsUrl = target.webSocketDebuggerUrl?.trim().orEmpty()
+            if (wsUrl.isBlank()) {
+                CrownPageSnapshot(target.pageUrl.orEmpty(), target.title.orEmpty(), "")
+            } else {
+                readPageSnapshotViaCdp(wsUrl, target)
+            }
+        }
+    }
+
     private fun readCrownPageTarget(debugPort: String, loginUrl: String?): BrowserTarget? {
-        val port = debugPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
-        val endpoint = "http://127.0.0.1:$port/json/list".toHttpUrlOrNull() ?: return null
+        return readCrownPageTargets(debugPort, loginUrl).firstOrNull()
+    }
+
+    private fun readCrownPageTargets(debugPort: String, loginUrl: String?): List<BrowserTarget> {
+        val port = debugPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: return emptyList()
+        val endpoint = "http://127.0.0.1:$port/json/list".toHttpUrlOrNull() ?: return emptyList()
         val request = Request.Builder().url(endpoint).get().build()
         val targets = try {
             httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val root = objectMapper.readTree(response.body?.string().orEmpty()).takeIf { it.isArray } ?: return null
+                if (!response.isSuccessful) return emptyList()
+                val root = objectMapper.readTree(response.body?.string().orEmpty()).takeIf { it.isArray } ?: return emptyList()
                 root.map { node ->
                     BrowserTarget(
                         type = node.path("type").textOrNull(),
@@ -441,19 +459,26 @@ class AdsPowerLocalApiService(
                 }
             }
         } catch (_: Exception) {
-            return null
+            return emptyList()
         }
-        return selectCrownTarget(targets, loginUrl)
+        return selectCrownTargets(targets, loginUrl)
     }
 
     private fun selectCrownTarget(targets: List<BrowserTarget>, loginUrl: String?): BrowserTarget? {
+        return selectCrownTargets(targets, loginUrl).firstOrNull()
+    }
+
+    private fun selectCrownTargets(targets: List<BrowserTarget>, loginUrl: String?): List<BrowserTarget> {
         val pageTargets = targets.filter { it.type == "page" && !it.pageUrl.isNullOrBlank() }
         val loginHost = hostFromUrl(loginUrl)
-        return pageTargets.firstOrNull { it.pageUrl.hostEquals(loginHost) }
-            ?: pageTargets.firstOrNull { target ->
+        val exactHostTargets = pageTargets.filter { it.pageUrl.hostEquals(loginHost) }
+        val knownCrownTargets = pageTargets.filter { target ->
                 val host = hostFromUrl(target.pageUrl).orEmpty()
                 host.contains("mos077") || host.contains("hga") || host.contains("112.121.") || host == "134.159.80.63"
             }
+        return (exactHostTargets + knownCrownTargets).distinctBy { target ->
+            listOf(target.pageUrl.orEmpty(), target.webSocketDebuggerUrl.orEmpty(), target.title.orEmpty()).joinToString("|")
+        }
     }
 
     private fun listLocalActiveProfiles(now: Long): List<AdsPowerActiveProfile> {
@@ -540,26 +565,48 @@ class AdsPowerLocalApiService(
         }
     }
 
-    private fun buildCandidateFromProfileMetadata(
+    private fun buildCandidatesFromProfileMetadata(
         profile: AdsPowerProfileMetadata,
         loginUrl: String?,
         now: Long
-    ): AdsPowerCrownSessionCandidateDto? {
+    ): List<AdsPowerCrownSessionCandidateDto> {
         val activeByProfileId = checkProfileActive(profile.profileId, now)
         val active = if (activeByProfileId.opened) {
             activeByProfileId
         } else {
             profile.serialNumber?.let { checkProfileActive(it, now) }?.takeIf { it.opened }
-        } ?: return null
-        val snapshot = active.debugPort?.let { readCrownPageSnapshot(it, loginUrl) }
-        val analysis = snapshot?.let { CrownSessionPageAnalyzer.analyze(it.text, it.title) }
-        val fallbackStatus = if (active.debugPort.isNullOrBlank()) "browser_debug_port_missing" else "crown_page_not_found"
+        } ?: return emptyList()
+        val snapshots = active.debugPort?.let { readCrownPageSnapshots(it, loginUrl) }.orEmpty()
+        if (snapshots.isEmpty()) {
+            return listOf(buildCrownSessionCandidate(profile.profileId, profile, active.debugPort, null, null, now))
+        }
+        return snapshots.map { snapshot ->
+            buildCrownSessionCandidate(
+                profileId = profile.profileId,
+                profile = profile,
+                debugPort = active.debugPort,
+                snapshot = snapshot,
+                analysis = CrownSessionPageAnalyzer.analyze(snapshot.text, snapshot.title),
+                now = now
+            )
+        }
+    }
+
+    private fun buildCrownSessionCandidate(
+        profileId: String,
+        profile: AdsPowerProfileMetadata?,
+        debugPort: String?,
+        snapshot: CrownPageSnapshot?,
+        analysis: CrownSessionAnalysis?,
+        now: Long
+    ): AdsPowerCrownSessionCandidateDto {
+        val fallbackStatus = if (debugPort.isNullOrBlank()) "browser_debug_port_missing" else "crown_page_not_found"
         return AdsPowerCrownSessionCandidateDto(
-            profileId = profile.profileId,
-            profileSerialNumber = profile.serialNumber,
-            profileName = profile.name,
-            profileUsername = profile.username,
-            remark = profile.remark,
+            profileId = profileId,
+            profileSerialNumber = profile?.serialNumber,
+            profileName = profile?.name,
+            profileUsername = profile?.username,
+            remark = profile?.remark,
             pageLoginName = analysis?.loginName,
             opened = true,
             loggedIn = analysis?.loggedIn == true,
@@ -568,7 +615,7 @@ class AdsPowerLocalApiService(
             currency = analysis?.currency ?: "CNY",
             pageUrl = snapshot?.pageUrl,
             message = analysis?.message ?: fallbackStatus,
-            debugPort = active.debugPort,
+            debugPort = debugPort,
             checkedAt = now
         )
     }
@@ -1071,6 +1118,25 @@ class AdsPowerLocalApiService(
             .any { value -> value == normalizedLoginName || value.contains(normalizedLoginName) }
     }
 
+    private fun AdsPowerCrownSessionCandidateDto.hasConfiguredLoginEvidence(loginName: String): Boolean {
+        val normalizedLoginName = normalizeProfileMatchText(loginName)
+        return normalizedLoginName.isNotBlank() &&
+            listOf(profileUsername, profileName, remark)
+                .map(::normalizeProfileMatchText)
+                .any { value -> value == normalizedLoginName || value.contains(normalizedLoginName) }
+    }
+
+    private fun List<CrownAnalyzedSnapshot>.selectForLoginName(loginName: String): CrownAnalyzedSnapshot? {
+        val normalizedLoginName = normalizeProfileMatchText(loginName)
+        if (normalizedLoginName.isNotBlank()) {
+            firstOrNull { snapshot ->
+                snapshot.analysis.loggedIn &&
+                    normalizeProfileMatchText(snapshot.analysis.loginName) == normalizedLoginName
+            }?.let { return it }
+        }
+        return firstOrNull { it.analysis.loggedIn } ?: firstOrNull()
+    }
+
     private fun normalizeProfileMatchText(value: String?): String {
         return value.orEmpty()
             .trim()
@@ -1113,6 +1179,11 @@ class AdsPowerLocalApiService(
         val pageUrl: String,
         val title: String,
         val text: String
+    )
+
+    private data class CrownAnalyzedSnapshot(
+        val snapshot: CrownPageSnapshot,
+        val analysis: CrownSessionAnalysis
     )
 
     private data class AdsPowerActiveProfile(
@@ -1248,8 +1319,6 @@ internal object CrownSessionPageAnalyzer {
     }
 
     private fun extractLoginName(text: String, pageTitle: String?): String? {
-        normalizeLoginCandidate(pageTitle)?.let { return it }
-
         val compactHeaderLoginName = Regex("""(?i)([a-z0-9][a-z0-9._-]{2,31})\s*RMB\s*[0-9]""")
             .find(text)
             ?.groupValues
@@ -1267,7 +1336,7 @@ internal object CrownSessionPageAnalyzer {
             .minOrNull()
             ?: Int.MAX_VALUE
         if (markerStart == Int.MAX_VALUE) {
-            return null
+            return normalizeLoginCandidate(pageTitle)
         }
 
         val header = text.take(markerStart)
@@ -1275,6 +1344,7 @@ internal object CrownSessionPageAnalyzer {
             .findAll(header)
             .map { it.value }
             .firstNotNullOfOrNull(::normalizeLoginCandidate)
+            ?: normalizeLoginCandidate(pageTitle)
     }
 
     private fun normalizeLoginCandidate(value: String?): String? {
