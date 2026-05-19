@@ -49,4 +49,14 @@ class AdsPowerLocalApiServiceSourceTest {
         assertTrue(matchBlock.contains("flatMap"))
         assertFalse(matchBlock.contains("val snapshot = active.debugPort?.let { readCrownPageSnapshot"))
     }
+
+    @Test
+    fun `crown page snapshot reads hidden account and balance fields`() {
+        val snapshotBlock = source.substringAfter("private fun readPageSnapshotViaCdp")
+            .substringBefore("private fun evaluateCrownPageJson")
+
+        assertTrue(snapshotBlock.contains("acc_username"))
+        assertTrue(snapshotBlock.contains("header_credit"))
+        assertTrue(snapshotBlock.contains("userData"))
+    }
 }

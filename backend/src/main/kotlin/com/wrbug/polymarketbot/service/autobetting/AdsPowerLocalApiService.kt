@@ -647,6 +647,28 @@ class AdsPowerLocalApiService(
                   seen.add(win);
                   const doc = win.document;
                   const parts = [doc.body ? doc.body.innerText : ''];
+                  const readNodeText = (selector) => {
+                    const node = doc.querySelector(selector);
+                    return node ? (node.innerText || node.textContent || '').trim() : '';
+                  };
+                  const signalLines = [];
+                  const pushSignal = (label, value) => {
+                    const text = String(value || '').replace(/\s+/g, ' ').trim();
+                    if (text) signalLines.push(`${'$'}{label}: ${'$'}{text}`);
+                  };
+                  pushSignal('username', readNodeText('#acc_username'));
+                  pushSignal('balance', readNodeText('#header_money') || readNodeText('.money_header') || readNodeText('#acc_money'));
+                  const credit = readNodeText('#header_credit');
+                  const currency = readNodeText('#header_currency') || 'RMB';
+                  if (credit) pushSignal('balance', `${'$'}{currency} ${'$'}{credit}`);
+                  try {
+                    if (win.userData && typeof win.userData === 'object') {
+                      pushSignal('username', win.userData.username);
+                    }
+                  } catch (_) {
+                    // Ignore locked global values from the betting page.
+                  }
+                  parts.push(...signalLines);
                   for (const frame of Array.from(win.frames || [])) {
                     try {
                       parts.push(...collect(frame));

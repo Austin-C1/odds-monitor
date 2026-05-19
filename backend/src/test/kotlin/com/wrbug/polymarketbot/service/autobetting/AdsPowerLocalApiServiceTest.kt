@@ -434,6 +434,28 @@ class AdsPowerLocalApiServiceTest {
     }
 
     @Test
+    fun `crown session analyzer reads account from hidden crown page signals`() {
+        val result = CrownSessionPageAnalyzer.analyze(
+            text = """
+            In-Play
+            Hot
+            Today
+            My Bets
+            RMB
+            2,000.00
+            username: cuu0mdl1lac
+            balance: RMB 2,000.00
+            """.trimIndent(),
+            pageTitle = "Welcome"
+        )
+
+        assertTrue(result.loggedIn)
+        assertEquals("online", result.accountStatus)
+        assertEquals(BigDecimal("2000.00"), result.balance)
+        assertEquals("cuu0mdl1lac", result.loginName)
+    }
+
+    @Test
     fun `crown session analyzer reads login name from crown browser tab title`() {
         val result = CrownSessionPageAnalyzer.analyze(
             text = """
