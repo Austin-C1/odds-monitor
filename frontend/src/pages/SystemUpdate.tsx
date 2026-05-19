@@ -4,7 +4,8 @@ import {
     CloudUploadOutlined,
     ReloadOutlined,
     CheckCircleOutlined,
-    ExclamationCircleOutlined
+    ExclamationCircleOutlined,
+    DeleteOutlined
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { apiClient } from '../services/api'
@@ -29,6 +30,12 @@ interface UpdateStatus {
     error: string | null
 }
 
+interface CleanupResult {
+    deletedSnapshots: number
+    deletedCollectionLogs: number
+    deletedBrokenAlertRecords: number
+}
+
 const SystemUpdate: React.FC = () => {
     const { t, i18n } = useTranslation()
     const [currentVersion, setCurrentVersion] = useState('')
@@ -40,6 +47,8 @@ const SystemUpdate: React.FC = () => {
         message: '',
         error: null
     })
+    const [cleanupRunning, setCleanupRunning] = useState(false)
+    const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
 
     useEffect(() => {
         fetchCurrentVersion()
@@ -161,6 +170,42 @@ const SystemUpdate: React.FC = () => {
                     }
                 } catch (error: any) {
                     message.error(error.message || t('systemUpdate.startFailed'))
+                }
+            }
+        })
+    }
+
+    const handleRunCleanup = () => {
+        Modal.confirm({
+            title: '确认执行历史数据大清理',
+            icon: <ExclamationCircleOutlined />,
+            content: (
+                <div>
+                    <p>只清理旧赔率快照、旧采集日志和坏历史告警。</p>
+                    <p>账号、配置、投注记录和当前盘口不会被删除。</p>
+                    <p>清理过程按批次执行，数据量较大时可能需要几十秒。</p>
+                </div>
+            ),
+            okText: '执行大清理',
+            okType: 'danger',
+            cancelText: '取消',
+            onOk: async () => {
+                setCleanupRunning(true)
+                setCleanupResult(null)
+                try {
+                    const response = await apiClient.post('/update/cleanup', {})
+                    const data = response.data
+
+                    if (data.code === 0 && data.data) {
+                        setCleanupResult(data.data)
+                        message.success('大清理完成')
+                    } else {
+                        message.error(data.msg || '大清理失败')
+                    }
+                } catch (error: any) {
+                    message.error(error.message || '大清理失败')
+                } finally {
+                    setCleanupRunning(false)
                 }
             }
         })
@@ -457,6 +502,56 @@ const SystemUpdate: React.FC = () => {
                 )}
 
                 {/* 使用提示 */}
+                {!updateStatus.updating && (
+                    <div style={{
+                        padding: '16px',
+                        border: '1px solid #d9d9d9',
+                        borderRadius: '8px',
+                        background: '#fff'
+                    }}>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            justifyContent: 'space-between',
+                            gap: '16px',
+                            flexWrap: 'wrap'
+                        }}>
+                            <div>
+                                <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px' }}>
+                                    历史数据大清理
+                                </div>
+                                <div style={{ fontSize: '14px', color: '#595959', lineHeight: 1.7 }}>
+                                    只清理旧赔率快照、旧采集日志和坏历史告警，不会删除账号、配置、投注记录和当前盘口。
+                                </div>
+                            </div>
+                            <Button
+                                danger
+                                icon={<DeleteOutlined />}
+                                onClick={handleRunCleanup}
+                                loading={cleanupRunning}
+                            >
+                                执行大清理
+                            </Button>
+                        </div>
+
+                        {cleanupResult && (
+                            <Alert
+                                message="大清理完成"
+                                description={
+                                    <Space wrap size="large" style={{ marginTop: '4px' }}>
+                                        <span>旧赔率快照：{cleanupResult.deletedSnapshots}</span>
+                                        <span>旧采集日志：{cleanupResult.deletedCollectionLogs}</span>
+                                        <span>坏历史告警：{cleanupResult.deletedBrokenAlertRecords}</span>
+                                    </Space>
+                                }
+                                type="success"
+                                showIcon
+                                style={{ marginTop: '12px', borderRadius: '8px' }}
+                            />
+                        )}
+                    </div>
+                )}
+
                 {!updateStatus.updating && !(updateInfo && updateInfo.hasUpdate) && (
                     <Alert
                         message={

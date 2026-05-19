@@ -13,6 +13,7 @@ import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.stereotype.Repository
+import org.springframework.transaction.annotation.Transactional
 
 @Repository
 interface OddsDataSourceConfigRepository : JpaRepository<OddsDataSourceConfig, Long> {
@@ -22,6 +23,20 @@ interface OddsDataSourceConfigRepository : JpaRepository<OddsDataSourceConfig, L
 @Repository
 interface OddsAlertRecordRepository : JpaRepository<OddsAlertRecord, Long> {
     fun findTop100ByOrderByCreatedAtDesc(): List<OddsAlertRecord>
+
+    @Modifying
+    @Transactional
+    @Query(
+        """
+        DELETE FROM odds_alert_records
+        WHERE title LIKE '%TextEncodingUtils%'
+           OR message LIKE '%TextEncodingUtils%'
+           OR message LIKE '%escapeHtml(%'
+           OR message LIKE '%formatMergedOdds(%'
+        """,
+        nativeQuery = true
+    )
+    fun deleteLegacyBrokenTemplateRecords(): Int
 }
 
 @Repository
@@ -40,6 +55,21 @@ interface OddsCollectionLogRepository : JpaRepository<OddsCollectionLog, Long> {
         nativeQuery = true
     )
     fun findTop1FailureBySourceKey(@Param("sourceKey") sourceKey: String): OddsCollectionLog?
+
+    @Modifying
+    @Transactional
+    @Query(
+        """
+        DELETE FROM odds_collection_logs
+        WHERE started_at < :before
+        LIMIT :limit
+        """,
+        nativeQuery = true
+    )
+    fun deleteBatchOlderThan(
+        @Param("before") before: Long,
+        @Param("limit") limit: Int
+    ): Int
 }
 
 @Repository
@@ -87,6 +117,22 @@ interface OddsSnapshotRepository : JpaRepository<OddsSnapshot, Long> {
     fun findTop1ByMarketIdOrderByCapturedAtDesc(marketId: Long): OddsSnapshot?
 
     @Modifying
+    @Transactional
     @Query("delete from OddsSnapshot snapshot where snapshot.capturedAt < :before")
     fun deleteOlderThan(@Param("before") before: Long): Int
+
+    @Modifying
+    @Transactional
+    @Query(
+        """
+        DELETE FROM odds_snapshots
+        WHERE captured_at < :before
+        LIMIT :limit
+        """,
+        nativeQuery = true
+    )
+    fun deleteBatchOlderThan(
+        @Param("before") before: Long,
+        @Param("limit") limit: Int
+    ): Int
 }

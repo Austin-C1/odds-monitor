@@ -1,6 +1,8 @@
 package com.wrbug.polymarketbot.controller.system
 
 import com.wrbug.polymarketbot.dto.ApiResponse
+import com.wrbug.polymarketbot.service.oddsmonitor.OddsMonitorCleanupResult
+import com.wrbug.polymarketbot.service.oddsmonitor.OddsMonitorMaintenanceService
 import com.wrbug.polymarketbot.service.system.GitHubUpdateService
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -11,7 +13,8 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/update")
 class UpdateController(
-    private val gitHubUpdateService: GitHubUpdateService
+    private val gitHubUpdateService: GitHubUpdateService,
+    private val oddsMonitorMaintenanceService: OddsMonitorMaintenanceService
 ) {
 
     @GetMapping("/version")
@@ -43,6 +46,13 @@ class UpdateController(
         return result.fold(
             onSuccess = { ResponseEntity.ok(ApiResponse.success(Unit)) },
             onFailure = { ResponseEntity.ok(ApiResponse.error(409, it.message ?: "更新启动失败")) }
+        )
+    }
+
+    @PostMapping("/cleanup")
+    fun cleanupHistory(): ResponseEntity<ApiResponse<OddsMonitorCleanupResult>> {
+        return ResponseEntity.ok(
+            ApiResponse.success(oddsMonitorMaintenanceService.manualCleanup())
         )
     }
 
