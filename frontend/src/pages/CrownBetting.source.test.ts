@@ -66,6 +66,8 @@ describe('crown betting pages source', () => {
     expect(source).toContain('投注上限')
     expect(source).toContain('赔率波动容忍')
     expect(source).toContain('最低赔率优势')
+    expect(source).toContain('信号有效期(秒)')
+    expect(source).toContain('maxSignalAgeSeconds')
     expect(source).toContain('AdsPower Profile ID')
     expect(source).toContain('检测 AdsPower')
     expect(source).toContain('打开环境')
@@ -93,6 +95,7 @@ describe('crown betting pages source', () => {
     expect(source).toContain("account.status === 'success'")
     expect(source).toContain('buildAutoBettingExecutionPlan')
     expect(source).toContain('extractCrownAlertSignalCandidates')
+    expect(source).toContain('filterLatestCrownAlertSignalBatch')
     expect(source).not.toContain('buildAutoBettingSimulation')
     expect(source).not.toContain('crownBettingSimulation')
     expect(source).not.toContain('阿森纳 vs 切尔西')
@@ -106,6 +109,17 @@ describe('crown betting pages source', () => {
     expect(source).not.toContain("rules={[{ required: true, message: '请输入 AdsPower Profile ID' }]}")
     expect(source).not.toContain('name="status"')
     expect(source).not.toContain('name="balance"')
+  })
+
+  it('does not show running state for already handled betting signals', () => {
+    const source = readFileSync(pagePath, 'utf8')
+    const duplicateGuardIndex = source.indexOf('processedSignalKeysRef.current.has(signalKey)')
+    const cooldownGuardIndex = source.indexOf('Date.now() - lastAttemptAt < AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS')
+    const runningStateIndex = source.indexOf('setExecutionRunning(true)')
+
+    expect(duplicateGuardIndex).toBeGreaterThan(-1)
+    expect(cooldownGuardIndex).toBeGreaterThan(duplicateGuardIndex)
+    expect(runningStateIndex).toBeGreaterThan(cooldownGuardIndex)
   })
 
   it('does not seed hard-coded crown accounts into production storage', () => {

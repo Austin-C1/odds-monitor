@@ -16,7 +16,8 @@ class AutoBettingDecisionService(
     private val activeStatuses = listOf("ready", "placing", "placed_unverified", "placed")
     private val supportedPhases = setOf("prematch", "live")
     private val supportedMarkets = setOf("handicap", "total")
-    private val maxSignalAgeMillis = 30_000L
+    private val defaultMaxSignalAgeMillis = 30_000L
+    private val maxConfigurableSignalAgeSeconds = 3_600L
     private val maxSignalFutureSkewMillis = 5_000L
     private val maxSingleStake = BigDecimal("500.00")
     private val minimumDecimalEdge = BigDecimal("0.02")
@@ -107,7 +108,7 @@ class AutoBettingDecisionService(
         if (request.capturedAt - now > maxSignalFutureSkewMillis) {
             return Decision(STATUS_REJECTED, "future_signal")
         }
-        if (now - request.capturedAt > maxSignalAgeMillis) {
+        if (now - request.capturedAt > maxSignalAgeMillis(request.maxSignalAgeSeconds)) {
             return Decision(STATUS_REJECTED, "stale_signal")
         }
         if (request.marketType !in supportedMarkets) {
@@ -140,7 +141,8 @@ class AutoBettingDecisionService(
             lineValue = request.lineValue?.trim()?.takeIf { it.isNotBlank() },
             selectionName = request.selectionName.trim().lowercase(Locale.ROOT),
             referenceSourceKey = request.referenceSourceKey.trim().lowercase(Locale.ROOT),
-            targetSourceKey = request.targetSourceKey.trim().lowercase(Locale.ROOT)
+            targetSourceKey = request.targetSourceKey.trim().lowercase(Locale.ROOT),
+            oddsChangeDirection = request.oddsChangeDirection?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
         )
     }
 
@@ -155,7 +157,10 @@ class AutoBettingDecisionService(
 
     private fun decimalEdge(request: AutoBettingSignalRequest, targetDecimalOdds: BigDecimal): BigDecimal {
         val edge = if (request.referenceSourceKey == "crown" && request.targetSourceKey == "crown") {
-            request.targetOdds.subtract(request.referenceOdds)
+            when (request.oddsChangeDirection) {
+                "drop" -> request.referenceOdds.subtract(request.targetOdds)
+                else -> request.targetOdds.subtract(request.referenceOdds)
+            }
         } else {
             targetDecimalOdds.subtract(request.referenceOdds)
         }
@@ -170,6 +175,13 @@ class AutoBettingDecisionService(
         val line = request.lineValue?.trim()?.lowercase(Locale.ROOT)?.replace(Regex("""[^\p{L}\p{N}+./-]+"""), "").orEmpty()
         val selection = normalizeKeyPart(request.selectionName)
         return listOf(account, phase, match, market, line, selection).joinToString(":")
+    }
+
+    private fun maxSignalAgeMillis(maxSignalAgeSeconds: Long?): Long {
+        return maxSignalAgeSeconds
+            ?.coerceIn(1L, maxConfigurableSignalAgeSeconds)
+            ?.times(1_000L)
+            ?: defaultMaxSignalAgeMillis
     }
 
     private fun normalizeKeyPart(value: String, keepDash: Boolean = false): String {

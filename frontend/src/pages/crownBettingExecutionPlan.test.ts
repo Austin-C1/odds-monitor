@@ -3,7 +3,8 @@ import {
   buildAutoBettingExecutionPlan,
   extractCrownAlertSignalCandidates,
   extractLatestCrownAlertSignal,
-  extractLatestMonitorSignal,
+  filterLatestCrownAlertSignalBatch,
+  formatAutoBettingReason,
   type AutoBettingSignal,
 } from './crownBettingExecutionPlan'
 
@@ -14,20 +15,56 @@ const prematchSignal: AutoBettingSignal = {
   leagueName: '英超',
   matchTitle: '曼城 vs 利物浦',
   marketType: 'handicap',
-  marketTitle: '让球盘 -0.5',
+  marketTitle: '让球 -0.5',
   lineValue: '-0.5',
   selectionName: '曼城',
-  referenceSourceKey: 'pinnacle',
+  referenceSourceKey: 'crown',
   targetSourceKey: 'crown',
-  referenceOdds: 1.92,
-  targetOdds: 0.95,
-  odds: 0.95,
-  edge: 0.03,
-  bettingLogic: 'Pinnacle reference advantage versus Crown target odds',
+  referenceOdds: 0.90,
+  targetOdds: 0.94,
+  odds: 0.94,
+  edge: 0.04,
+  oddsChangeDirection: 'rise',
+  bettingLogic: 'telegram: 曼城 0.9 -> 0.94',
 }
 
 describe('crown betting execution plan', () => {
-  it('reverses a rising crown side to the opposite dropping side from a live alert record', () => {
+  it('creates a usable signal from a single crown line in a telegram alert', () => {
+    const candidates = extractCrownAlertSignalCandidates([
+      {
+        id: 1003,
+        title: '赔率变动：深圳新鹏城 vs 大连英博',
+        message: `滚球赔率变动
+
+联赛：中国超级联赛
+比赛：深圳新鹏城 vs 大连英博
+进行：第 1 分钟
+比分：0-0
+
+盘口：大小球 大球 2/2.5
+皇冠：0.82 -> 0.97
+
+筛选：动水通过 / 合水通过
+时间：2026-05-19 12:57:52`,
+        createdAt: Date.now(),
+      },
+    ], 'live')
+
+    expect(candidates).toEqual([
+      expect.objectContaining({
+        sourceAlertId: 1003,
+        matchTitle: '深圳新鹏城 vs 大连英博',
+        marketTitle: '大小球 2/2.5',
+        selectionName: '大球',
+        referenceOdds: 0.82,
+        targetOdds: 0.97,
+        edge: 0.15,
+        oddsChangeDirection: 'rise',
+      }),
+    ])
+  })
+
+  it('uses the first crown line from a live telegram alert record', () => {
     const signal = extractLatestCrownAlertSignal([
       {
         id: 1001,
@@ -37,7 +74,7 @@ describe('crown betting execution plan', () => {
 联赛：瑞典杯
 比赛：米亚尔比 vs 哈马比
 进行：第 2 分钟
-比分：2-1
+比分：0-1
 
 盘口：让球 主队 0/0.5
 皇冠：0.73 -> 0.76
@@ -59,17 +96,18 @@ describe('crown betting execution plan', () => {
       marketType: 'handicap',
       marketTitle: '让球 0/0.5',
       lineValue: '0/0.5',
-      selectionName: '哈马比',
+      selectionName: '米亚尔比',
       referenceSourceKey: 'crown',
       targetSourceKey: 'crown',
-      referenceOdds: 1.15,
-      targetOdds: 1.12,
+      referenceOdds: 0.73,
+      targetOdds: 0.76,
       edge: 0.03,
-      bettingLogic: expect.stringContaining('reverse'),
+      oddsChangeDirection: 'rise',
+      bettingLogic: expect.stringContaining('telegram'),
     }))
   })
 
-  it('lists crown alert signal candidates with market and odds movement', () => {
+  it('lists every crown alert signal candidate with market and odds movement', () => {
     const candidates = extractCrownAlertSignalCandidates([
       {
         id: 1001,
@@ -99,100 +137,97 @@ describe('crown betting execution plan', () => {
       },
     ], 'live')
 
+    expect(candidates).toHaveLength(4)
+    expect(candidates[0]).toEqual(expect.objectContaining({
+      matchTitle: '米亚尔比 vs 哈马比',
+      marketTitle: '让球 0/0.5',
+      selectionName: '米亚尔比',
+      referenceOdds: 0.73,
+      targetOdds: 0.76,
+      edge: 0.03,
+      oddsChangeDirection: 'rise',
+    }))
+    expect(candidates[3]).toEqual(expect.objectContaining({
+      matchTitle: '米亚尔比 vs 哈马比',
+      marketTitle: '大小球 3',
+      selectionName: '小球',
+      referenceOdds: 0.93,
+      targetOdds: 0.85,
+      edge: 0.08,
+      oddsChangeDirection: 'drop',
+    }))
+  })
+
+  it('keeps only the newest telegram alert batch before applying betting settings', () => {
+    const olderSignal = {
+      ...prematchSignal,
+      sourceAlertId: 10,
+      sourceAlertCreatedAt: 1_000,
+      matchTitle: 'Older match',
+      targetOdds: 1.11,
+      odds: 1.11,
+    }
+    const newestSignal = {
+      ...prematchSignal,
+      sourceAlertId: 11,
+      sourceAlertCreatedAt: 2_000,
+      matchTitle: 'Newest match',
+      targetOdds: 0.88,
+      odds: 0.88,
+    }
+
+    expect(filterLatestCrownAlertSignalBatch([newestSignal, olderSignal])).toEqual([newestSignal])
+  })
+
+  it('parses crown alert signal candidates from default telegram blocks with pinnacle before crown', () => {
+    const candidates = extractCrownAlertSignalCandidates([
+      {
+        id: 1002,
+        title: '赔率变动：曼城 vs 利物浦',
+        message: `赛前赔率变动
+
+联赛：英超
+比赛：曼城 vs 利物浦
+盘口：让球 主队 -0.5
+平博：0.91 -> 0.95
+皇冠：0.90 -> 0.94
+
+盘口：让球 客队 -0.5
+平博：0.92 -> 0.88
+皇冠：1.10 -> 1.06
+
+筛选：动水通过 / 合水通过
+时间：2026-05-14 16:04:10`,
+        createdAt: Date.now(),
+      },
+    ], 'prematch')
+
     expect(candidates).toEqual([
       expect.objectContaining({
-        matchTitle: '米亚尔比 vs 哈马比',
-        marketTitle: '让球 0/0.5',
-        selectionName: '哈马比',
-        referenceOdds: 1.15,
-        targetOdds: 1.12,
-        edge: 0.03,
+        sourceAlertId: 1002,
+        matchTitle: '曼城 vs 利物浦',
+        marketTitle: '让球 -0.5',
+        selectionName: '曼城',
+        referenceSourceKey: 'crown',
+        targetSourceKey: 'crown',
+        referenceOdds: 0.90,
+        targetOdds: 0.94,
+        edge: 0.04,
+        oddsChangeDirection: 'rise',
       }),
       expect.objectContaining({
-        matchTitle: '米亚尔比 vs 哈马比',
-        marketTitle: '大小球 3',
-        selectionName: '小球',
-        referenceOdds: 0.93,
-        targetOdds: 0.85,
-        edge: 0.08,
+        sourceAlertId: 1002,
+        matchTitle: '曼城 vs 利物浦',
+        marketTitle: '让球 -0.5',
+        selectionName: '利物浦',
+        referenceSourceKey: 'crown',
+        targetSourceKey: 'crown',
+        referenceOdds: 1.10,
+        targetOdds: 1.06,
+        edge: 0.04,
+        oddsChangeDirection: 'drop',
       }),
     ])
-  })
-
-  it('extracts a prematch signal from the selected monitor match', () => {
-    const signal = extractLatestMonitorSignal({
-      matches: [],
-      selectedMatch: {
-        match: {
-          id: 1,
-          leagueName: '英超',
-          homeTeam: '曼城',
-          awayTeam: '利物浦',
-          startTime: Date.now() + 60_000,
-          status: 'scheduled',
-          sourceCount: 2,
-          alertCount: 0,
-          matchedPlatforms: ['pinnacle', 'crown'],
-        },
-        metrics: [
-          { label: 'handicap home -0.5', value: '1.92', trend: 'stable', sourceKey: 'pinnacle' },
-          { label: 'handicap home -0.5', value: '0.95', trend: 'stable', sourceKey: 'crown' },
-        ],
-        oddsHistory: [],
-        platformMatches: [],
-      },
-    })
-
-    expect(signal).toEqual(expect.objectContaining({
-      bettingMode: 'prematch',
-      matchPhase: 'prematch',
-      leagueName: '英超',
-      matchTitle: '曼城 vs 利物浦',
-      marketType: 'handicap',
-      marketTitle: '让球盘 -0.5',
-      lineValue: '-0.5',
-      selectionName: '曼城',
-      referenceOdds: 1.92,
-      targetOdds: 0.95,
-      edge: 0.03,
-    }))
-  })
-
-  it('extracts a live total signal from the selected monitor match', () => {
-    const signal = extractLatestMonitorSignal({
-      matches: [],
-      selectedMatch: {
-        match: {
-          id: 2,
-          leagueName: '意甲',
-          homeTeam: '罗马',
-          awayTeam: '拉齐奥',
-          startTime: Date.now() - 60_000,
-          status: 'live',
-          sourceCount: 2,
-          alertCount: 0,
-          matchedPlatforms: ['pinnacle', 'crown'],
-        },
-        metrics: [
-          { label: 'total over 2.5', value: '1.94', trend: 'up', sourceKey: 'pinnacle' },
-          { label: 'total over 2.5', value: '0.98', trend: 'up', sourceKey: 'crown' },
-        ],
-        oddsHistory: [],
-        platformMatches: [],
-      },
-    })
-
-    expect(signal).toEqual(expect.objectContaining({
-      bettingMode: 'live',
-      matchPhase: 'live',
-      matchTitle: '罗马 vs 拉齐奥',
-      marketType: 'total',
-      marketTitle: '大小球 2.5',
-      selectionName: '大球',
-      referenceOdds: 1.94,
-      targetOdds: 0.98,
-      edge: 0.04,
-    }))
   })
 
   it('splits stake using the supplied monitor signal and skips abnormal accounts', () => {
@@ -221,8 +256,6 @@ describe('crown betting execution plan', () => {
       expect.objectContaining({ accountName: '副账号', status: 'passed', matchTitle: '曼城 vs 利物浦', stakeAmount: 250 }),
       expect.objectContaining({ accountName: '异常账号', status: 'skipped', stakeAmount: 0, reason: '未绑定 AdsPower Profile' }),
     ])
-    expect(JSON.stringify(result)).not.toContain('阿森纳')
-    expect(JSON.stringify(result)).not.toContain('国际米兰')
   })
 
   it('locks execution to the selected betting mode', () => {
@@ -285,5 +318,12 @@ describe('crown betting execution plan', () => {
     expect(result.rows).toEqual([
       expect.objectContaining({ status: 'skipped', stakeAmount: 0, reason: '目标水位低于最低投注水位' }),
     ])
+  })
+
+  it('formats backend betting failure codes for operators', () => {
+    expect(formatAutoBettingReason('crown_line_mismatch')).toBe('皇冠盘口已变化')
+    expect(formatAutoBettingReason('stale_signal')).toBe('信号已过期')
+    expect(formatAutoBettingReason('crown_execution_timeout')).toBe('皇冠执行确认超时')
+    expect(formatAutoBettingReason('unknown_reason')).toBe('unknown_reason')
   })
 })

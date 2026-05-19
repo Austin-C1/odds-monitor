@@ -59,4 +59,32 @@ class AdsPowerLocalApiServiceSourceTest {
         assertTrue(snapshotBlock.contains("header_credit"))
         assertTrue(snapshotBlock.contains("userData"))
     }
+
+    @Test
+    fun `crown placement searches same origin frames for betting controls`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("private fun buildUrl")
+
+        assertTrue(placementBlock.contains("accessibleWindows"))
+        assertTrue(placementBlock.contains("findElementById(args.betElementId)"))
+        assertTrue(placementBlock.contains("findSelector('input#bet_gold_pc')"))
+        assertTrue(placementBlock.contains("ownerDocument?.defaultView"))
+    }
+
+    @Test
+    fun `crown placement accepts better odds and only rejects worse odds outside tolerance`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("const beforeWagerCount")
+
+        assertFalse(placementBlock.contains("Math.abs(Number((currentOdds - Number(args.targetOdds)).toFixed(4)))"))
+        assertTrue(placementBlock.contains("currentOdds + Number(args.oddsTolerance) < Number(args.targetOdds)"))
+    }
+
+    @Test
+    fun `crown placement cdp timeout covers receipt and history verification waits`() {
+        val evaluationBlock = source.substringAfter("private fun evaluateCrownPageJson")
+            .substringBefore("private fun executeCdpCommand")
+
+        assertTrue(evaluationBlock.contains("timeoutSeconds = 75"))
+    }
 }

@@ -11,35 +11,6 @@ export type ExecutionAccount = {
   bettingEnabled?: boolean
 }
 
-export type OddsMonitorMatch = {
-  id: number
-  leagueName: string
-  homeTeam: string
-  awayTeam: string
-  startTime: number
-  status: string
-  sourceCount: number
-  alertCount: number
-  matchedPlatforms: string[]
-}
-
-export type OddsMonitorMetric = {
-  label: string
-  value: string
-  trend: string
-  sourceKey?: string | null
-}
-
-export type OddsMonitorDashboard = {
-  matches: OddsMonitorMatch[]
-  selectedMatch?: {
-    match: OddsMonitorMatch
-    metrics: OddsMonitorMetric[]
-    oddsHistory: unknown[]
-    platformMatches?: unknown[]
-  } | null
-}
-
 export type OddsAlertRecord = {
   id: number
   title: string
@@ -59,7 +30,7 @@ export type AutoBettingSignal = {
   marketTitle: string
   lineValue: string
   selectionName: string
-  referenceSourceKey: 'pinnacle' | 'crown'
+  referenceSourceKey: 'crown'
   targetSourceKey: 'crown'
   referenceOdds: number
   targetOdds: number
@@ -95,7 +66,7 @@ export type AutoBettingExecutionPlanRow = {
   marketTitle: string
   lineValue: string
   selectionName: string
-  referenceSourceKey: 'pinnacle' | 'crown'
+  referenceSourceKey: 'crown'
   targetSourceKey: 'crown'
   referenceOdds: number
   targetOdds: number
@@ -103,6 +74,7 @@ export type AutoBettingExecutionPlanRow = {
   edge: number
   oddsChangeDirection?: 'rise' | 'drop'
   bettingLogic: string
+  capturedAt: number
   oddsTolerance: number
   stakeAmount: number
   reason: string
@@ -125,9 +97,32 @@ const modeLabels: Record<AutoBettingMode, string> = {
   live: '滚球',
 }
 
-const marketTitleLabels: Record<AutoBettingSignal['marketType'], string> = {
-  handicap: '让球盘',
-  total: '大小球',
+const autoBettingReasonLabels: Record<string, string> = {
+  accepted: '已接收',
+  crown_history_verified: '已确认下注',
+  crown_line_mismatch: '皇冠盘口已变化',
+  crown_market_not_found: '皇冠盘口未找到',
+  crown_market_locked: '皇冠盘口已锁盘',
+  crown_odds_moved: '皇冠水位已变化',
+  crown_odds_missing: '皇冠水位未读取到',
+  crown_place_button_disabled: '皇冠下注按钮不可用',
+  crown_stake_input_missing: '皇冠金额输入框未找到',
+  crown_betslip_stake_input_missing: '皇冠注单金额输入框未找到',
+  crown_stake_below_minimum: '低于皇冠最低下注金额',
+  crown_stake_above_maximum: '高于皇冠最高下注金额',
+  crown_execution_error: '皇冠执行异常',
+  crown_execution_timeout: '皇冠执行确认超时',
+  crown_history_unverified: '下注后未确认到历史记录',
+  stale_signal: '信号已过期',
+  duplicate_active_intent: '重复信号已跳过',
+  target_odds_below_minimum: '目标水位低于最低投注水位',
+  edge_below_minimum: '赔率优势不足',
+}
+
+export const formatAutoBettingReason = (reason?: string | null): string => {
+  const normalized = reason?.trim()
+  if (!normalized) return ''
+  return autoBettingReasonLabels[normalized] || normalized
 }
 
 const alertText = {
@@ -164,6 +159,14 @@ export const extractCrownAlertSignalCandidates = (
   return candidates
 }
 
+export const filterLatestCrownAlertSignalBatch = (
+  candidates: AutoBettingSignal[],
+): AutoBettingSignal[] => {
+  const latestCreatedAt = candidates[0]?.sourceAlertCreatedAt
+  if (typeof latestCreatedAt !== 'number') return candidates
+  return candidates.filter((candidate) => candidate.sourceAlertCreatedAt === latestCreatedAt)
+}
+
 const extractCrownAlertSignalsFromAlert = (
   alert: OddsAlertRecord,
   mode: AutoBettingMode,
@@ -177,26 +180,26 @@ const extractCrownAlertSignalsFromAlert = (
   if (!matchTitle) return []
 
   const moves: CrownAlertMove[] = []
-  for (let index = 0; index < lines.length - 1; index += 1) {
-    const marketLine = lines[index]
-    const oddsLine = lines[index + 1]
-    if (!marketLine.startsWith(alertText.marketPrefix) || !oddsLine.startsWith(alertText.crownPrefix)) {
+  let currentMarket: CrownAlertMarket | null = null
+  for (const line of lines) {
+    if (line.startsWith(alertText.marketPrefix)) {
+      currentMarket = parseCrownAlertMarket(line, matchTitle)
+      continue
+    }
+    if (!currentMarket || !line.startsWith(alertText.crownPrefix)) {
       continue
     }
 
-    const oddsMove = parseCrownOddsMove(oddsLine)
+    const oddsMove = parseCrownOddsMove(line)
     if (!oddsMove) continue
-
-    const market = parseCrownAlertMarket(marketLine, matchTitle)
-    if (!market) continue
     moves.push({
-      ...market,
+      ...currentMarket,
       previousOdds: oddsMove.previous,
       currentOdds: oddsMove.current,
     })
   }
 
-  return selectReversedCrownAlertSignals(moves).map((reversedSignal) => ({
+  return selectCrownAlertSignals(moves).map((selectedSignal) => ({
     sourceAlertId: alert.id,
     sourceAlertCreatedAt: alert.createdAt,
     modeLabel: modeLabels[matchPhase],
@@ -204,66 +207,19 @@ const extractCrownAlertSignalsFromAlert = (
     matchPhase,
     leagueName: leagueName || '未分类联赛',
     matchTitle,
-    marketType: reversedSignal.marketType,
-    marketTitle: reversedSignal.marketTitle,
-    lineValue: reversedSignal.lineValue,
-    selectionName: reversedSignal.selectionName,
+    marketType: selectedSignal.marketType,
+    marketTitle: selectedSignal.marketTitle,
+    lineValue: selectedSignal.lineValue,
+    selectionName: selectedSignal.selectionName,
     referenceSourceKey: 'crown',
     targetSourceKey: 'crown',
-    referenceOdds: reversedSignal.previousOdds,
-    targetOdds: reversedSignal.currentOdds,
-    odds: reversedSignal.currentOdds,
-    edge: reversedSignal.edge,
-    oddsChangeDirection: 'drop',
-    bettingLogic: `reverse: ${reversedSignal.risingSelectionName} 升水，改投对面掉水方 ${reversedSignal.selectionName}`,
+    referenceOdds: selectedSignal.previousOdds,
+    targetOdds: selectedSignal.currentOdds,
+    odds: selectedSignal.currentOdds,
+    edge: selectedSignal.edge,
+    oddsChangeDirection: selectedSignal.oddsChangeDirection,
+    bettingLogic: `telegram: ${selectedSignal.selectionName} ${selectedSignal.previousOdds} -> ${selectedSignal.currentOdds}`,
   }))
-}
-
-export const extractLatestMonitorSignal = (dashboard: OddsMonitorDashboard): AutoBettingSignal | null => {
-  const selected = dashboard.selectedMatch
-  if (!selected?.metrics?.length) return null
-
-  const matchPhase = phaseFromStatus(selected.match.status)
-  const metricsByLabel = selected.metrics.reduce<Map<string, OddsMonitorMetric[]>>((groups, metric) => {
-    const key = normalizeLabel(metric.label)
-    if (!key) return groups
-    const list = groups.get(key) || []
-    list.push(metric)
-    groups.set(key, list)
-    return groups
-  }, new Map<string, OddsMonitorMetric[]>())
-
-  for (const [label, metrics] of metricsByLabel) {
-    const pinnacleMetric = metrics.find((metric) => normalizeSource(metric.sourceKey) === 'pinnacle')
-    const crownMetric = metrics.find((metric) => normalizeSource(metric.sourceKey) === 'crown')
-    const referenceOdds = parseOdds(pinnacleMetric?.value)
-    const targetOdds = parseOdds(crownMetric?.value)
-    if (!pinnacleMetric || !crownMetric || referenceOdds == null || targetOdds == null) continue
-
-    const market = parseMarketLabel(label, selected.match)
-    if (!market) continue
-
-    return {
-      modeLabel: modeLabels[matchPhase],
-      bettingMode: matchPhase,
-      matchPhase,
-      leagueName: selected.match.leagueName || '未分类联赛',
-      matchTitle: `${selected.match.homeTeam} vs ${selected.match.awayTeam}`,
-      marketType: market.marketType,
-      marketTitle: market.marketTitle,
-      lineValue: market.lineValue,
-      selectionName: market.selectionName,
-      referenceSourceKey: 'pinnacle',
-      targetSourceKey: 'crown',
-      referenceOdds,
-      targetOdds,
-      odds: targetOdds,
-      edge: Number((targetOdds + 1 - referenceOdds).toFixed(4)),
-      oddsChangeDirection: 'rise',
-      bettingLogic: 'Pinnacle reference advantage versus Crown target odds',
-    }
-  }
-  return null
 }
 
 export const buildAutoBettingExecutionPlan = (
@@ -394,6 +350,7 @@ export const buildAutoBettingExecutionPlan = (
       edge: signal.edge,
       oddsChangeDirection: signal.oddsChangeDirection,
       bettingLogic: signal.bettingLogic,
+      capturedAt: signal.sourceAlertCreatedAt || Date.now(),
       oddsTolerance: options.oddsTolerance,
       stakeAmount,
       reason: '实际测试通过',
@@ -409,37 +366,6 @@ export const buildAutoBettingExecutionPlan = (
     signal,
     rows,
   }
-}
-
-const parseMarketLabel = (
-  normalizedLabel: string,
-  match: Pick<OddsMonitorMatch, 'homeTeam' | 'awayTeam'>,
-): Pick<AutoBettingSignal, 'marketType' | 'marketTitle' | 'lineValue' | 'selectionName'> | null => {
-  const [marketType, selection = '', ...lineParts] = normalizedLabel.split(' ')
-  const lineValue = lineParts.join(' ')
-  if (marketType === 'handicap') {
-    const selectionName = selection === 'home'
-      ? match.homeTeam
-      : selection === 'away'
-        ? match.awayTeam
-        : selection
-    return {
-      marketType: 'handicap',
-      marketTitle: lineValue ? `${marketTitleLabels.handicap} ${lineValue}` : marketTitleLabels.handicap,
-      lineValue,
-      selectionName,
-    }
-  }
-  if (marketType === 'total') {
-    const selectionName = selection === 'over' ? '大球' : selection === 'under' ? '小球' : selection
-    return {
-      marketType: 'total',
-      marketTitle: lineValue ? `${marketTitleLabels.total} ${lineValue}` : marketTitleLabels.total,
-      lineValue,
-      selectionName,
-    }
-  }
-  return null
 }
 
 const phaseFromAlert = (alert: OddsAlertRecord): AutoBettingMode | null => {
@@ -514,52 +440,19 @@ type CrownAlertMove = CrownAlertMarket & {
   currentOdds: number
 }
 
-type ReversedCrownAlertSignal = CrownAlertMove & {
+type SelectedCrownAlertSignal = CrownAlertMove & {
   edge: number
-  risingSelectionName: string
+  oddsChangeDirection: 'rise' | 'drop'
 }
 
-const selectReversedCrownAlertSignals = (moves: CrownAlertMove[]): ReversedCrownAlertSignal[] => {
-  const signals: ReversedCrownAlertSignal[] = []
-  for (const move of moves) {
-    if (move.currentOdds <= move.previousOdds) continue
-    const opposite = moves.find((candidate) => (
-      candidate.marketType === move.marketType &&
-      candidate.lineValue === move.lineValue &&
-      candidate.selectionRole === oppositeSelectionRole(move.selectionRole)
-    ))
-    if (!opposite || opposite.currentOdds >= opposite.previousOdds) continue
-    signals.push({
-      ...opposite,
-      edge: Number(Math.max(
-        move.currentOdds - move.previousOdds,
-        opposite.previousOdds - opposite.currentOdds,
-      ).toFixed(4)),
-      risingSelectionName: move.selectionName,
-    })
-  }
-  return signals
-}
-
-const oppositeSelectionRole = (selectionRole: string) => {
-  if (selectionRole === 'home') return 'away'
-  if (selectionRole === 'away') return 'home'
-  if (selectionRole === 'over') return 'under'
-  if (selectionRole === 'under') return 'over'
-  return ''
-}
-
-const phaseFromStatus = (status: string): AutoBettingMode => {
-  const normalized = status.trim().toLowerCase()
-  return ['live', 'inplay', 'in_play', '滚球'].includes(normalized) ? 'live' : 'prematch'
-}
-
-const normalizeLabel = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase()
-const normalizeSource = (value?: string | null) => value?.trim().toLowerCase()
-
-const parseOdds = (value?: string) => {
-  const numericValue = Number(value)
-  return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : null
+const selectCrownAlertSignals = (moves: CrownAlertMove[]): SelectedCrownAlertSignal[] => {
+  return moves
+    .filter((move) => move.currentOdds !== move.previousOdds)
+    .map((move) => ({
+      ...move,
+      edge: Number(Math.abs(move.currentOdds - move.previousOdds).toFixed(4)),
+      oddsChangeDirection: move.currentOdds > move.previousOdds ? 'rise' as const : 'drop' as const,
+    }))
 }
 
 const hasAdsPowerProfile = (account: ExecutionAccount) => Boolean(account.adsPowerProfileId?.trim())
@@ -605,6 +498,7 @@ const skippedRow = (
   edge: signal.edge,
   oddsChangeDirection: signal.oddsChangeDirection,
   bettingLogic: signal.bettingLogic,
+  capturedAt: signal.sourceAlertCreatedAt || Date.now(),
   oddsTolerance,
   stakeAmount: 0,
   reason,

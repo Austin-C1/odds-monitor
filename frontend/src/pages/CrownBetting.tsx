@@ -21,6 +21,8 @@ import { apiClient } from '../services/api'
 import {
   buildAutoBettingExecutionPlan,
   extractCrownAlertSignalCandidates,
+  filterLatestCrownAlertSignalBatch,
+  formatAutoBettingReason,
   type AutoBettingMode,
   type AutoBettingExecutionPlan,
   type AutoBettingSignal,
@@ -128,6 +130,7 @@ type AutomationSettings = {
   minimumEdge: number
   minimumBetOdds: number
   oddsTolerance: number
+  signalMaxAgeSeconds: number
 }
 
 const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
@@ -138,6 +141,7 @@ const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   minimumEdge: 0.03,
   minimumBetOdds: 0.70,
   oddsTolerance: 0.02,
+  signalMaxAgeSeconds: 600,
 }
 
 const summaryGridStyle: CSSProperties = {
@@ -291,6 +295,12 @@ const readStoredAutomationSettings = (): AutomationSettings => {
       minimumEdge: normalizeNumberSetting(parsed.minimumEdge, DEFAULT_AUTOMATION_SETTINGS.minimumEdge, 0.01),
       minimumBetOdds: normalizeNumberSetting(parsed.minimumBetOdds, DEFAULT_AUTOMATION_SETTINGS.minimumBetOdds, 0.01),
       oddsTolerance: normalizeNumberSetting(parsed.oddsTolerance, DEFAULT_AUTOMATION_SETTINGS.oddsTolerance, 0.01),
+      signalMaxAgeSeconds: normalizeNumberSetting(
+        parsed.signalMaxAgeSeconds,
+        DEFAULT_AUTOMATION_SETTINGS.signalMaxAgeSeconds,
+        1,
+        3600,
+      ),
     }
   } catch {
     return DEFAULT_AUTOMATION_SETTINGS
@@ -386,6 +396,7 @@ const CrownBetting = () => {
     minimumEdge,
     minimumBetOdds,
     oddsTolerance,
+    signalMaxAgeSeconds,
   } = automationSettings
 
   const saveAccounts = (nextAccounts: CrownAccount[]) => {
@@ -648,15 +659,16 @@ const CrownBetting = () => {
 
   const [executionRunning, setExecutionRunning] = useState(false)
   const executionRunningRef = useRef(false)
+  const automationPollingRef = useRef(false)
   const processedSignalKeysRef = useRef<Set<string>>(new Set())
   const attemptedSignalAtRef = useRef<Map<string, number>>(new Map())
 
   const executeLatestCrownSignal = useCallback(async () => {
     const currentAccounts = accountsRef.current
     const enabledAccountCount = currentAccounts.filter(isBettingEnabledAccount).length
-    if (executionRunningRef.current || !autoEnabled || enabledAccountCount === 0) return
-    executionRunningRef.current = true
-    setExecutionRunning(true)
+    if (automationPollingRef.current || executionRunningRef.current || !autoEnabled || enabledAccountCount === 0) return
+    automationPollingRef.current = true
+    let executionStarted = false
     try {
       const alertResponse = await apiClient.post<ApiResponse<OddsAlertRecord[]>>(
         '/odds-monitor/alerts/list',
@@ -665,7 +677,9 @@ const CrownBetting = () => {
       if (alertResponse.data.code !== 0) {
         throw new Error(alertResponse.data.msg || '监控信号读取失败')
       }
-      const candidates = extractCrownAlertSignalCandidates(alertResponse.data.data, autoMode)
+      const candidates = filterLatestCrownAlertSignalBatch(
+        extractCrownAlertSignalCandidates(alertResponse.data.data, autoMode),
+      )
       const qualifiedCandidates = candidates.filter((candidate) => (
         candidate.edge >= minimumEdge &&
         candidate.targetOdds >= minimumBetOdds
@@ -678,6 +692,11 @@ const CrownBetting = () => {
         const lastAttemptAt = attemptedSignalAtRef.current.get(signalKey) || 0
         if (Date.now() - lastAttemptAt < AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS) return
         attemptedSignalAtRef.current.set(signalKey, Date.now())
+      }
+      if (signal) {
+        executionStarted = true
+        executionRunningRef.current = true
+        setExecutionRunning(true)
       }
       const checkedAccounts = signal
         ? []
@@ -752,9 +771,10 @@ const CrownBetting = () => {
               minimumTargetOdds: minimumBetOdds,
               oddsChangeDirection: row.oddsChangeDirection,
               stakeAmount: row.stakeAmount,
-                capturedAt: Date.now(),
-              },
-            )
+              capturedAt: row.capturedAt,
+              maxSignalAgeSeconds: signalMaxAgeSeconds,
+            },
+          )
             if (signalResponse.data.code !== 0 || !signalResponse.data.data) {
               throw new Error(signalResponse.data.msg || '后端投注判断失败')
             }
@@ -765,7 +785,7 @@ const CrownBetting = () => {
                 status: 'skipped' as const,
                 statusLabel: '跳过',
                 stakeAmount: 0,
-                reason: decision.reason,
+                reason: formatAutoBettingReason(decision.reason),
               }
             }
             const executionResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
@@ -787,8 +807,8 @@ const CrownBetting = () => {
               statusLabel: historyVerified ? '已下注' : '跳过',
               stakeAmount: historyVerified ? row.stakeAmount : 0,
               reason: executionDecision.crownBetReference
-                ? `${executionDecision.reason} ${executionDecision.crownBetReference}`
-                : executionDecision.reason,
+                ? `${formatAutoBettingReason(executionDecision.reason)} ${executionDecision.crownBetReference}`
+                : formatAutoBettingReason(executionDecision.reason),
             }
           } catch (error: any) {
             return {
@@ -818,8 +838,11 @@ const CrownBetting = () => {
     } catch (error: any) {
       message.error(error.response?.data?.msg || error.message || '监控信号读取失败')
     } finally {
-      executionRunningRef.current = false
-      setExecutionRunning(false)
+      automationPollingRef.current = false
+      if (executionStarted) {
+        executionRunningRef.current = false
+        setExecutionRunning(false)
+      }
     }
   }, [
     autoEnabled,
@@ -829,6 +852,7 @@ const CrownBetting = () => {
     minimumEdge,
     oddsTolerance,
     perAccountLimit,
+    signalMaxAgeSeconds,
     verifyAccountBeforeBetting,
   ])
 
@@ -1101,6 +1125,18 @@ const CrownBetting = () => {
               precision={2}
               value={minimumBetOdds}
               onChange={(value) => updateAutomationSetting('minimumBetOdds', Number(value || 0))}
+              style={{ width: '100%', marginTop: 8 }}
+            />
+          </div>
+          <div style={automationFieldStyle}>
+            <Text strong>信号有效期(秒)</Text>
+            <InputNumber
+              min={1}
+              max={3600}
+              step={30}
+              precision={0}
+              value={signalMaxAgeSeconds}
+              onChange={(value) => updateAutomationSetting('signalMaxAgeSeconds', Number(value || 0))}
               style={{ width: '100%', marginTop: 8 }}
             />
           </div>

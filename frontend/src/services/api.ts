@@ -15,7 +15,14 @@ import { notifyAuthExpired } from './authSession'
 
 const getBaseURL = (): string => {
   const envApiUrl = import.meta.env.VITE_API_URL
-  return envApiUrl ? `${envApiUrl}/api` : '/api'
+  if (envApiUrl) return `${envApiUrl}/api`
+
+  const localBackendUrl = 'http://127.0.0.1:18000'
+  const isPackagedLocalFrontend = (
+    window.location.hostname === '127.0.0.1' &&
+    window.location.port === '18881'
+  )
+  return isPackagedLocalFrontend ? `${localBackendUrl}/api` : '/api'
 }
 
 const apiClient: AxiosInstance = axios.create({

@@ -73,6 +73,35 @@ class AutoBettingDecisionServiceTest {
     }
 
     @Test
+    fun `crown alert drop signal creates ready intent for reverse betting`() {
+        val request = baseRequest(
+            bettingMode = "live",
+            matchPhase = "live",
+            leagueName = "英超",
+            matchTitle = "曼城 vs 利物浦",
+            selectionName = "利物浦",
+            referenceSourceKey = "crown",
+            targetSourceKey = "crown",
+            referenceOdds = BigDecimal("1.10"),
+            targetOdds = BigDecimal("1.06"),
+            oddsChangeDirection = "drop",
+            stakeAmount = BigDecimal("50.00")
+        )
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:live:英超曼城vs利物浦:handicap:-0.5:利物浦", activeStatuses()))
+            .thenReturn(false)
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 1_000_000)
+
+        assertEquals("ready", decision.status)
+        assertEquals("accepted", decision.reason)
+        assertEquals(BigDecimal("0.04000000"), decision.decimalEdge)
+        assertEquals("ready", captor.value.status)
+        assertEquals(decision.dedupeKey, captor.value.activeDedupeKey)
+    }
+
+    @Test
     fun `stale odds monitor signal is rejected before an intent can be executed`() {
         val request = baseRequest(capturedAt = 1000)
         `when`(repository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
@@ -84,6 +113,32 @@ class AutoBettingDecisionServiceTest {
         val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
         verify(repository).save(captor.capture())
         assertEquals(null, captor.value.activeDedupeKey)
+    }
+
+    @Test
+    fun `signal age limit can be extended by the betting settings`() {
+        val request = baseRequest(capturedAt = 1_000, maxSignalAgeSeconds = 120)
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", activeStatuses()))
+            .thenReturn(false)
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 80_000)
+
+        assertEquals("ready", decision.status)
+        assertEquals("accepted", decision.reason)
+        assertEquals("ready", captor.value.status)
+    }
+
+    @Test
+    fun `custom signal age limit still rejects older signals`() {
+        val request = baseRequest(capturedAt = 1_000, maxSignalAgeSeconds = 120)
+        `when`(repository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 122_001)
+
+        assertEquals("rejected", decision.status)
+        assertEquals("stale_signal", decision.reason)
     }
 
     @Test
@@ -340,7 +395,8 @@ class AutoBettingDecisionServiceTest {
         minimumTargetOdds: BigDecimal? = null,
         oddsChangeDirection: String? = null,
         stakeAmount: BigDecimal = BigDecimal("50.00"),
-        capturedAt: Long = 990_000
+        capturedAt: Long = 990_000,
+        maxSignalAgeSeconds: Long? = null
     ) = AutoBettingSignalRequest(
         signalSource = "odds_monitor",
         accountKey = accountKey,
@@ -358,7 +414,8 @@ class AutoBettingDecisionServiceTest {
         minimumTargetOdds = minimumTargetOdds,
         oddsChangeDirection = oddsChangeDirection,
         stakeAmount = stakeAmount,
-        capturedAt = capturedAt
+        capturedAt = capturedAt,
+        maxSignalAgeSeconds = maxSignalAgeSeconds
     )
 
     private fun activeStatuses() = listOf("ready", "placing", "placed_unverified", "placed")

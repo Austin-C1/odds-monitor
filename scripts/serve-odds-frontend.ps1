@@ -149,6 +149,7 @@ $listener = [System.Net.HttpListener]::new()
 $listener.Prefixes.Add("http://$ListenHost`:$Port/")
 $listener.Start()
 $httpClient = [System.Net.Http.HttpClient]::new()
+$httpClient.Timeout = [System.TimeSpan]::FromSeconds(10)
 
 Write-Output "OddsMonitor frontend server listening at http://$ListenHost`:$Port/"
 

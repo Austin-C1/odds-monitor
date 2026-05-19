@@ -114,6 +114,25 @@ class CrownResponseParserTest {
     }
 
     @Test
+    fun `parses second half crown live clock from game list`() {
+        val response = """
+            <serverresponse>
+              <item>
+                <lid>10</lid>
+                <gidm>41001</gidm>
+                <retimeset>2H^99:17</retimeset>
+                <is_rb>Y</is_rb>
+              </item>
+            </serverresponse>
+        """.trimIndent()
+
+        val item = parser.parseGameList(response).single()
+
+        assertEquals(true, item.isLive)
+        assertEquals(99, item.elapsedMinutes)
+    }
+
+    @Test
     fun `treats crown game list is rb flag as live`() {
         val response = """
             <serverresponse>

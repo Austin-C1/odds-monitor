@@ -723,7 +723,7 @@ class AdsPowerLocalApiService(
                 )
             )
         )
-        return executeCdpCommand(wsUrl, command, timeoutSeconds = 35)
+        return executeCdpCommand(wsUrl, command, timeoutSeconds = 75)
     }
 
     private fun executeCdpCommand(wsUrl: String, command: String, timeoutSeconds: Long): String? {
@@ -761,16 +761,71 @@ class AdsPowerLocalApiService(
               const args = $argsJson;
               const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
               const finish = (payload) => JSON.stringify(payload);
+              const accessibleWindows = () => {
+                const windows = [];
+                const seen = new Set();
+                const visit = (win) => {
+                  if (!win || seen.has(win)) return;
+                  seen.add(win);
+                  let doc = null;
+                  try {
+                    doc = win.document;
+                  } catch (_) {
+                    return;
+                  }
+                  if (!doc) return;
+                  windows.push(win);
+                  for (const frame of Array.from(win.frames || [])) {
+                    try {
+                      visit(frame);
+                    } catch (_) {
+                      // Ignore cross-origin frames.
+                    }
+                  }
+                };
+                visit(window);
+                return windows;
+              };
+              const findInDocuments = (reader) => {
+                for (const win of accessibleWindows()) {
+                  try {
+                    const value = reader(win.document, win);
+                    if (value) return value;
+                  } catch (_) {
+                    // Ignore transient frame access errors.
+                  }
+                }
+                return null;
+              };
+              const allInDocuments = (reader) => {
+                const values = [];
+                for (const win of accessibleWindows()) {
+                  try {
+                    values.push(...reader(win.document, win).filter(Boolean));
+                  } catch (_) {
+                    // Ignore transient frame access errors.
+                  }
+                }
+                return values;
+              };
+              const findElementById = (id) => findInDocuments((doc) => doc.getElementById(id));
+              const findSelector = (selector) => findInDocuments((doc) => doc.querySelector(selector));
+              const findAllSelector = (selector) => allInDocuments((doc) => Array.from(doc.querySelectorAll(selector)));
+              const ownerWindow = (element) => element?.ownerDocument?.defaultView || window;
               const normalizeLine = (value) => String(value || '')
                 .replace(/\s+/g, '')
                 .replace(/^\+/, '')
                 .replace(/^-/, '');
-              const currentText = () => document.body ? document.body.innerText : '';
-              const currentRawText = () => document.body ? document.body.textContent : '';
+              const currentText = () => allInDocuments((doc) => [doc.body ? doc.body.innerText : ''])
+                .filter(Boolean)
+                .join('\n');
+              const currentRawText = () => allInDocuments((doc) => [doc.body ? doc.body.textContent : ''])
+                .filter(Boolean)
+                .join('\n');
               const readWagerCount = () => {
                 const countText = [
-                  document.getElementById('wager_count')?.innerText,
-                  document.getElementById('pc_wager_count')?.innerText
+                  findElementById('wager_count')?.innerText,
+                  findElementById('pc_wager_count')?.innerText
                 ].filter(Boolean).join(' ');
                 const match = String(countText || '').match(/\d+/);
                 return match ? Number(match[0]) : 0;
@@ -783,13 +838,16 @@ class AdsPowerLocalApiService(
               };
                 const clickElement = (element) => {
                   element.scrollIntoView({ block: 'center', inline: 'center' });
+                  const view = ownerWindow(element);
+                  const MouseEventCtor = view.MouseEvent || window.MouseEvent;
                   for (const type of ['mouseover', 'mousedown', 'mouseup', 'click']) {
-                    element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+                    element.dispatchEvent(new MouseEventCtor(type, { bubbles: true, cancelable: true, view }));
                   }
                 };
                 const isVisible = (element) => Boolean(element && (
                   (() => {
-                    const style = window.getComputedStyle(element);
+                    const view = ownerWindow(element);
+                    const style = view.getComputedStyle(element);
                     return style.display !== 'none'
                       && style.visibility !== 'hidden'
                       && style.visibility !== 'collapse'
@@ -804,15 +862,16 @@ class AdsPowerLocalApiService(
                   ];
                   for (let index = 0; index < 20; index += 1) {
                     for (const prompt of prompts) {
-                      const container = document.getElementById(prompt.container);
+                      const container = findElementById(prompt.container);
                       if (!isVisible(container)) continue;
-                      const checkbox = document.getElementById(prompt.checkbox);
+                      const checkbox = findElementById(prompt.checkbox);
                       if (checkbox && !checkbox.checked) {
                         checkbox.checked = true;
-                        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                        const EventCtor = ownerWindow(checkbox).Event || window.Event;
+                        checkbox.dispatchEvent(new EventCtor('change', { bubbles: true }));
                         await sleep(100);
                       }
-                      const yesButton = document.getElementById(prompt.yes);
+                      const yesButton = findElementById(prompt.yes);
                       if (yesButton && isVisible(yesButton)) {
                         clickElement(yesButton);
                         await sleep(500);
@@ -824,59 +883,66 @@ class AdsPowerLocalApiService(
                   return false;
                 };
                 const clearExistingSlip = async () => {
-                  for (const button of Array.from(document.querySelectorAll('[id^="delete_betslip_"]'))) {
+                  for (const button of findAllSelector('[id^="delete_betslip_"]')) {
                     clickElement(button);
                     await sleep(250);
                   }
-                  const closeButton = document.getElementById('order_close');
+                  const closeButton = findElementById('order_close');
                   if (closeButton && isVisible(closeButton)) {
                     clickElement(closeButton);
                     await sleep(400);
                   }
                 };
                 const fillStakeInput = async (stakeInput, stake) => {
+                  const view = ownerWindow(stakeInput);
+                  const stakeDocument = stakeInput.ownerDocument || document;
+                  const EventCtor = view.Event || window.Event;
+                  const KeyboardEventCtor = view.KeyboardEvent || window.KeyboardEvent;
+                  const InputEventCtor = view.InputEvent || window.InputEvent || EventCtor;
+                  const HTMLInputElementCtor = view.HTMLInputElement || window.HTMLInputElement;
+                  const findStakeElementById = (id) => stakeDocument.getElementById(id) || findElementById(id);
                   stakeInput.focus();
                   clickElement(stakeInput);
-                  const keyboardVisible = () => isVisible(document.getElementById('num_0'))
-                    && isVisible(document.getElementById('num_done'));
+                  const keyboardVisible = () => isVisible(findStakeElementById('num_0'))
+                    && isVisible(findStakeElementById('num_done'));
                   for (let index = 0; index < 8 && !keyboardVisible(); index += 1) {
                     await sleep(100);
                   }
                   if (keyboardVisible()) {
                     for (let index = 0; index < 14; index += 1) {
-                      const deleteButton = document.getElementById('num_x');
+                      const deleteButton = findStakeElementById('num_x');
                       if (deleteButton) clickElement(deleteButton);
                       await sleep(35);
                     }
                     for (const char of stake) {
-                      const numberButton = document.getElementById('num_' + char);
+                      const numberButton = findStakeElementById('num_' + char);
                       if (!numberButton) return;
                       clickElement(numberButton);
                       await sleep(80);
                     }
-                    const doneButton = document.getElementById('num_done');
+                    const doneButton = findStakeElementById('num_done');
                     if (doneButton) {
                       clickElement(doneButton);
                       await sleep(250);
                     }
                     return;
                   }
-                  const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+                  const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElementCtor.prototype, 'value')?.set;
                   if (valueSetter) {
                     valueSetter.call(stakeInput, '');
-                    stakeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    stakeInput.dispatchEvent(new EventCtor('input', { bubbles: true }));
                   } else {
                     stakeInput.value = '';
                   }
-                  stakeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                  stakeInput.dispatchEvent(new EventCtor('input', { bubbles: true }));
                   for (const char of stake) {
-                    stakeInput.dispatchEvent(new KeyboardEvent('keydown', {
+                    stakeInput.dispatchEvent(new KeyboardEventCtor('keydown', {
                       bubbles: true,
                       cancelable: true,
                       key: char,
                       code: 'Digit' + char
                     }));
-                    stakeInput.dispatchEvent(new KeyboardEvent('keypress', {
+                    stakeInput.dispatchEvent(new KeyboardEventCtor('keypress', {
                       bubbles: true,
                       cancelable: true,
                       key: char,
@@ -888,12 +954,12 @@ class AdsPowerLocalApiService(
                     } else {
                       stakeInput.value = nextValue;
                     }
-                    stakeInput.dispatchEvent(new InputEvent('input', {
+                    stakeInput.dispatchEvent(new InputEventCtor('input', {
                       bubbles: true,
                       inputType: 'insertText',
                       data: char
                     }));
-                    stakeInput.dispatchEvent(new KeyboardEvent('keyup', {
+                    stakeInput.dispatchEvent(new KeyboardEventCtor('keyup', {
                       bubbles: true,
                       cancelable: true,
                       key: char,
@@ -901,7 +967,7 @@ class AdsPowerLocalApiService(
                     }));
                     await sleep(60);
                   }
-                  stakeInput.dispatchEvent(new Event('change', { bubbles: true }));
+                  stakeInput.dispatchEvent(new EventCtor('change', { bubbles: true }));
                 };
                 const waitFor = async (reader, timeoutMs = 10000, intervalMs = 250) => {
                   const deadline = Date.now() + timeoutMs;
@@ -913,19 +979,19 @@ class AdsPowerLocalApiService(
                 return null;
               };
               const openLiveSoccer = async () => {
-                const existing = document.getElementById(args.betElementId);
+                const existing = findElementById(args.betElementId);
                 if (existing) return existing;
                 const candidates = ['old_ft_live_league', 'ft_live_league', 'live_page'];
                 for (const id of candidates) {
-                  const element = document.getElementById(id);
+                  const element = findElementById(id);
                   if (element) {
                     clickElement(element);
                     await sleep(1200);
-                    const found = document.getElementById(args.betElementId);
+                    const found = findElementById(args.betElementId);
                     if (found) return found;
                   }
                   }
-                  return waitFor(() => document.getElementById(args.betElementId), 8000, 300);
+                  return waitFor(() => findElementById(args.betElementId), 8000, 300);
                 };
                 await clearExistingSlip();
                 const betElement = await openLiveSoccer();
@@ -951,8 +1017,7 @@ class AdsPowerLocalApiService(
                 if (!Number.isFinite(currentOdds)) {
                   return finish({ placed: false, historyVerified: false, message: 'crown_odds_missing' });
                 }
-                const oddsDelta = Math.abs(Number((currentOdds - Number(args.targetOdds)).toFixed(4)));
-                if (oddsDelta > Number(args.oddsTolerance)) {
+                if (currentOdds + Number(args.oddsTolerance) < Number(args.targetOdds)) {
                   return finish({
                     placed: false,
                     historyVerified: false,
@@ -964,20 +1029,20 @@ class AdsPowerLocalApiService(
                 const beforeWagerCount = readWagerCount();
                 clickElement(betElement);
                 const stake = String(Number(args.stakeAmount));
-                const stakeInput = await waitFor(() => document.querySelector('input#bet_gold_pc')
-                  || document.querySelector('input#bet_gold')
-                  || document.querySelector('input[placeholder="Enter Stake"]'), 10000, 250);
+                const stakeInput = await waitFor(() => findSelector('input#bet_gold_pc')
+                  || findSelector('input#bet_gold')
+                  || findSelector('input[placeholder="Enter Stake"]'), 10000, 250);
                 if (!stakeInput) {
                   return finish({ placed: false, historyVerified: false, message: 'crown_stake_input_missing', currentOdds });
                 }
                 await fillStakeInput(stakeInput, stake);
   
                 let orderButton = await waitFor(() => {
-                  const button = document.getElementById('order_bet');
+                  const button = findElementById('order_bet');
                   return button && !button.disabled ? button : null;
                 }, 4000, 250);
                 if (!orderButton) {
-                  const addButton = document.getElementById('add_total_bet');
+                  const addButton = findElementById('add_total_bet');
                   if (!addButton || addButton.disabled || !isVisible(addButton)) {
                     const pageText = currentText();
                     if (/minimum stake|min(?:imum)?\\.? stake/i.test(pageText)) {
@@ -989,9 +1054,9 @@ class AdsPowerLocalApiService(
                   const betElementParts = String(args.betElementId || '').split('_');
                   const ecid = betElementParts.length >= 3 ? betElementParts[2] : '';
                   const slipStakeInput = await waitFor(() => {
-                    const byEcid = ecid ? document.querySelector('input#bet_gold_' + ecid + '_pc') : null;
+                    const byEcid = ecid ? findSelector('input#bet_gold_' + ecid + '_pc') : null;
                     if (byEcid && isVisible(byEcid)) return byEcid;
-                    return Array.from(document.querySelectorAll('input[id^="bet_gold_"][id$="_pc"]'))
+                    return findAllSelector('input[id^="bet_gold_"][id$="_pc"]')
                       .find((input) => isVisible(input));
                   }, 8000, 250);
                   if (!slipStakeInput) {
@@ -999,7 +1064,7 @@ class AdsPowerLocalApiService(
                   }
                   await fillStakeInput(slipStakeInput, stake);
                   orderButton = await waitFor(() => {
-                    const button = document.getElementById('order_bet');
+                    const button = findElementById('order_bet');
                     return button && !button.disabled ? button : null;
                   }, 8000, 250);
                 }
@@ -1017,8 +1082,8 @@ class AdsPowerLocalApiService(
               await confirmBetIfPrompted();
 
               const receiptText = await waitFor(() => {
-                const confirmVisible = isVisible(document.getElementById('alert_confirm'))
-                  || isVisible(document.getElementById('C_alert_confirm'));
+                const confirmVisible = isVisible(findElementById('alert_confirm'))
+                  || isVisible(findElementById('C_alert_confirm'));
                 if (confirmVisible) {
                   confirmBetIfPrompted();
                 }
@@ -1038,8 +1103,8 @@ class AdsPowerLocalApiService(
               }
               const ticketReference = extractReceiptReference(receiptText);
 
-              const historyButton = document.getElementById('header_todaywagers')
-                || document.getElementById('menu_todaywagers');
+              const historyButton = findElementById('header_todaywagers')
+                || findElementById('menu_todaywagers');
               if (historyButton) {
                 clickElement(historyButton);
                 await sleep(1800);

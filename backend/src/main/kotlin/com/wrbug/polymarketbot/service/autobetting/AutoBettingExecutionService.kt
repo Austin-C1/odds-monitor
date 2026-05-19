@@ -6,6 +6,9 @@ import com.wrbug.polymarketbot.entity.AutoBettingIntent
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.repository.AutoBettingIntentRepository
 import com.wrbug.polymarketbot.repository.OddsPlatformMatchRepository
+import com.wrbug.polymarketbot.service.oddsmonitor.OddsMatchCandidate
+import com.wrbug.polymarketbot.service.oddsmonitor.OddsMatchMatcher
+import com.wrbug.polymarketbot.util.TextEncodingUtils
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -33,6 +36,11 @@ data class CrownBetPlacementResult(
     val ticketReference: String?,
     val message: String,
     val currentOdds: BigDecimal? = null
+)
+
+private data class CrownMatchResolution(
+    val match: OddsPlatformMatch,
+    val reversed: Boolean
 )
 
 interface CrownBetPlacementGateway {
@@ -112,15 +120,9 @@ class AutoBettingExecutionService(
 
     private fun buildCommand(intent: AutoBettingIntent, request: AutoBettingExecutionRequest): CrownBetPlacementCommand? {
         val teams = splitMatchTitle(intent.matchTitle) ?: return null
-        val match = platformMatchRepository
-            .findTop1BySourceKeyAndRawLeagueNameAndRawHomeTeamAndRawAwayTeamOrderByUpdatedAtDesc(
-                "crown",
-                intent.leagueName,
-                teams.first,
-                teams.second
-            ) ?: return null
+        val resolvedMatch = resolveCrownMatch(intent, teams) ?: return null
 
-        val betElementId = buildBetElementId(intent, match) ?: return null
+        val betElementId = buildBetElementId(intent, resolvedMatch) ?: return null
         return CrownBetPlacementCommand(
             profileId = request.profileId.trim(),
             loginUrl = request.loginUrl?.trim()?.takeIf { it.isNotBlank() },
@@ -132,27 +134,82 @@ class AutoBettingExecutionService(
         )
     }
 
-    private fun buildBetElementId(intent: AutoBettingIntent, match: OddsPlatformMatch): String? {
+    private fun resolveCrownMatch(intent: AutoBettingIntent, teams: Pair<String, String>): CrownMatchResolution? {
+        val exactMatch = platformMatchRepository
+            .findTop1BySourceKeyAndRawLeagueNameAndRawHomeTeamAndRawAwayTeamOrderByUpdatedAtDesc(
+                "crown",
+                intent.leagueName,
+                teams.first,
+                teams.second
+            )
+        if (exactMatch != null) {
+            return CrownMatchResolution(exactMatch, reversed = false)
+        }
+
+        val signalCandidate = OddsMatchCandidate(
+            id = null,
+            leagueName = intent.leagueName,
+            homeTeam = teams.first,
+            awayTeam = teams.second,
+            startTime = null
+        )
+        return platformMatchRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")
+            .asSequence()
+            .map { match ->
+                val score = OddsMatchMatcher.score(
+                    signalCandidate,
+                    OddsMatchCandidate(
+                        id = match.id,
+                        leagueName = match.rawLeagueName,
+                        homeTeam = match.rawHomeTeam,
+                        awayTeam = match.rawAwayTeam,
+                        startTime = match.rawStartTime
+                    )
+                )
+                match to score
+            }
+            .filter { (_, score) -> OddsMatchMatcher.shouldMerge(score) }
+            .maxByOrNull { (_, score) -> score.score }
+            ?.let { (match, score) -> CrownMatchResolution(match, score.reversed) }
+    }
+
+    private fun buildBetElementId(intent: AutoBettingIntent, resolution: CrownMatchResolution): String? {
+        val match = resolution.match
         val raw = runCatching { objectMapper.readTree(match.rawPayloadJson.orEmpty()) }.getOrNull()
         val gid = raw?.path("gid")?.textOrNull() ?: match.sourceMatchId.takeIf { it.isNotBlank() } ?: return null
         val ecid = raw?.path("ecid")?.textOrNull() ?: return null
         val suffix = when (intent.marketType.lowercase(Locale.ROOT)) {
-            "handicap" -> handicapSuffix(intent, match)
+            "handicap" -> handicapSuffix(intent, match, resolution.reversed)
             "total" -> totalSuffix(intent.selectionName)
             else -> null
         } ?: return null
         return "bet_${gid}_${ecid}_${suffix}"
     }
 
-    private fun handicapSuffix(intent: AutoBettingIntent, match: OddsPlatformMatch): String? {
+    private fun handicapSuffix(intent: AutoBettingIntent, match: OddsPlatformMatch, reversed: Boolean): String? {
         val selection = intent.selectionName.trim()
+        val intentTeams = splitMatchTitle(intent.matchTitle)
         return when {
-            selection.equals(match.rawHomeTeam, ignoreCase = true) -> "REH"
-            selection.equals(match.rawAwayTeam, ignoreCase = true) -> "REC"
-            selection.equals("home", ignoreCase = true) || selection == "主队" -> "REH"
-            selection.equals("away", ignoreCase = true) || selection == "客队" -> "REC"
+            sameTeamName(selection, match.rawHomeTeam) -> "REH"
+            sameTeamName(selection, match.rawAwayTeam) -> "REC"
+            intentTeams != null && sameTeamName(selection, intentTeams.first) -> if (reversed) "REC" else "REH"
+            intentTeams != null && sameTeamName(selection, intentTeams.second) -> if (reversed) "REH" else "REC"
+            selection.equals("home", ignoreCase = true) -> if (reversed) "REC" else "REH"
+            selection.equals("away", ignoreCase = true) -> if (reversed) "REH" else "REC"
+            selection == "主队" -> if (reversed) "REC" else "REH"
+            selection == "客队" -> if (reversed) "REH" else "REC"
             else -> null
         }
+    }
+
+    private fun sameTeamName(left: String, right: String): Boolean {
+        val normalizedLeft = TextEncodingUtils.repairMojibake(left)
+            .replace(Regex("""\s+"""), "")
+            .trim()
+        val normalizedRight = TextEncodingUtils.repairMojibake(right)
+            .replace(Regex("""\s+"""), "")
+            .trim()
+        return normalizedLeft.isNotBlank() && normalizedLeft.equals(normalizedRight, ignoreCase = true)
     }
 
     private fun totalSuffix(selectionName: String): String? {

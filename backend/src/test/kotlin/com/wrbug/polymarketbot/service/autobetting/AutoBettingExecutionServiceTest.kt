@@ -111,7 +111,7 @@ class AutoBettingExecutionServiceTest {
                 historyVerified = false,
                 ticketReference = null,
                 message = "crown_odds_moved",
-                currentOdds = BigDecimal("0.98000000")
+                currentOdds = BigDecimal("0.84000000")
             )
         )
         val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
@@ -218,6 +218,66 @@ class AutoBettingExecutionServiceTest {
         assertEquals("crown_execution_error", result.reason)
         assertEquals(listOf("placing", "rejected"), captor.allValues.map { it.status })
         assertEquals(null, captor.allValues.last().activeDedupeKey)
+    }
+
+    @Test
+    fun `execution resolves crown match when telegram match name uses another platform alias`() {
+        val intent = liveHandicapIntent().copy(
+            matchTitle = "Tokyo vs Kawasaki Frontale",
+            leagueName = "Japan J1",
+            selectionName = "Tokyo"
+        )
+        val crownMatch = crownPlatformMatch().copy(
+            rawLeagueName = "Japan - J League",
+            rawHomeTeam = "FC Tokyo",
+            rawAwayTeam = "Kawasaki Frontale"
+        )
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        `when`(
+            platformMatchRepository.findTop1BySourceKeyAndRawLeagueNameAndRawHomeTeamAndRawAwayTeamOrderByUpdatedAtDesc(
+                "crown",
+                "Japan J1",
+                "Tokyo",
+                "Kawasaki Frontale"
+            )
+        ).thenReturn(null)
+        `when`(platformMatchRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")).thenReturn(listOf(crownMatch))
+        `when`(
+            gateway.placeBet(
+                CrownBetPlacementCommand(
+                    profileId = "k1chipm1",
+                    loginUrl = "https://m407.mos077.com/",
+                    betElementId = "bet_8764315_11049615_REH",
+                    stakeAmount = BigDecimal("10.0000"),
+                    targetOdds = BigDecimal("0.87000000"),
+                    oddsTolerance = BigDecimal("0.02"),
+                    lineValue = "0/0.5"
+                )
+            )
+        ).thenReturn(
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = true,
+                ticketReference = "CROWN-10003",
+                message = "crown_history_verified",
+                currentOdds = BigDecimal("0.87000000")
+            )
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/",
+                oddsTolerance = BigDecimal("0.02")
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("placed", result.status)
+        assertEquals("CROWN-10003", result.crownBetReference)
     }
 
     private fun stubCrownPlatformMatchFor(intent: AutoBettingIntent, match: OddsPlatformMatch = crownPlatformMatch()) {

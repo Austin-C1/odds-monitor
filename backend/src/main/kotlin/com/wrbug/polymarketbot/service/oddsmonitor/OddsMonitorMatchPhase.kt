@@ -122,6 +122,9 @@ fun oddsMonitorLiveElapsedMinutes(rawPayloadJson: String?): Int? {
 
 fun normalizeOddsMonitorLiveElapsedMinutes(value: String?): Int? {
     val text = value?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    Regex("""^[^\\^]+\^(\d{1,3})(?::\d{1,2})?$""").find(text)?.let { match ->
+        return match.groupValues[1].toIntOrNull()
+    }
     Regex("""^(\d{1,3})\s*\+\s*(\d{1,2})$""").find(text)?.let { match ->
         val base = match.groupValues[1].toIntOrNull() ?: return null
         val extra = match.groupValues[2].toIntOrNull() ?: return null

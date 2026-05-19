@@ -32,4 +32,12 @@ describe('frontend API surface', () => {
       expect(source).toContain(currentEndpoint)
     })
   })
+
+  it('uses the backend directly on the packaged local frontend to keep page serving independent from long API calls', () => {
+    const source = readFileSync(join(process.cwd(), 'src/services/api.ts'), 'utf8')
+
+    expect(source).toContain('http://127.0.0.1:18000')
+    expect(source).toContain('isPackagedLocalFrontend')
+    expect(source).toContain("isPackagedLocalFrontend ? `${localBackendUrl}/api` : '/api'")
+  })
 })

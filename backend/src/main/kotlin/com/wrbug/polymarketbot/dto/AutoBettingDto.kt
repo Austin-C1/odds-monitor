@@ -19,7 +19,8 @@ data class AutoBettingSignalRequest(
     val minimumTargetOdds: BigDecimal? = null,
     val oddsChangeDirection: String? = null,
     val stakeAmount: BigDecimal,
-    val capturedAt: Long
+    val capturedAt: Long,
+    val maxSignalAgeSeconds: Long? = null
 )
 
 data class AutoBettingDecisionDto(
