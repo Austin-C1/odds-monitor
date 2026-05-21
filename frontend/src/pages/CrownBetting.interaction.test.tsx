@@ -48,6 +48,7 @@ const mockApiState = vi.hoisted(() => ({
   alerts: [] as any[],
   crownSession: null as any,
   executionResults: [] as any[],
+  notificationConfigs: [] as any[],
   intentId: 9000,
 }))
 
@@ -59,6 +60,9 @@ vi.mock('../services/api', () => ({
       }
       if (url === '/odds-monitor/alerts/list') {
         return Promise.resolve({ data: { code: 0, data: mockApiState.alerts } })
+      }
+      if (url === '/system/notifications/configs/list') {
+        return Promise.resolve({ data: { code: 0, data: mockApiState.notificationConfigs } })
       }
       if (url === '/auto-betting/adspower/status') {
         return Promise.resolve({
@@ -260,6 +264,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     ]
     mockApiState.crownSession = null
     mockApiState.executionResults = []
+    mockApiState.notificationConfigs = []
     const storage = new Map<string, string>()
     Object.defineProperty(window, 'localStorage', {
       writable: true,
@@ -618,6 +623,64 @@ describe('CrownBetting auto betting execution interaction', () => {
     } finally {
       nowSpy?.mockRestore()
     }
+  }, 30000)
+
+  it('syncs the betting page mode from the active monitor mode before consuming alerts', async () => {
+    window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
+      autoMode: 'prematch',
+      autoEnabled: true,
+      perAccountLimit: 50,
+      betLimit: 100,
+      minimumBetOdds: 0.70,
+      signalMaxAgeSeconds: 600,
+    }))
+    mockApiState.notificationConfigs = [
+      {
+        id: 2,
+        name: '全平台赔率监控TG',
+        type: 'telegram',
+        enabled: true,
+        config: {
+          data: {
+            monitorModeEnabled: true,
+            liveOnlyModeEnabled: true,
+          },
+        },
+      },
+    ]
+    mockApiState.alerts = [
+      {
+        id: 1501,
+        alertType: 'odds_change',
+        severity: 'info',
+        title: '赔率变动：罗马 vs 拉齐奥',
+        message: `滚球赔率变动
+
+联赛：意甲
+比赛：罗马 vs 拉齐奥
+进行：第 12 分钟
+比分：0-0
+
+盘口：大小球 大球 2.5
+皇冠：0.94 -> 0.98
+
+筛选：动水通过 / 合水通过
+时间：2026-05-21 22:12:10`,
+        createdAt: Date.now(),
+        acknowledged: false,
+      },
+    ]
+
+    render(<CrownBetting />)
+
+    await waitFor(() => {
+      const signalCalls = vi.mocked(apiClient.post).mock.calls
+        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
+      expect(signalCalls.length).toBeGreaterThan(0)
+      expect(signalCalls.every(([, body]) => body.matchPhase === 'live')).toBe(true)
+    })
+    expect(screen.getAllByText('罗马 vs 拉齐奥').length).toBeGreaterThan(0)
+    expect(window.localStorage.getItem('crown-betting-automation-settings')).toContain('"autoMode":"live"')
   }, 30000)
 
   it('blocks execution when no crown alert matches the selected mode', async () => {

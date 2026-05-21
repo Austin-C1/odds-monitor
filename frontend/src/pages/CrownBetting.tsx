@@ -113,6 +113,20 @@ type AutoBettingDecisionResponse = {
   crownHistoryCheckedAt?: number | null
   crownBetReference?: string | null
 }
+type NotificationConfigResponse = {
+  id?: number | null
+  name?: string | null
+  type?: string | null
+  enabled?: boolean
+  config?: {
+    data?: {
+      monitorModeEnabled?: boolean
+      liveOnlyModeEnabled?: boolean
+    }
+    monitorModeEnabled?: boolean
+    liveOnlyModeEnabled?: boolean
+  }
+}
 
 const STORAGE_KEY = 'crown-betting-accounts'
 const AUTOMATION_SETTINGS_STORAGE_KEY = 'crown-betting-automation-settings'
@@ -299,6 +313,19 @@ const readStoredAutomationSettings = (): AutomationSettings => {
   }
 }
 
+const monitorModeFromNotificationConfigs = (configs: NotificationConfigResponse[]): AutoBettingMode | null => {
+  const monitorConfig = configs.find((config) => {
+    if (config.enabled === false) return false
+    const data = config.config?.data || config.config
+    return data?.monitorModeEnabled === true
+  })
+  const data = monitorConfig?.config?.data || monitorConfig?.config
+  if (!data || typeof data.liveOnlyModeEnabled !== 'boolean') {
+    return null
+  }
+  return data.liveOnlyModeEnabled ? 'live' : 'prematch'
+}
+
 const formatBalanceState = (account: CrownAccount) => {
   if (typeof account.balance === 'number') {
     return formatCurrency(account.balance, account.currency)
@@ -403,6 +430,33 @@ const CrownBetting = () => {
       [key]: value,
     }))
   }
+
+  useEffect(() => {
+    let cancelled = false
+    const syncAutoModeFromMonitorConfig = async () => {
+      try {
+        const response = await apiClient.post<ApiResponse<NotificationConfigResponse[]>>(
+          '/system/notifications/configs/list',
+          {},
+        )
+        if (cancelled || response.data.code !== 0 || !Array.isArray(response.data.data)) return
+        const monitorMode = monitorModeFromNotificationConfigs(response.data.data)
+        if (!monitorMode) return
+        setAutomationSettings((currentSettings) => {
+          if (currentSettings.autoMode === monitorMode) return currentSettings
+          const nextSettings = { ...currentSettings, autoMode: monitorMode }
+          localStorage.setItem(AUTOMATION_SETTINGS_STORAGE_KEY, JSON.stringify(nextSettings))
+          return nextSettings
+        })
+      } catch {
+        // Keep the local betting mode when monitor settings cannot be read.
+      }
+    }
+    void syncAutoModeFromMonitorConfig()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const saveAutomationSettings = () => {
     localStorage.setItem(AUTOMATION_SETTINGS_STORAGE_KEY, JSON.stringify(automationSettings))
