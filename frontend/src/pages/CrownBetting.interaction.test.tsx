@@ -637,6 +637,74 @@ describe('CrownBetting auto betting execution interaction', () => {
     ))).toBe(false)
   }, 30000)
 
+  it('keeps showing prematch crown signals when all accounts are not enabled for betting', async () => {
+    writeAccounts([
+      {
+        id: 'account-a',
+        displayName: '投注主账号',
+        loginName: 'demo_a',
+        loginUrl: 'https://m407.mos077.com/',
+        adsPowerProfileId: 'profile-a',
+        adsPowerStatus: 'opened',
+        bettingEnabled: false,
+        status: 'success',
+        balance: 1200,
+        currency: 'CNY',
+        lastCheckedAt: Date.now(),
+      },
+      {
+        id: 'account-b',
+        displayName: '投注副账号',
+        loginName: 'demo_b',
+        loginUrl: 'https://m407.mos077.com/',
+        adsPowerProfileId: 'profile-b',
+        adsPowerStatus: 'opened',
+        bettingEnabled: false,
+        status: 'success',
+        balance: 900,
+        currency: 'CNY',
+        lastCheckedAt: Date.now(),
+      },
+    ])
+    mockApiState.alerts = [
+      {
+        id: 1401,
+        alertType: 'odds_change',
+        severity: 'info',
+        title: '赔率变动：曼城 vs 利物浦',
+        message: `赛前赔率变动
+
+联赛：英超
+比赛：曼城 vs 利物浦
+
+盘口：让球 主队 -0.5
+皇冠：1.05 -> 1.08
+
+筛选：动水通过 / 合水通过
+时间：2026-05-19 20:10:10`,
+        createdAt: Date.now(),
+        acknowledged: false,
+      },
+    ]
+
+    render(<CrownBetting />)
+
+    await screen.findByText('自动化接入投注功能')
+    await waitFor(() => {
+      expect(screen.getAllByText('曼城 vs 利物浦').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('没有可用账号').length).toBeGreaterThan(0)
+    })
+    expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
+      url === '/odds-monitor/alerts/list'
+    ))).toBe(true)
+    expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
+      url === '/auto-betting/signals/odds-monitor'
+    ))).toBe(false)
+    expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
+      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+    ))).toBe(false)
+  }, 30000)
+
   it('does not execute when automatic betting switch is closed', async () => {
     window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
       autoMode: 'live',

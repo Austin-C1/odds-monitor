@@ -654,8 +654,7 @@ const CrownBetting = () => {
 
   const executeLatestCrownSignal = useCallback(async () => {
     const currentAccounts = accountsRef.current
-    const enabledAccountCount = currentAccounts.filter(isBettingEnabledAccount).length
-    if (automationPollingRef.current || executionRunningRef.current || !autoEnabled || enabledAccountCount === 0) return
+    if (automationPollingRef.current || executionRunningRef.current || !autoEnabled) return
     automationPollingRef.current = true
     let executionStarted = false
     try {
@@ -840,7 +839,7 @@ const CrownBetting = () => {
   ])
 
   useEffect(() => {
-    if (!autoEnabled || enabledBettingAccounts.length === 0) return undefined
+    if (!autoEnabled) return undefined
     void executeLatestCrownSignal()
     const intervalId = window.setInterval(() => {
       void executeLatestCrownSignal()

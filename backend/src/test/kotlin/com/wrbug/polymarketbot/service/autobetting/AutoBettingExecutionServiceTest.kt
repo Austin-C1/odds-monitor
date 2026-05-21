@@ -197,6 +197,54 @@ class AutoBettingExecutionServiceTest {
     }
 
     @Test
+    fun `prematch crown execution passes prematch phase to placement gateway`() {
+        val intent = liveHandicapIntent().copy(
+            dedupeKey = "crown-seed-cuu07crbyfa:prematch:沙特超级联赛阿尔菲斯vs纳加马安萘哉:handicap:0/0.5:阿尔菲斯",
+            activeDedupeKey = "crown-seed-cuu07crbyfa:prematch:沙特超级联赛阿尔菲斯vs纳加马安萘哉:handicap:0/0.5:阿尔菲斯",
+            bettingMode = "prematch",
+            matchPhase = "prematch"
+        )
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        stubCrownPlatformMatchFor(intent)
+        `when`(
+            gateway.placeBet(
+                CrownBetPlacementCommand(
+                    profileId = "k1chipm1",
+                    loginUrl = "https://m407.mos077.com/",
+                    matchPhase = "prematch",
+                    betElementId = "bet_8764315_11049615_REH",
+                    stakeAmount = BigDecimal("10.0000"),
+                    targetOdds = BigDecimal("0.87000000"),
+                    lineValue = "0/0.5"
+                )
+            )
+        ).thenReturn(
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = true,
+                ticketReference = "CROWN-PREMATCH-1",
+                message = "crown_history_verified",
+                currentOdds = BigDecimal("0.87000000")
+            )
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("placed", result.status)
+        assertEquals("prematch", result.matchPhase)
+        assertEquals("CROWN-PREMATCH-1", result.crownBetReference)
+    }
+
+    @Test
     fun `placed intent without crown history verification is not left in placing state`() {
         val intent = liveHandicapIntent()
         `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))

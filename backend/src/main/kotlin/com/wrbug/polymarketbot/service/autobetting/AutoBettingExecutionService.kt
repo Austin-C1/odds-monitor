@@ -23,6 +23,7 @@ data class AutoBettingExecutionRequest(
 data class CrownBetPlacementCommand(
     val profileId: String,
     val loginUrl: String?,
+    val matchPhase: String = "live",
     val betElementId: String,
     val stakeAmount: BigDecimal,
     val targetOdds: BigDecimal,
@@ -140,6 +141,7 @@ class AutoBettingExecutionService(
         return CrownBetPlacementCommand(
             profileId = request.profileId.trim(),
             loginUrl = request.loginUrl?.trim()?.takeIf { it.isNotBlank() },
+            matchPhase = intent.matchPhase.trim().lowercase(Locale.ROOT),
             betElementId = betElementId,
             stakeAmount = intent.stakeAmount.setScale(4, RoundingMode.HALF_UP),
             targetOdds = (request.minimumTargetOdds ?: intent.targetOdds).setScale(8, RoundingMode.HALF_UP),

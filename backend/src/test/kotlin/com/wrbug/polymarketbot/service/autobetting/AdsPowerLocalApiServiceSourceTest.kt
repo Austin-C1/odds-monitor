@@ -97,6 +97,19 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
+    fun `crown placement opens prematch page for prematch signals instead of always using live page`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("private fun buildUrl")
+
+        assertTrue(placementBlock.contains("args.matchPhase"))
+        assertTrue(placementBlock.contains("openTargetSoccerPage"))
+        assertTrue(placementBlock.contains("old_ft_live_league"))
+        assertTrue(placementBlock.contains("live_page"))
+        assertTrue(placementBlock.contains("old_ft_league"))
+        assertTrue(placementBlock.contains("today_page"))
+    }
+
+    @Test
     fun `crown placement rejects only when current odds are below configured minimum odds`() {
         val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
             .substringBefore("const beforeWagerCount")

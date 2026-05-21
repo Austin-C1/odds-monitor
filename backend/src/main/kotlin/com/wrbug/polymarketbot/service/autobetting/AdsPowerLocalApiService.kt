@@ -1044,10 +1044,17 @@ class AdsPowerLocalApiService(
                 }
                 return null;
               };
-              const openLiveSoccer = async () => {
+              const menuCandidateIds = () => {
+                const phase = String(args.matchPhase || 'live').toLowerCase();
+                if (phase === 'prematch') {
+                  return ['today_page', 'old_ft_league', 'ft_league', 'old_ft_today_league', 'ft_today_league', 'today'];
+                }
+                return ['old_ft_live_league', 'ft_live_league', 'live_page'];
+              };
+              const openTargetSoccerPage = async () => {
                 const existing = findElementById(args.betElementId);
                 if (existing) return existing;
-                const candidates = ['old_ft_live_league', 'ft_live_league', 'live_page'];
+                const candidates = menuCandidateIds();
                 for (const id of candidates) {
                   const element = findElementById(id);
                   if (element) {
@@ -1061,7 +1068,7 @@ class AdsPowerLocalApiService(
                 };
                 disableNativePrint();
                 await clearExistingSlip();
-                const betElement = await openLiveSoccer();
+                const betElement = await openTargetSoccerPage();
                 if (!betElement) {
                   return finish({ placed: false, historyVerified: false, message: 'crown_market_not_found' });
               }
