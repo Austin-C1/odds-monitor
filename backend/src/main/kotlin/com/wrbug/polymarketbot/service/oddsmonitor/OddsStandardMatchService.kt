@@ -106,14 +106,15 @@ class OddsStandardMatchService(
             nextStatus
         }
         val refreshedStartTime = preferredStartTime(match, platformMatch)
-        if (match.status == refreshedStatus && match.startTime == refreshedStartTime) {
+        val shouldRefreshUpdatedAt = platformMatch.updatedAt > match.updatedAt
+        if (match.status == refreshedStatus && match.startTime == refreshedStartTime && !shouldRefreshUpdatedAt) {
             return match
         }
         return matchRepository.save(
             match.copy(
                 startTime = refreshedStartTime,
                 status = refreshedStatus,
-                updatedAt = System.currentTimeMillis()
+                updatedAt = maxOf(System.currentTimeMillis(), platformMatch.updatedAt, match.updatedAt)
             )
         )
     }

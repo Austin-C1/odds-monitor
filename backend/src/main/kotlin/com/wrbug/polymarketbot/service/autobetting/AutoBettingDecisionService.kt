@@ -13,7 +13,7 @@ import java.util.Locale
 class AutoBettingDecisionService(
     private val intentRepository: AutoBettingIntentRepository
 ) {
-    private val lockedStatuses = listOf("placed")
+    private val lockedStatuses = listOf("ready", "placing", "placed", "placed_unverified")
     private val supportedPhases = setOf("prematch", "live")
     private val supportedMarkets = setOf("handicap", "total")
     private val defaultMaxSignalAgeMillis = 30_000L
@@ -123,7 +123,7 @@ class AutoBettingDecisionService(
             return Decision(STATUS_REJECTED, "stake_over_single_limit")
         }
         if (intentRepository.existsByDedupeKeyAndStatusIn(dedupeKey, lockedStatuses)) {
-            return Decision(STATUS_REJECTED, "duplicate_placed_intent")
+            return Decision(STATUS_REJECTED, "duplicate_active_intent")
         }
         return Decision(STATUS_READY, "accepted")
     }

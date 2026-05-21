@@ -28,6 +28,10 @@ import {
   type AutoBettingSignal,
   type OddsAlertRecord,
 } from './crownBettingExecutionPlan'
+import {
+  acquireCrownBettingAutomationLock,
+  releaseCrownBettingAutomationLock,
+} from './crownBettingAutomationLock'
 
 const { Text, Title } = Typography
 
@@ -133,7 +137,7 @@ const AUTOMATION_SETTINGS_STORAGE_KEY = 'crown-betting-automation-settings'
 const CROWN_LOGIN_URL = 'https://m407.mos077.com/'
 const LEGACY_SEEDED_ACCOUNT_PREFIX = 'crown-seed-'
 const AUTO_BETTING_POLL_INTERVAL_MS = 5000
-const AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS = 30000
+const AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS = AUTO_BETTING_POLL_INTERVAL_MS
 const AUTO_BETTING_ACCOUNT_CHECK_DELAY_MS = 200
 
 type AutomationSettings = {
@@ -344,6 +348,23 @@ const accountCheckSummary = (account: CrownAccount) => {
 const hasAdsPowerProfile = (account: Pick<CrownAccount, 'adsPowerProfileId'>) => Boolean(account.adsPowerProfileId?.trim())
 
 const isBettingEnabledAccount = (account: CrownAccount) => account.bettingEnabled === true
+
+const unreadableOpenedCrownSessionStatuses = new Set([
+  'crown_page_not_found',
+  'no_logged_in_crown_profile',
+  'unknown',
+  'browser_debug_port_missing',
+])
+
+const shouldKeepKnownOnlineCrownSession = (
+  account: CrownAccount,
+  result: AdsPowerCrownSessionResponse,
+) => (
+  result.opened &&
+  !result.loggedIn &&
+  account.status === 'success' &&
+  unreadableOpenedCrownSessionStatuses.has(result.accountStatus)
+)
 
 const adsPowerStatusLabel = (account: CrownAccount) => {
   if (!hasAdsPowerProfile(account)) return '未绑定 AdsPower Profile'
@@ -561,17 +582,19 @@ const CrownBetting = () => {
       const result = response.data.data
       const checkedAt = result.checkedAt || Date.now()
       const isClosed = !result.opened && result.accountStatus === 'profile_closed'
+      const keepKnownOnline = shouldKeepKnownOnlineCrownSession(account, result)
+      const loggedInOrKnownOnline = result.loggedIn || keepKnownOnline
       const patch: Partial<CrownAccount> = {
-        status: result.loggedIn ? 'success' : (isClosed ? 'unchecked' : 'error'),
-        balance: typeof result.balance === 'number' ? result.balance : null,
+        status: loggedInOrKnownOnline ? 'success' : (isClosed ? 'unchecked' : 'error'),
+        balance: typeof result.balance === 'number' ? result.balance : (keepKnownOnline ? account.balance : null),
         currency: result.currency || account.currency,
-        adsPowerProfileId: result.loggedIn && result.profileId ? result.profileId : account.adsPowerProfileId,
+        adsPowerProfileId: loggedInOrKnownOnline && result.profileId ? result.profileId : account.adsPowerProfileId,
         adsPowerStatus: result.opened ? 'opened' : (isClosed ? 'closed' : 'error'),
         adsPowerMessage: result.message,
         adsPowerUpdatedAt: checkedAt,
         lastCheckedAt: checkedAt,
-        note: result.loggedIn
-          ? (typeof result.balance === 'number' ? '账号在线，余额已获取' : '账号在线，余额未读取到')
+        note: loggedInOrKnownOnline
+          ? (typeof result.balance === 'number' ? '账号在线，余额已获取' : '环境已打开，沿用上次在线状态')
           : (isClosed ? 'AdsPower 环境未打开，请先打开环境并完成登录' : result.message || '账号检测失败'),
       }
       updateAccount(account.id, patch)
@@ -705,11 +728,17 @@ const CrownBetting = () => {
   const executionRunningRef = useRef(false)
   const automationPollingRef = useRef(false)
   const attemptedSignalAtRef = useRef<Map<string, number>>(new Map())
+  const completedSignalKeysRef = useRef<Set<string>>(new Set())
 
   const executeLatestCrownSignal = useCallback(async () => {
     const currentAccounts = accountsRef.current
     if (automationPollingRef.current || executionRunningRef.current || !autoEnabled) return
     automationPollingRef.current = true
+    const lockOwner = `page-${Date.now()}-${Math.random()}`
+    if (!acquireCrownBettingAutomationLock(lockOwner)) {
+      automationPollingRef.current = false
+      return
+    }
     let executionStarted = false
     try {
       const alertResponse = await apiClient.post<ApiResponse<OddsAlertRecord[]>>(
@@ -731,6 +760,7 @@ const CrownBetting = () => {
       const signal = qualifiedCandidates[0] || null
       const signalKey = signal ? autoBettingSignalKey(signal) : null
       if (signalKey) {
+        if (completedSignalKeysRef.current.has(signalKey)) return
         const lastAttemptAt = attemptedSignalAtRef.current.get(signalKey) || 0
         if (Date.now() - lastAttemptAt < AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS) return
         attemptedSignalAtRef.current.set(signalKey, Date.now())
@@ -869,6 +899,7 @@ const CrownBetting = () => {
         summary: placedRows.length > 0 ? `下注成功 ${placedRows.length} 个账号` : '没有确认成功的下注',
       })
       if (placedRows.length > 0) {
+        if (signalKey) completedSignalKeysRef.current.add(signalKey)
         message.success('下注成功，已确认皇冠下注成功')
       } else {
         message.warning('没有确认成功的下注')
@@ -876,6 +907,7 @@ const CrownBetting = () => {
     } catch (error: any) {
       message.error(error.response?.data?.msg || error.message || '监控信号读取失败')
     } finally {
+      releaseCrownBettingAutomationLock(lockOwner)
       automationPollingRef.current = false
       if (executionStarted) {
         executionRunningRef.current = false

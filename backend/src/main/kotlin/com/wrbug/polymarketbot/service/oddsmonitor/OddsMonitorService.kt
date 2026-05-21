@@ -143,14 +143,14 @@ class OddsMonitorService(
                     homeTeam = localizeTeamName(match.rawHomeTeam),
                     awayTeam = localizeTeamName(match.rawAwayTeam),
                     startTime = match.rawStartTime ?: match.updatedAt,
-                    status = localizeMatchStatus("scheduled"),
+                    status = displayMatchStatus(null, sourceMap.values),
                     sourceCount = matchedPlatforms.size,
                     alertCount = 0,
                     matchedPlatforms = matchedPlatforms
                 ),
                 sourceMatches = matchedPlatforms.associateWith { sourceMap.getValue(it) }
             )
-        }.sortedBy { it.match.startTime }
+        }.sortCollectedRows()
 
         return CollectedDashboardSnapshot(rows)
     }
@@ -169,17 +169,17 @@ class OddsMonitorService(
             return null
         }
 
-        val standardMatches = matchRepo.findTop500BySportOrderByStartTimeAsc("football")
-        if (standardMatches.isEmpty()) {
+        val platformMatchIds = platformMatchesById.keys.toList()
+        val links = linkRepo.findByPlatformMatchIdIn(platformMatchIds)
+        if (links.isEmpty()) {
             return null
         }
-        val linksByMatchId = linkRepo.findByMatchIdIn(standardMatches.mapNotNull { it.id })
-            .filter { platformMatchesById.containsKey(it.platformMatchId) }
-            .groupBy { it.matchId }
+        val standardMatchesById = matchRepo.findAllById(links.map { it.matchId }.distinct())
+            .mapNotNull { match -> match.id?.let { id -> id to match } }
+            .toMap()
 
-        val rows = standardMatches.mapNotNull { standardMatch ->
-            val standardMatchId = standardMatch.id ?: return@mapNotNull null
-            val links = linksByMatchId[standardMatchId].orEmpty()
+        val rows = links.groupBy { it.matchId }.mapNotNull { (standardMatchId, links) ->
+            val standardMatch = standardMatchesById[standardMatchId] ?: return@mapNotNull null
             val sourceMap = links.mapNotNull { link -> platformMatchesById[link.platformMatchId] }
                 .groupBy { it.sourceKey }
                 .mapValues { (_, matches) -> matches.maxBy { it.updatedAt } }
@@ -196,7 +196,7 @@ class OddsMonitorService(
                     homeTeam = localizeTeamName(standardMatch.homeTeam),
                     awayTeam = localizeTeamName(standardMatch.awayTeam),
                     startTime = standardMatch.startTime ?: sourceMap.values.first().updatedAt,
-                    status = localizeMatchStatus(standardMatch.status),
+                    status = displayMatchStatus(standardMatch.status, sourceMap.values),
                     sourceCount = matchedPlatforms.size,
                     alertCount = 0,
                     matchedPlatforms = matchedPlatforms
@@ -204,7 +204,7 @@ class OddsMonitorService(
                 sourceMatches = matchedPlatforms.associateWith { sourceMap.getValue(it) },
                 matchLinks = links
             )
-        }.sortedBy { it.match.startTime }
+        }.sortCollectedRows()
 
         return rows.takeIf { it.isNotEmpty() }?.let { CollectedDashboardSnapshot(it) }
     }
@@ -492,6 +492,42 @@ class OddsMonitorService(
 
     private fun shouldDisplayMarket(marketType: String): Boolean {
         return marketType.lowercase(Locale.ROOT) != "moneyline"
+    }
+
+    private fun displayMatchStatus(
+        standardStatus: String?,
+        sourceMatches: Collection<OddsPlatformMatch>
+    ): String {
+        return if (
+            sourceMatches.any { determineOddsMonitorMatchPhase(it) == OddsMonitorMatchPhase.LIVE } ||
+            isLiveStatus(standardStatus)
+        ) {
+            localizeMatchStatus("live")
+        } else {
+            localizeMatchStatus(standardStatus ?: "scheduled")
+        }
+    }
+
+    private fun isLiveStatus(value: String?): Boolean {
+        return TextEncodingUtils.repairMojibake(value.orEmpty()).trim().lowercase(Locale.ROOT) in setOf(
+            "live",
+            "inplay",
+            "in-play",
+            "in_play",
+            "滚球"
+        )
+    }
+
+    private fun List<CollectedMatchRow>.sortCollectedRows(): List<CollectedMatchRow> {
+        return sortedWith(
+            compareByDescending<CollectedMatchRow> { row ->
+                row.sourceMatches.values.any { determineOddsMonitorMatchPhase(it) == OddsMonitorMatchPhase.LIVE } ||
+                    isLiveStatus(row.match.status)
+            }
+                .thenByDescending { row -> row.sourceMatches.values.maxOfOrNull { it.updatedAt } ?: 0L }
+                .thenBy { row -> row.match.startTime }
+                .thenBy { row -> row.match.id }
+        )
     }
 
     private fun OddsPlatformMatch.toDto(): OddsPlatformMatchDto {

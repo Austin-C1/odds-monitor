@@ -276,6 +276,44 @@ describe('crown betting execution plan', () => {
     ])
   })
 
+  it('does not mark an opened but offline AdsPower profile as unopened', () => {
+    const result = buildAutoBettingExecutionPlan({
+      signal: prematchSignal,
+      mode: 'prematch',
+      enabled: true,
+      perAccountLimit: 300,
+      betLimit: 500,
+      minimumBetOdds: 0.7,
+      accounts: [
+        { id: 'a', displayName: '已打开未在线账号', status: 'error', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
+      ],
+    })
+
+    expect(result.canExecute).toBe(false)
+    expect(result.rows).toEqual([
+      expect.objectContaining({ status: 'skipped', stakeAmount: 0, reason: '账号未在线' }),
+    ])
+  })
+
+  it('shows AdsPower errors separately from unopened environments', () => {
+    const result = buildAutoBettingExecutionPlan({
+      signal: prematchSignal,
+      mode: 'prematch',
+      enabled: true,
+      perAccountLimit: 300,
+      betLimit: 500,
+      minimumBetOdds: 0.7,
+      accounts: [
+        { id: 'a', displayName: '环境异常账号', status: 'error', adsPowerProfileId: 'profile-a', adsPowerStatus: 'error' },
+      ],
+    })
+
+    expect(result.canExecute).toBe(false)
+    expect(result.rows).toEqual([
+      expect.objectContaining({ status: 'skipped', stakeAmount: 0, reason: 'AdsPower 环境异常' }),
+    ])
+  })
+
   it('locks execution to the selected betting mode', () => {
     const result = buildAutoBettingExecutionPlan({
       signal: { ...prematchSignal, modeLabel: '滚球', bettingMode: 'live', matchPhase: 'live' },
@@ -358,11 +396,12 @@ describe('crown betting execution plan', () => {
     expect(formatAutoBettingReason('stale_signal')).toBe('信号已过期')
     expect(formatAutoBettingReason('crown_execution_timeout')).toBe('皇冠执行确认超时')
     expect(formatAutoBettingReason('target_odds_below_minimum')).toBe('皇冠当前水位低于最低投注水位')
+    expect(formatAutoBettingReason('duplicate_active_intent')).toBe('已有投注任务处理中，重复信号已跳过')
+    expect(formatAutoBettingReason('duplicate_recent_crown_attempt')).toBe('近期已尝试该信号，重复信号已跳过')
     expect(formatAutoBettingReason('unknown_reason')).toBe('unknown_reason')
   })
 
   it('does not keep removed auto betting restriction reason labels', () => {
     expect(formatAutoBettingReason('crown_odds_moved')).toBe('crown_odds_moved')
-    expect(formatAutoBettingReason('duplicate_active_intent')).toBe('duplicate_active_intent')
   })
 })

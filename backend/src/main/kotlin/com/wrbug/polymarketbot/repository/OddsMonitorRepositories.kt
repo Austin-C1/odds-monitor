@@ -94,6 +94,7 @@ interface OddsMatchRepository : JpaRepository<OddsMatch, Long> {
 @Repository
 interface OddsMatchLinkRepository : JpaRepository<OddsMatchLink, Long> {
     fun findByPlatformMatchId(platformMatchId: Long): OddsMatchLink?
+    fun findByPlatformMatchIdIn(platformMatchIds: Collection<Long>): List<OddsMatchLink>
     fun findByMatchId(matchId: Long): List<OddsMatchLink>
     fun findByMatchIdIn(matchIds: Collection<Long>): List<OddsMatchLink>
 }

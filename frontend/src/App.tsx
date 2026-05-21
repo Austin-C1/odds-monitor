@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { ConfigProvider, Spin } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import Layout from './components/Layout'
+import CrownBettingBackgroundRunner from './components/CrownBettingBackgroundRunner'
 import { apiService } from './services/api'
 import { hasToken } from './utils'
 
@@ -33,7 +34,12 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
     return <Navigate to="/login" replace />
   }
 
-  return <Layout>{children}</Layout>
+  return (
+    <Layout>
+      <CrownBettingBackgroundRunner />
+      {children}
+    </Layout>
+  )
 }
 
 const RouteFallback: React.FC = () => (

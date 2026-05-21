@@ -349,6 +349,7 @@ class AdsPowerLocalApiService(
         candidates: List<AdsPowerCrownSessionCandidateDto>,
         now: Long
     ): AdsPowerCrownSessionDto {
+        val openedCandidates = candidates.filter { it.opened }
         val loggedInCandidates = candidates.filter { it.opened && it.loggedIn }
         val loggedInCount = loggedInCandidates.size
         val knownLoginNames = loggedInCandidates
@@ -373,10 +374,11 @@ class AdsPowerLocalApiService(
         }
         return AdsPowerCrownSessionDto(
             profileId = "",
-            opened = loggedInCount > 0,
+            opened = openedCandidates.isNotEmpty(),
             loggedIn = false,
             accountStatus = status,
             message = message,
+            debugPort = openedCandidates.firstOrNull()?.debugPort,
             checkedAt = now
         )
     }
@@ -390,6 +392,7 @@ class AdsPowerLocalApiService(
         if (debugPort.isBlank()) {
             return CrownBetPlacementResult(false, false, null, "browser_debug_port_missing")
         }
+        closeCrownPrintTargets(debugPort)
         val target = readCrownPageTarget(debugPort, command.loginUrl)
             ?: return CrownBetPlacementResult(false, false, null, "crown_page_not_found")
         val wsUrl = target.webSocketDebuggerUrl?.trim().orEmpty()
@@ -404,8 +407,11 @@ class AdsPowerLocalApiService(
         }
 
         val argsJson = objectMapper.writeValueAsString(command)
-        val resultText = evaluateCrownPageJson(wsUrl, crownBetExecutionScript(argsJson))
-            ?: return CrownBetPlacementResult(false, false, null, "crown_execution_timeout")
+        val resultText = try {
+            evaluateCrownPageJson(wsUrl, crownBetExecutionScript(argsJson))
+        } finally {
+            closeCrownPrintTargets(debugPort)
+        } ?: return CrownBetPlacementResult(false, false, null, "crown_execution_timeout")
         val result = runCatching { objectMapper.readTree(resultText) }.getOrNull()
             ?: return CrownBetPlacementResult(false, false, null, "crown_execution_parse_failed")
         return CrownBetPlacementResult(
@@ -427,6 +433,7 @@ class AdsPowerLocalApiService(
     }
 
     private fun readCrownPageSnapshots(debugPort: String, loginUrl: String?): List<CrownPageSnapshot> {
+        closeCrownPrintTargets(debugPort)
         return readCrownPageTargets(debugPort, loginUrl).mapNotNull { target ->
             val wsUrl = target.webSocketDebuggerUrl?.trim().orEmpty()
             if (wsUrl.isBlank()) {
@@ -442,15 +449,20 @@ class AdsPowerLocalApiService(
     }
 
     private fun readCrownPageTargets(debugPort: String, loginUrl: String?): List<BrowserTarget> {
+        return selectCrownTargets(readBrowserTargets(debugPort), loginUrl)
+    }
+
+    private fun readBrowserTargets(debugPort: String): List<BrowserTarget> {
         val port = debugPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: return emptyList()
         val endpoint = "http://127.0.0.1:$port/json/list".toHttpUrlOrNull() ?: return emptyList()
         val request = Request.Builder().url(endpoint).get().build()
-        val targets = try {
+        return try {
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return emptyList()
                 val root = objectMapper.readTree(response.body?.string().orEmpty()).takeIf { it.isArray } ?: return emptyList()
                 root.map { node ->
                     BrowserTarget(
+                        id = node.path("id").textOrNull(),
                         type = node.path("type").textOrNull(),
                         title = node.path("title").textOrNull(),
                         pageUrl = node.path("url").textOrNull(),
@@ -459,9 +471,24 @@ class AdsPowerLocalApiService(
                 }
             }
         } catch (_: Exception) {
-            return emptyList()
+            emptyList()
         }
-        return selectCrownTargets(targets, loginUrl)
+    }
+
+    private fun closeCrownPrintTargets(debugPort: String) {
+        val port = debugPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: return
+        val printTargets = readBrowserTargets(debugPort).filter { target ->
+            val text = listOf(target.title, target.pageUrl).filterNotNull().joinToString(" ")
+            val printLike = Regex("""chrome://print|print|打印|列印""", RegexOption.IGNORE_CASE).containsMatchIn(text)
+            target.type == "page" && !target.id.isNullOrBlank() && printLike
+        }
+        for (target in printTargets) {
+            val endpoint = "http://127.0.0.1:$port/json/close/${target.id}".toHttpUrlOrNull() ?: continue
+            val request = Request.Builder().url(endpoint).get().build()
+            runCatching {
+                httpClient.newCall(request).execute().close()
+            }
+        }
     }
 
     private fun selectCrownTarget(targets: List<BrowserTarget>, loginUrl: String?): BrowserTarget? {
@@ -829,6 +856,18 @@ class AdsPowerLocalApiService(
               const disableNativePrint = () => {
                 const guardWindow = (win) => {
                   const noop = () => {};
+                  const fakePopup = {
+                    print: noop,
+                    close: noop,
+                    focus: noop,
+                    blur: noop,
+                    document: {
+                      write: noop,
+                      close: noop,
+                      open: noop,
+                      body: null
+                    }
+                  };
                   try {
                     Object.defineProperty(win, 'print', {
                       configurable: true,
@@ -848,6 +887,10 @@ class AdsPowerLocalApiService(
                         configurable: true,
                         writable: true,
                         value: (...openArgs) => {
+                          const targetUrl = String(openArgs[0] || '');
+                          if (/print|receipt|statement|wager/i.test(targetUrl)) {
+                            return fakePopup;
+                          }
                           const popup = openWindow(...openArgs);
                           try {
                             if (popup) {
@@ -865,6 +908,21 @@ class AdsPowerLocalApiService(
                   } catch (_) {
                     // Ignore window.open guard failures.
                   }
+                  try {
+                    if (win.document && !win.document.__autoBetOriginalExecCommand && typeof win.document.execCommand === 'function') {
+                      win.document.__autoBetOriginalExecCommand = win.document.execCommand.bind(win.document);
+                    }
+                    const execCommand = win.document?.__autoBetOriginalExecCommand;
+                    if (typeof execCommand === 'function') {
+                      win.document.execCommand = (...execArgs) => {
+                        const command = String(execArgs[0] || '').toLowerCase();
+                        if (command === 'print') return false;
+                        return execCommand(...execArgs);
+                      };
+                    }
+                  } catch (_) {
+                    // Ignore document command guard failures.
+                  }
                   win.onbeforeprint = null;
                   win.onafterprint = null;
                   if (win.document) {
@@ -878,6 +936,19 @@ class AdsPowerLocalApiService(
                   } catch (_) {
                     // Ignore cross-frame print guard failures.
                   }
+                }
+                try {
+                  if (!window.__autoBetPrintGuardTimer) {
+                    window.__autoBetPrintGuardTimer = setInterval(() => {
+                      try {
+                        disableNativePrint();
+                      } catch (_) {
+                        // Ignore repeated guard failures.
+                      }
+                    }, 500);
+                  }
+                } catch (_) {
+                  // Ignore print guard timer failures.
                 }
               };
               const readWagerCount = () => {
@@ -902,13 +973,75 @@ class AdsPowerLocalApiService(
                 }
                 return /Confirmed/i.test(value) && Boolean(extractReceiptReference(value));
               };
+              const expectedOpenBetSide = () => {
+                const market = String(args.marketType || '').toLowerCase();
+                const selection = String(args.selectionName || '').toLowerCase();
+                if (market === 'total') {
+                  if (selection.includes('大') || selection.includes('over') || selection === 'o') return 'Over';
+                  if (selection.includes('小') || selection.includes('under') || selection === 'u') return 'Under';
+                }
+                return null;
+              };
+              const expectedOpenBetSelection = () => {
+                const market = String(args.marketType || '').toLowerCase();
+                const selectionText = String(args.selectionName || '').trim();
+                const selection = selectionText.toLowerCase();
+                if (market !== 'handicap') return null;
+                const tokens = expectedMatchTokens();
+                if (selection === 'home' || selection === '主队') return tokens[0] || null;
+                if (selection === 'away' || selection === '客队') return tokens[1] || null;
+                return selectionText || null;
+              };
+              const stakeText = () => Number(args.stakeAmount).toFixed(2);
+              const expectedMatchTokens = () => String(args.matchTitle || '')
+                .split(/\s+vs\s+|\s+v\s+/i)
+                .map((part) => part.trim().toLowerCase())
+                .filter((part) => part.length >= 2);
+              const openBetMatchesExpectedMatch = (text) => {
+                const tokens = expectedMatchTokens();
+                if (tokens.length < 2) return true;
+                const value = String(text || '').toLowerCase();
+                return tokens.every((token) => value.includes(token));
+              };
+              const openBetVerified = (text) => {
+                const value = String(text || '');
+                if (!/OPEN BETS|Confirmed|Statement/i.test(value)) return false;
+                if (!openBetMatchesExpectedMatch(value)) return false;
+                const expectedStake = stakeText();
+                if (!value.includes('Stake: ' + expectedStake) && !value.includes('Stake:' + expectedStake)) {
+                  return false;
+                }
+                if (args.lineValue && !normalizeLine(value).includes(normalizeLine(args.lineValue))) {
+                  return false;
+                }
+                const side = expectedOpenBetSide();
+                if (side && !(new RegExp('\\b' + side + '\\b', 'i')).test(value)) {
+                  return false;
+                }
+                const selectionText = expectedOpenBetSelection();
+                if (selectionText && !value.toLowerCase().includes(selectionText.toLowerCase())) {
+                  return false;
+                }
+                return Boolean(extractReceiptReference(value)) || /Confirmed/i.test(value);
+              };
+              const verifiedOpenBetPayload = (text, currentOdds = null) => ({
+                placed: true,
+                historyVerified: true,
+                ticketReference: extractReceiptReference(text),
+                message: 'crown_history_verified',
+                currentOdds
+              });
                 const clickElement = (element) => {
-                  element.scrollIntoView({ block: 'center', inline: 'center' });
-                  const view = ownerWindow(element);
-                  const MouseEventCtor = view.MouseEvent || window.MouseEvent;
-                  for (const type of ['mouseover', 'mousedown', 'mouseup', 'click']) {
-                    element.dispatchEvent(new MouseEventCtor(type, { bubbles: true, cancelable: true, view }));
-                  }
+                  if (!element) return;
+                  const fireClick = () => {
+                    element.scrollIntoView({ block: 'center', inline: 'center' });
+                    const view = ownerWindow(element);
+                    const MouseEventCtor = view.MouseEvent || window.MouseEvent;
+                    for (const type of ['mouseover', 'mousedown', 'mouseup', 'click']) {
+                      element.dispatchEvent(new MouseEventCtor(type, { bubbles: true, cancelable: true, view }));
+                    }
+                  };
+                  setTimeout(fireClick, 0);
                 };
                 const isVisible = (element) => Boolean(element && (
                   (() => {
@@ -967,73 +1100,57 @@ class AdsPowerLocalApiService(
                   const InputEventCtor = view.InputEvent || window.InputEvent || EventCtor;
                   const HTMLInputElementCtor = view.HTMLInputElement || window.HTMLInputElement;
                   const findStakeElementById = (id) => stakeDocument.getElementById(id) || findElementById(id);
-                  stakeInput.focus();
-                  clickElement(stakeInput);
-                  const keyboardVisible = () => isVisible(findStakeElementById('num_0'))
-                    && isVisible(findStakeElementById('num_done'));
-                  for (let index = 0; index < 8 && !keyboardVisible(); index += 1) {
-                    await sleep(100);
-                  }
-                  if (keyboardVisible()) {
-                    for (let index = 0; index < 14; index += 1) {
-                      const deleteButton = findStakeElementById('num_x');
-                      if (deleteButton) clickElement(deleteButton);
-                      await sleep(35);
-                    }
-                    for (const char of stake) {
-                      const numberButton = findStakeElementById('num_' + char);
-                      if (!numberButton) return;
-                      clickElement(numberButton);
-                      await sleep(80);
-                    }
-                    const doneButton = findStakeElementById('num_done');
-                    if (doneButton) {
-                      clickElement(doneButton);
-                      await sleep(250);
-                    }
-                    return;
-                  }
                   const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElementCtor.prototype, 'value')?.set;
-                  if (valueSetter) {
-                    valueSetter.call(stakeInput, '');
-                    stakeInput.dispatchEvent(new EventCtor('input', { bubbles: true }));
-                  } else {
-                    stakeInput.value = '';
-                  }
-                  stakeInput.dispatchEvent(new EventCtor('input', { bubbles: true }));
-                  for (const char of stake) {
-                    stakeInput.dispatchEvent(new KeyboardEventCtor('keydown', {
-                      bubbles: true,
-                      cancelable: true,
-                      key: char,
-                      code: 'Digit' + char
-                    }));
-                    stakeInput.dispatchEvent(new KeyboardEventCtor('keypress', {
-                      bubbles: true,
-                      cancelable: true,
-                      key: char,
-                      code: 'Digit' + char
-                    }));
-                    const nextValue = String(stakeInput.value || '') + char;
+                  const applyStakeDirectly = () => {
                     if (valueSetter) {
-                      valueSetter.call(stakeInput, nextValue);
+                      valueSetter.call(stakeInput, '');
                     } else {
-                      stakeInput.value = nextValue;
+                      stakeInput.value = '';
+                    }
+                    stakeInput.dispatchEvent(new EventCtor('input', { bubbles: true }));
+                    stakeInput.dispatchEvent(new EventCtor('change', { bubbles: true }));
+                    if (valueSetter) {
+                      valueSetter.call(stakeInput, stake);
+                    } else {
+                      stakeInput.value = stake;
                     }
                     stakeInput.dispatchEvent(new InputEventCtor('input', {
                       bubbles: true,
                       inputType: 'insertText',
-                      data: char
+                      data: stake
                     }));
                     stakeInput.dispatchEvent(new KeyboardEventCtor('keyup', {
                       bubbles: true,
                       cancelable: true,
-                      key: char,
-                      code: 'Digit' + char
+                      key: stake.slice(-1) || '0',
+                      code: 'Digit' + (stake.slice(-1) || '0')
                     }));
-                    await sleep(60);
+                    stakeInput.dispatchEvent(new EventCtor('change', { bubbles: true }));
+                    return String(stakeInput.value || '').trim() === stake;
+                  };
+                  if (applyStakeDirectly()) {
+                    await sleep(500);
+                    return;
                   }
-                  stakeInput.dispatchEvent(new EventCtor('change', { bubbles: true }));
+                  const keyboardVisible = () => isVisible(findStakeElementById('num_0'))
+                    && isVisible(findStakeElementById('num_done'));
+                  if (!keyboardVisible()) return;
+                  for (let index = 0; index < 14; index += 1) {
+                    const deleteButton = findStakeElementById('num_x');
+                    if (deleteButton) clickElement(deleteButton);
+                    await sleep(35);
+                  }
+                  for (const char of stake) {
+                    const numberButton = findStakeElementById('num_' + char);
+                    if (!numberButton) return;
+                    clickElement(numberButton);
+                    await sleep(80);
+                  }
+                  const doneButton = findStakeElementById('num_done');
+                  if (doneButton) {
+                    clickElement(doneButton);
+                    await sleep(250);
+                  }
                 };
                 const waitFor = async (reader, timeoutMs = 10000, intervalMs = 250) => {
                   const deadline = Date.now() + timeoutMs;
@@ -1067,6 +1184,10 @@ class AdsPowerLocalApiService(
                   return waitFor(() => findElementById(args.betElementId), 8000, 300);
                 };
                 disableNativePrint();
+                const existingOpenBetText = currentRawText() || currentText();
+                if (openBetVerified(existingOpenBetText)) {
+                  return finish(verifiedOpenBetPayload(existingOpenBetText));
+                }
                 await clearExistingSlip();
                 const betElement = await openTargetSoccerPage();
                 if (!betElement) {
@@ -1119,6 +1240,10 @@ class AdsPowerLocalApiService(
                   const addButton = findElementById('add_total_bet');
                   if (!addButton || addButton.disabled || !isVisible(addButton)) {
                     const pageText = currentText();
+                    const rawPageText = currentRawText();
+                    if (openBetVerified(rawPageText || pageText)) {
+                      return finish(verifiedOpenBetPayload(rawPageText || pageText, currentOdds));
+                    }
                     if (/minimum stake|min(?:imum)?\\.? stake/i.test(pageText)) {
                       return finish({ placed: false, historyVerified: false, message: 'crown_stake_below_minimum', currentOdds });
                     }
@@ -1144,6 +1269,10 @@ class AdsPowerLocalApiService(
                 }
                 if (!orderButton) {
                   const pageText = currentText();
+                  const rawPageText = currentRawText();
+                  if (openBetVerified(rawPageText || pageText)) {
+                    return finish(verifiedOpenBetPayload(rawPageText || pageText, currentOdds));
+                  }
                   if (/minimum stake|min(?:imum)?\\.? stake/i.test(pageText)) {
                     return finish({ placed: false, historyVerified: false, message: 'crown_stake_below_minimum', currentOdds });
                   }
@@ -1166,10 +1295,15 @@ class AdsPowerLocalApiService(
                   confirmBetIfPrompted();
                 }
                 const text = currentText();
+                const rawText = currentRawText();
+                if (openBetVerified(rawText || text)) return rawText || text;
                 if (receiptVerified(text)) return text;
                 if (/Rejected|Failed to Place|not placed|incorrect|maximum|minimum/i.test(text)) return text;
                 return null;
               }, 18000, 500);
+              if (receiptText && openBetVerified(receiptText)) {
+                return finish(verifiedOpenBetPayload(receiptText, currentOdds));
+              }
               if (!receiptText || !receiptVerified(receiptText)) {
                 return finish({
                   placed: false,
@@ -1206,6 +1340,9 @@ class AdsPowerLocalApiService(
                 if (currentWagerCount > beforeWagerCount && /successfully placed|BET RECEIPT/i.test(rawText || text)) {
                   return rawText || text;
                 }
+                if (openBetVerified(rawText || text)) {
+                  return rawText || text;
+                }
                 if (/Confirmed|Open Bets|OPEN BETS|My Bets/i.test(text)
                   && text.includes(stake)
                   && (text.includes('Al ') || /HDP|O\/U/i.test(text))) {
@@ -1222,10 +1359,11 @@ class AdsPowerLocalApiService(
                   currentOdds
                 });
               }
+              const verifiedTicketReference = ticketReference || extractReceiptReference(historyText);
               return finish({
                 placed: true,
                 historyVerified: true,
-                ticketReference,
+                ticketReference: verifiedTicketReference,
                 message: 'crown_history_verified',
                 currentOdds
               });
@@ -1343,6 +1481,7 @@ class AdsPowerLocalApiService(
     }
 
     private data class BrowserTarget(
+        val id: String?,
         val type: String?,
         val title: String?,
         val pageUrl: String?,

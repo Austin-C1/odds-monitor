@@ -24,6 +24,9 @@ data class CrownBetPlacementCommand(
     val profileId: String,
     val loginUrl: String?,
     val matchPhase: String = "live",
+    val matchTitle: String = "",
+    val marketType: String = "",
+    val selectionName: String = "",
     val betElementId: String,
     val stakeAmount: BigDecimal,
     val targetOdds: BigDecimal,
@@ -142,6 +145,9 @@ class AutoBettingExecutionService(
             profileId = request.profileId.trim(),
             loginUrl = request.loginUrl?.trim()?.takeIf { it.isNotBlank() },
             matchPhase = intent.matchPhase.trim().lowercase(Locale.ROOT),
+            matchTitle = "${resolvedMatch.match.rawHomeTeam} vs ${resolvedMatch.match.rawAwayTeam}",
+            marketType = intent.marketType,
+            selectionName = intent.selectionName,
             betElementId = betElementId,
             stakeAmount = intent.stakeAmount.setScale(4, RoundingMode.HALF_UP),
             targetOdds = (request.minimumTargetOdds ?: intent.targetOdds).setScale(8, RoundingMode.HALF_UP),
@@ -150,6 +156,7 @@ class AutoBettingExecutionService(
     }
 
     private fun resolveCrownMatch(intent: AutoBettingIntent, teams: Pair<String, String>): CrownMatchResolution? {
+        val phase = intent.matchPhase.trim().lowercase(Locale.ROOT)
         val exactMatch = platformMatchRepository
             .findTop1BySourceKeyAndRawLeagueNameAndRawHomeTeamAndRawAwayTeamOrderByUpdatedAtDesc(
                 "crown",
@@ -157,7 +164,20 @@ class AutoBettingExecutionService(
                 teams.first,
                 teams.second
             )
+        if (exactMatch != null && crownMatchMatchesPhase(exactMatch, phase)) {
+            return CrownMatchResolution(exactMatch, reversed = false)
+        }
+
+        val recentCrownMatches = platformMatchRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")
         if (exactMatch != null) {
+            recentCrownMatches
+                .firstOrNull { match ->
+                    match.rawLeagueName == intent.leagueName &&
+                        match.rawHomeTeam == teams.first &&
+                        match.rawAwayTeam == teams.second &&
+                        crownMatchMatchesPhase(match, phase)
+                }
+                ?.let { return CrownMatchResolution(it, reversed = false) }
             return CrownMatchResolution(exactMatch, reversed = false)
         }
 
@@ -168,7 +188,7 @@ class AutoBettingExecutionService(
             awayTeam = teams.second,
             startTime = null
         )
-        return platformMatchRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")
+        val scoredMatches = recentCrownMatches
             .asSequence()
             .map { match ->
                 val score = OddsMatchMatcher.score(
@@ -184,8 +204,41 @@ class AutoBettingExecutionService(
                 match to score
             }
             .filter { (_, score) -> OddsMatchMatcher.shouldMerge(score) }
+            .toList()
+
+        return (scoredMatches
+            .filter { (match, _) -> crownMatchMatchesPhase(match, phase) }
             .maxByOrNull { (_, score) -> score.score }
+            ?: scoredMatches.maxByOrNull { (_, score) -> score.score })
             ?.let { (match, score) -> CrownMatchResolution(match, score.reversed) }
+    }
+
+    private fun crownMatchMatchesPhase(match: OddsPlatformMatch, phase: String): Boolean {
+        if (phase != "prematch" && phase != "live") return true
+        return crownMatchPhase(match)?.let { it == phase } ?: true
+    }
+
+    private fun crownMatchPhase(match: OddsPlatformMatch): String? {
+        val raw = runCatching { objectMapper.readTree(match.rawPayloadJson.orEmpty()) }.getOrNull() ?: return null
+        raw.path("is_live")
+            .takeIf { !it.isMissingNode && !it.isNull && it.isBoolean }
+            ?.let { return if (it.asBoolean()) "live" else "prematch" }
+
+        raw.path("showtype").textOrNull()?.trim()?.lowercase(Locale.ROOT)?.let { showType ->
+            if (showType in setOf("live", "rb", "inplay", "in-play")) return "live"
+            if (showType in setOf("today", "early", "prematch")) return "prematch"
+        }
+
+        raw.path("isRB").textOrNull()?.trim()?.let { isRb ->
+            if (isRb.equals("Y", ignoreCase = true)) return "live"
+            if (isRb.equals("N", ignoreCase = true)) return "prematch"
+        }
+
+        raw.path("retimeset").textOrNull()?.trim()?.takeIf { it.isNotBlank() && it != "0" }?.let {
+            return "live"
+        }
+
+        return null
     }
 
     private fun buildBetElementId(intent: AutoBettingIntent, resolution: CrownMatchResolution): String? {
@@ -193,26 +246,34 @@ class AutoBettingExecutionService(
         val raw = runCatching { objectMapper.readTree(match.rawPayloadJson.orEmpty()) }.getOrNull()
         val gid = raw?.path("gid")?.textOrNull() ?: match.sourceMatchId.takeIf { it.isNotBlank() } ?: return null
         val ecid = raw?.path("ecid")?.textOrNull() ?: return null
+        val phase = intent.matchPhase.trim().lowercase(Locale.ROOT)
         val suffix = when (intent.marketType.lowercase(Locale.ROOT)) {
-            "handicap" -> handicapSuffix(intent, match, resolution.reversed)
-            "total" -> totalSuffix(intent.selectionName)
+            "handicap" -> handicapSuffix(intent, match, resolution.reversed, phase)
+            "total" -> totalSuffix(intent.selectionName, phase)
             else -> null
         } ?: return null
         return "bet_${gid}_${ecid}_${suffix}"
     }
 
-    private fun handicapSuffix(intent: AutoBettingIntent, match: OddsPlatformMatch, reversed: Boolean): String? {
+    private fun handicapSuffix(
+        intent: AutoBettingIntent,
+        match: OddsPlatformMatch,
+        reversed: Boolean,
+        phase: String
+    ): String? {
         val selection = intent.selectionName.trim()
         val intentTeams = splitMatchTitle(intent.matchTitle)
+        val homeSuffix = if (phase == "prematch") "RH" else "REH"
+        val awaySuffix = if (phase == "prematch") "RC" else "REC"
         return when {
-            sameTeamName(selection, match.rawHomeTeam) -> "REH"
-            sameTeamName(selection, match.rawAwayTeam) -> "REC"
-            intentTeams != null && sameTeamName(selection, intentTeams.first) -> if (reversed) "REC" else "REH"
-            intentTeams != null && sameTeamName(selection, intentTeams.second) -> if (reversed) "REH" else "REC"
-            selection.equals("home", ignoreCase = true) -> if (reversed) "REC" else "REH"
-            selection.equals("away", ignoreCase = true) -> if (reversed) "REH" else "REC"
-            selection == "主队" -> if (reversed) "REC" else "REH"
-            selection == "客队" -> if (reversed) "REH" else "REC"
+            sameTeamName(selection, match.rawHomeTeam) -> homeSuffix
+            sameTeamName(selection, match.rawAwayTeam) -> awaySuffix
+            intentTeams != null && sameTeamName(selection, intentTeams.first) -> if (reversed) awaySuffix else homeSuffix
+            intentTeams != null && sameTeamName(selection, intentTeams.second) -> if (reversed) homeSuffix else awaySuffix
+            selection.equals("home", ignoreCase = true) -> if (reversed) awaySuffix else homeSuffix
+            selection.equals("away", ignoreCase = true) -> if (reversed) homeSuffix else awaySuffix
+            selection == "主队" -> if (reversed) awaySuffix else homeSuffix
+            selection == "客队" -> if (reversed) homeSuffix else awaySuffix
             else -> null
         }
     }
@@ -227,11 +288,13 @@ class AutoBettingExecutionService(
         return normalizedLeft.isNotBlank() && normalizedLeft.equals(normalizedRight, ignoreCase = true)
     }
 
-    private fun totalSuffix(selectionName: String): String? {
+    private fun totalSuffix(selectionName: String, phase: String): String? {
         val selection = selectionName.trim().lowercase(Locale.ROOT)
+        val overSuffix = if (phase == "prematch") "OUC" else "ROUC"
+        val underSuffix = if (phase == "prematch") "OUH" else "ROUH"
         return when {
-            selection.contains("大") || selection == "over" || selection == "o" -> "ROUC"
-            selection.contains("小") || selection == "under" || selection == "u" -> "ROUH"
+            selection.contains("大") || selection == "over" || selection == "o" -> overSuffix
+            selection.contains("小") || selection == "under" || selection == "u" -> underSuffix
             else -> null
         }
     }

@@ -215,7 +215,7 @@ class AutoBettingDecisionServiceTest {
     }
 
     @Test
-    fun `duplicate placed intent for the same account match market and selection is rejected`() {
+    fun `duplicate active intent for the same account match market and selection is rejected`() {
         val request = baseRequest()
         `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
             .thenReturn(true)
@@ -224,11 +224,26 @@ class AutoBettingDecisionServiceTest {
         val decision = service.createIntent(request, now = 1_000_000)
 
         assertEquals("rejected", decision.status)
-        assertEquals("duplicate_placed_intent", decision.reason)
+        assertEquals("duplicate_active_intent", decision.reason)
     }
 
     @Test
-    fun `qualifying signal is accepted even when the same signal already has an active intent`() {
+    fun `recent crown page touched failure does not block duplicate retry`() {
+        val request = baseRequest()
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
+            .thenReturn(false)
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 1_000_000)
+
+        assertEquals("ready", decision.status)
+        assertEquals("accepted", decision.reason)
+        assertEquals(null, captor.value.activeDedupeKey)
+    }
+
+    @Test
+    fun `qualifying signal is accepted when no active intent exists`() {
         val request = baseRequest()
         `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
             .thenReturn(false)
@@ -497,5 +512,5 @@ class AutoBettingDecisionServiceTest {
         maxSignalAgeSeconds = maxSignalAgeSeconds
     )
 
-    private fun lockedStatuses() = listOf("placed")
+    private fun lockedStatuses() = listOf("ready", "placing", "placed", "placed_unverified")
 }

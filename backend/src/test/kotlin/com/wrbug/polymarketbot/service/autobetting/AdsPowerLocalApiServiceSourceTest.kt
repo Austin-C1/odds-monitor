@@ -30,18 +30,45 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
+    fun `crown placement schedules page clicks outside the active cdp evaluation stack`() {
+        val placementBlock = source.substringAfter("const clickElement")
+            .substringBefore("const isVisible")
+
+        assertTrue(placementBlock.contains("setTimeout(fireClick"))
+    }
+
+    @Test
     fun `crown placement disables native print dialogs during order confirmation`() {
         val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
             .substringBefore("private fun buildUrl")
+        val gatewayBlock = source.substringAfter("override fun placeBet")
+            .substringBefore("private fun readCrownPageSnapshot")
 
         assertTrue(placementBlock.contains("disableNativePrint"))
         assertTrue(placementBlock.contains("win.print"))
         assertTrue(placementBlock.contains("win.open"))
+        assertTrue(gatewayBlock.contains("closeCrownPrintTargets(debugPort)"))
         assertTrue(
             placementBlock.indexOf("disableNativePrint();").let { guardIndex ->
                 guardIndex >= 0 && guardIndex < placementBlock.indexOf("clickElement(orderButton)")
             }
         )
+    }
+
+    @Test
+    fun `crown placement closes browser print targets before using account page`() {
+        val targetBlock = source.substringAfter("private data class BrowserTarget")
+            .substringBefore("private data class CrownPageSnapshot")
+        val closeBlock = source.substringAfter("private fun closeCrownPrintTargets")
+            .substringBefore("private fun readCrownPageSnapshot")
+        val readTargetsBlock = source.substringAfter("private fun readCrownPageTargets")
+            .substringBefore("private fun selectCrownTarget")
+
+        assertTrue(targetBlock.contains("val id: String?"))
+        assertTrue(readTargetsBlock.contains("id = node.path(\"id\")"))
+        assertTrue(closeBlock.contains("/json/close/"))
+        assertTrue(closeBlock.contains("chrome://print"))
+        assertTrue(closeBlock.contains("printLike"))
     }
 
     @Test
@@ -52,6 +79,23 @@ class AdsPowerLocalApiServiceSourceTest {
         assertTrue(placementBlock.contains("receiptVerified"))
         assertTrue(placementBlock.contains("ticketReference && receiptVerified"))
         assertTrue(placementBlock.contains("message: 'crown_receipt_verified'"))
+    }
+
+    @Test
+    fun `crown placement treats matching open bets history as verified placement`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("private fun buildUrl")
+
+        assertTrue(placementBlock.contains("openBetVerified"))
+        assertTrue(placementBlock.contains("openBetMatchesExpectedMatch"))
+        assertTrue(placementBlock.contains("expectedOpenBetSelection"))
+        assertTrue(placementBlock.contains("market !== 'handicap'"))
+        assertTrue(placementBlock.contains("selection === 'home'"))
+        assertTrue(placementBlock.contains("selection === 'away'"))
+        assertTrue(placementBlock.contains("Stake: ' + expectedStake"))
+        assertTrue(placementBlock.contains("value.toLowerCase().includes(selectionText.toLowerCase())"))
+        assertTrue(placementBlock.contains("verifiedOpenBetPayload"))
+        assertTrue(placementBlock.contains("message: 'crown_history_verified'"))
     }
 
     @Test
@@ -94,6 +138,20 @@ class AdsPowerLocalApiServiceSourceTest {
         assertTrue(placementBlock.contains("findElementById(args.betElementId)"))
         assertTrue(placementBlock.contains("findSelector('input#bet_gold_pc')"))
         assertTrue(placementBlock.contains("ownerDocument?.defaultView"))
+    }
+
+    @Test
+    fun `crown placement writes stake directly before focusing stake input`() {
+        val placementBlock = source.substringAfter("const fillStakeInput")
+            .substringBefore("const waitFor")
+
+        assertTrue(placementBlock.contains("const applyStakeDirectly"))
+        assertTrue(
+            placementBlock.indexOf("applyStakeDirectly()").let { directIndex ->
+                val focusIndex = placementBlock.indexOf("stakeInput.focus()")
+                directIndex >= 0 && (focusIndex < 0 || directIndex < focusIndex)
+            }
+        )
     }
 
     @Test

@@ -111,6 +111,8 @@ const autoBettingReasonLabels: Record<string, string> = {
   crown_execution_timeout: '皇冠执行确认超时',
   crown_history_unverified: '下注后未确认到历史记录',
   stale_signal: '信号已过期',
+  duplicate_active_intent: '已有投注任务处理中，重复信号已跳过',
+  duplicate_recent_crown_attempt: '近期已尝试该信号，重复信号已跳过',
   duplicate_placed_intent: '已成功投注，重复信号已跳过',
   target_odds_below_minimum: '皇冠当前水位低于最低投注水位',
 }
@@ -316,6 +318,12 @@ export const buildAutoBettingExecutionPlan = (
     if (!hasAdsPowerProfile(account)) {
       return skippedRow(account, signal, '未绑定 AdsPower Profile')
     }
+    if (account.adsPowerStatus === 'closed') {
+      return skippedRow(account, signal, 'AdsPower 环境未打开')
+    }
+    if (account.adsPowerStatus === 'error') {
+      return skippedRow(account, signal, 'AdsPower 环境异常')
+    }
     if (account.adsPowerStatus !== 'opened') {
       return skippedRow(account, signal, 'AdsPower 环境未打开')
     }
@@ -462,6 +470,8 @@ const isAutomationReady = (account: ExecutionAccount) => (
 const unavailableReason = (account: ExecutionAccount) => {
   if (account.bettingEnabled === false) return '投注未启用'
   if (!hasAdsPowerProfile(account)) return '未绑定 AdsPower Profile'
+  if (account.adsPowerStatus === 'closed') return 'AdsPower 环境未打开'
+  if (account.adsPowerStatus === 'error') return 'AdsPower 环境异常'
   if (account.adsPowerStatus !== 'opened') return 'AdsPower 环境未打开'
   return '账号未在线'
 }

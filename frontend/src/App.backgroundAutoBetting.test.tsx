@@ -1,0 +1,227 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import App from './App'
+import { apiClient } from './services/api'
+
+const mockApiState = vi.hoisted(() => ({
+  alerts: [] as any[],
+  intentId: 7000,
+  liveOnlyModeEnabled: true,
+}))
+
+vi.mock('./services/api', () => ({
+  apiService: {
+    auth: {
+      checkFirstUse: vi.fn(() => Promise.resolve({ data: { code: 0, data: { isFirstUse: false } } })),
+    },
+  },
+  apiClient: {
+    post: vi.fn((url: string, data?: any) => {
+      if (url === '/system/notifications/configs/list') {
+        return Promise.resolve({
+          data: {
+            code: 0,
+            data: [{
+              id: 1,
+              enabled: true,
+              config: { monitorModeEnabled: true, liveOnlyModeEnabled: mockApiState.liveOnlyModeEnabled },
+            }],
+          },
+        })
+      }
+      if (url === '/odds-monitor/alerts/list') {
+        return Promise.resolve({ data: { code: 0, data: mockApiState.alerts } })
+      }
+      if (url === '/auto-betting/adspower/crown-session/match') {
+        return Promise.resolve({
+          data: {
+            code: 0,
+            data: {
+              profileId: data?.preferredProfileId || 'profile-a',
+              opened: true,
+              loggedIn: true,
+              accountStatus: 'online',
+              balance: 2000,
+              currency: 'CNY',
+              message: '账号在线，余额已获取',
+              checkedAt: Date.now(),
+            },
+          },
+        })
+      }
+      if (url === '/auto-betting/signals/odds-monitor') {
+        mockApiState.intentId += 1
+        return Promise.resolve({
+          data: {
+            code: 0,
+            data: {
+              id: mockApiState.intentId,
+              status: 'ready',
+              reason: 'accepted',
+              bettingMode: data?.bettingMode,
+              matchPhase: data?.matchPhase,
+              accountKey: data?.accountKey,
+              leagueName: data?.leagueName,
+              matchTitle: data?.matchTitle,
+              marketType: data?.marketType,
+              lineValue: data?.lineValue,
+              selectionName: data?.selectionName,
+              referenceSourceKey: data?.referenceSourceKey,
+              targetSourceKey: data?.targetSourceKey,
+              referenceOdds: data?.referenceOdds,
+              targetOdds: data?.targetOdds,
+              stakeAmount: data?.stakeAmount,
+              capturedAt: data?.capturedAt,
+              createdAt: Date.now(),
+            },
+          },
+        })
+      }
+      if (/^\/auto-betting\/intents\/\d+\/execute-crown$/.test(url)) {
+        return Promise.resolve({
+          data: {
+            code: 0,
+            data: {
+              id: Number(url.split('/')[3]),
+              status: 'placed',
+              reason: 'crown_history_verified',
+              crownHistoryVerified: true,
+              crownHistoryCheckedAt: Date.now(),
+              crownBetReference: 'OU123',
+            },
+          },
+        })
+      }
+      return Promise.resolve({ data: { code: 0, data: [] } })
+    }),
+  },
+}))
+
+vi.mock('./pages/BettingHistory', () => ({
+  default: () => <div>下注成功页面</div>,
+}))
+
+const writeAutomationStorage = (autoMode: 'prematch' | 'live' = 'live') => {
+  window.localStorage.setItem('jwt_token', 'valid-token')
+  window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
+    autoMode,
+    autoEnabled: true,
+    perAccountLimit: 50,
+    betLimit: 100,
+    minimumBetOdds: 1.01,
+    signalMaxAgeSeconds: 600,
+  }))
+  window.localStorage.setItem('crown-betting-accounts', JSON.stringify([
+    {
+      id: 'account-a',
+      displayName: '投注账号',
+      loginName: 'demo_a',
+      loginUrl: 'https://m407.mos077.com/',
+      adsPowerProfileId: 'profile-a',
+      adsPowerStatus: 'opened',
+      bettingEnabled: true,
+      status: 'success',
+      balance: 2000,
+      currency: 'CNY',
+    },
+  ]))
+}
+
+describe('App background crown betting automation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.pushState({}, '', '/betting-history')
+    const storage = new Map<string, string>()
+    Object.defineProperty(window, 'localStorage', {
+      writable: true,
+      configurable: true,
+      value: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => storage.set(key, value),
+        removeItem: (key: string) => storage.delete(key),
+        clear: () => storage.clear(),
+      },
+    })
+    window.localStorage.clear()
+    writeAutomationStorage()
+    mockApiState.intentId = 7000
+    mockApiState.liveOnlyModeEnabled = true
+    mockApiState.alerts = [{
+      id: 5001,
+      alertType: 'odds_change',
+      severity: 'info',
+      title: '赔率变动：埃尔夫斯堡 vs 米亚尔比',
+      message: `滚球赔率变动
+
+联赛：瑞典超级联赛
+比赛：埃尔夫斯堡 vs 米亚尔比
+进行：第 0 分钟
+比分：0-0
+
+盘口：大小球 小球 2/2.5
+皇冠：0.92 -> 1.08
+
+筛选：动水通过 / 合水通过
+时间：2026-05-21 18:01:05`,
+      createdAt: Date.now(),
+      acknowledged: false,
+    }]
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('keeps automatic betting running after navigating away from the crown betting page', async () => {
+    render(<App />)
+
+    await screen.findByText('下注成功页面')
+
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => url === '/auto-betting/signals/odds-monitor')).toBe(true)
+    })
+    expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
+      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+    ))).toBe(true)
+  })
+
+  it('keeps prematch automatic betting running after navigating away from the crown betting page', async () => {
+    window.localStorage.clear()
+    writeAutomationStorage('prematch')
+    mockApiState.liveOnlyModeEnabled = false
+    mockApiState.alerts = [{
+      id: 5002,
+      alertType: 'odds_change',
+      severity: 'info',
+      title: '赔率变动：阿尔菲斯 vs 纳加马安萘哉',
+      message: `赛前赔率变动
+
+联赛：沙特超级联赛
+比赛：阿尔菲斯 vs 纳加马安萘哉
+
+盘口：让球 阿尔菲斯 0/0.5
+皇冠：0.99 -> 1.09
+
+筛选：动水通过 / 合水通过
+时间：2026-05-21 18:01:05`,
+      createdAt: Date.now(),
+      acknowledged: false,
+    }]
+
+    render(<App />)
+
+    await screen.findByText('下注成功页面')
+
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.post).mock.calls.some(([url, body]) => (
+        url === '/auto-betting/signals/odds-monitor' &&
+        body?.bettingMode === 'prematch' &&
+        body?.matchPhase === 'prematch'
+      ))).toBe(true)
+    })
+    expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
+      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+    ))).toBe(true)
+  })
+})

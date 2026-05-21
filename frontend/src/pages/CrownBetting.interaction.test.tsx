@@ -610,7 +610,7 @@ describe('CrownBetting auto betting execution interaction', () => {
         expect(executeCalls).toHaveLength(1)
       })
 
-      nowSpy = vi.spyOn(Date, 'now').mockReturnValue(originalNow + 31_000)
+      nowSpy = vi.spyOn(Date, 'now').mockReturnValue(originalNow + 6_000)
       const amountInputs = screen.getAllByRole('spinbutton') as HTMLInputElement[]
       fireEvent.change(amountInputs[3], { target: { value: '601' } })
 

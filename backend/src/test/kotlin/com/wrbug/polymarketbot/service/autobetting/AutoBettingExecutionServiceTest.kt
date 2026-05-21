@@ -66,6 +66,9 @@ class AutoBettingExecutionServiceTest {
                 CrownBetPlacementCommand(
                     profileId = "k1chipm1",
                     loginUrl = "https://m407.mos077.com/",
+                    matchTitle = crownMatchTitle(match),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
@@ -119,6 +122,9 @@ class AutoBettingExecutionServiceTest {
                 CrownBetPlacementCommand(
                     profileId = "k1chipm1",
                     loginUrl = "https://m407.mos077.com/",
+                    matchTitle = crownMatchTitle(crownPlatformMatch()),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
@@ -164,6 +170,9 @@ class AutoBettingExecutionServiceTest {
                 CrownBetPlacementCommand(
                     profileId = "k1chipm1",
                     loginUrl = "https://m407.mos077.com/",
+                    matchTitle = crownMatchTitle(crownPlatformMatch()),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.80000000"),
@@ -212,7 +221,10 @@ class AutoBettingExecutionServiceTest {
                     profileId = "k1chipm1",
                     loginUrl = "https://m407.mos077.com/",
                     matchPhase = "prematch",
-                    betElementId = "bet_8764315_11049615_REH",
+                    matchTitle = crownMatchTitle(crownPlatformMatch()),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
+                    betElementId = "bet_8764315_11049615_RH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
                     lineValue = "0/0.5"
@@ -245,6 +257,135 @@ class AutoBettingExecutionServiceTest {
     }
 
     @Test
+    fun `prematch total crown execution uses prematch total bet element id`() {
+        val intent = liveHandicapIntent().copy(
+            dedupeKey = "crown-seed-cuu07crbyfa:prematch:沙特超级联赛阿尔菲斯vs纳加马安萘哉:total:2.5:大球",
+            activeDedupeKey = "crown-seed-cuu07crbyfa:prematch:沙特超级联赛阿尔菲斯vs纳加马安萘哉:total:2.5:大球",
+            bettingMode = "prematch",
+            matchPhase = "prematch",
+            marketType = "total",
+            lineValue = "2.5",
+            selectionName = "大球"
+        )
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        stubCrownPlatformMatchFor(intent)
+        `when`(
+            gateway.placeBet(
+                CrownBetPlacementCommand(
+                    profileId = "k1chipm1",
+                    loginUrl = "https://m407.mos077.com/",
+                    matchPhase = "prematch",
+                    matchTitle = crownMatchTitle(crownPlatformMatch()),
+                    marketType = "total",
+                    selectionName = "大球",
+                    betElementId = "bet_8764315_11049615_OUC",
+                    stakeAmount = BigDecimal("10.0000"),
+                    targetOdds = BigDecimal("0.87000000"),
+                    lineValue = "2.5"
+                )
+            )
+        ).thenReturn(
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = true,
+                ticketReference = "CROWN-PREMATCH-TOTAL-1",
+                message = "crown_history_verified",
+                currentOdds = BigDecimal("0.87000000")
+            )
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("placed", result.status)
+        assertEquals("prematch", result.matchPhase)
+        assertEquals("CROWN-PREMATCH-TOTAL-1", result.crownBetReference)
+    }
+
+    @Test
+    fun `prematch crown execution chooses prematch crown match when live match with same teams is newer`() {
+        val intent = liveHandicapIntent().copy(
+            dedupeKey = "crown-seed-cuu07crbyfa:prematch:沙特超级联赛阿尔菲斯vs纳加马安萘哉:handicap:0/0.5:阿尔菲斯",
+            activeDedupeKey = "crown-seed-cuu07crbyfa:prematch:沙特超级联赛阿尔菲斯vs纳加马安萘哉:handicap:0/0.5:阿尔菲斯",
+            bettingMode = "prematch",
+            matchPhase = "prematch"
+        )
+        val liveMatch = crownPlatformMatch(
+            id = 901L,
+            sourceMatchId = "live-8764315",
+            gid = "live8764315",
+            ecid = "live11049615",
+            isLive = true
+        )
+        val prematchMatch = crownPlatformMatch(
+            id = 902L,
+            sourceMatchId = "prematch-8764315",
+            gid = "prematch8764315",
+            ecid = "prematch11049615",
+            isLive = false
+        )
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        `when`(
+            platformMatchRepository.findTop1BySourceKeyAndRawLeagueNameAndRawHomeTeamAndRawAwayTeamOrderByUpdatedAtDesc(
+                "crown",
+                intent.leagueName,
+                "阿尔菲斯",
+                "纳加马安萘哉"
+            )
+        ).thenReturn(liveMatch)
+        `when`(platformMatchRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")).thenReturn(
+            listOf(liveMatch, prematchMatch)
+        )
+        `when`(
+            gateway.placeBet(
+                CrownBetPlacementCommand(
+                    profileId = "k1chipm1",
+                    loginUrl = "https://m407.mos077.com/",
+                    matchPhase = "prematch",
+                    matchTitle = crownMatchTitle(prematchMatch),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
+                    betElementId = "bet_prematch8764315_prematch11049615_RH",
+                    stakeAmount = BigDecimal("10.0000"),
+                    targetOdds = BigDecimal("0.87000000"),
+                    lineValue = "0/0.5"
+                )
+            )
+        ).thenReturn(
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = true,
+                ticketReference = "CROWN-PREMATCH-MATCH-1",
+                message = "crown_history_verified",
+                currentOdds = BigDecimal("0.87000000")
+            )
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("placed", result.status)
+        assertEquals("prematch", result.matchPhase)
+        assertEquals("CROWN-PREMATCH-MATCH-1", result.crownBetReference)
+    }
+
+    @Test
     fun `placed intent without crown history verification is not left in placing state`() {
         val intent = liveHandicapIntent()
         `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
@@ -254,6 +395,9 @@ class AutoBettingExecutionServiceTest {
                 CrownBetPlacementCommand(
                     profileId = "k1chipm1",
                     loginUrl = "https://m407.mos077.com/",
+                    matchTitle = crownMatchTitle(crownPlatformMatch()),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
@@ -300,6 +444,9 @@ class AutoBettingExecutionServiceTest {
                 CrownBetPlacementCommand(
                     profileId = "k1chipm1",
                     loginUrl = "https://m407.mos077.com/",
+                    matchTitle = crownMatchTitle(crownPlatformMatch()),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
@@ -352,6 +499,9 @@ class AutoBettingExecutionServiceTest {
                 CrownBetPlacementCommand(
                     profileId = "k1chipm1",
                     loginUrl = "https://m407.mos077.com/",
+                    matchTitle = "FC Tokyo vs Kawasaki Frontale",
+                    marketType = "handicap",
+                    selectionName = "Tokyo",
                     betElementId = "bet_8764315_11049615_REH",
                     stakeAmount = BigDecimal("10.0000"),
                     targetOdds = BigDecimal("0.87000000"),
@@ -422,22 +572,35 @@ class AutoBettingExecutionServiceTest {
         updatedAt = 1_995_000
     )
 
-    private fun crownPlatformMatch() = OddsPlatformMatch(
-        id = 837L,
+    private fun crownPlatformMatch(
+        id: Long = 837L,
+        sourceMatchId: String = "8764315",
+        gid: String = "8764315",
+        ecid: String = "11049615",
+        isLive: Boolean? = null
+    ) = OddsPlatformMatch(
+        id = id,
         sourceKey = "crown",
-        sourceMatchId = "8764315",
+        sourceMatchId = sourceMatchId,
         rawLeagueName = "沙特超级联赛",
         rawHomeTeam = "阿尔菲斯",
         rawAwayTeam = "纳加马安萘哉",
-        rawPayloadJson = """
-            {
-              "gid": "8764315",
-              "ecid": "11049615",
-              "team_h": "阿尔菲斯",
-              "team_c": "纳加马安萘哉"
-            }
-        """.trimIndent(),
+        rawPayloadJson = buildCrownRawPayload(gid, ecid, isLive),
         createdAt = 1_900_000,
         updatedAt = 1_999_000
     )
+
+    private fun buildCrownRawPayload(gid: String, ecid: String, isLive: Boolean?): String {
+        val liveField = isLive?.let { ""","is_live": $it""" }.orEmpty()
+        return """
+            {
+              "gid": "$gid",
+              "ecid": "$ecid",
+              "team_h": "阿尔菲斯",
+              "team_c": "纳加马安萘哉"$liveField
+            }
+        """.trimIndent()
+    }
+
+    private fun crownMatchTitle(match: OddsPlatformMatch) = "${match.rawHomeTeam} vs ${match.rawAwayTeam}"
 }

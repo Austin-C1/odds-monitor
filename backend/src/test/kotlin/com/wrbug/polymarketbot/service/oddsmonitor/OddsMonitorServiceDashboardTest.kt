@@ -2,6 +2,8 @@
 
 import com.wrbug.polymarketbot.entity.OddsDataSourceConfig
 import com.wrbug.polymarketbot.entity.OddsMarket
+import com.wrbug.polymarketbot.entity.OddsMatch
+import com.wrbug.polymarketbot.entity.OddsMatchLink
 import com.wrbug.polymarketbot.entity.OddsPlatformMatch
 import com.wrbug.polymarketbot.entity.OddsSnapshot
 import com.wrbug.polymarketbot.entity.SystemConfig
@@ -9,6 +11,8 @@ import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
 import com.wrbug.polymarketbot.repository.OddsCollectionLogRepository
 import com.wrbug.polymarketbot.repository.OddsDataSourceConfigRepository
 import com.wrbug.polymarketbot.repository.OddsMarketRepository
+import com.wrbug.polymarketbot.repository.OddsMatchLinkRepository
+import com.wrbug.polymarketbot.repository.OddsMatchRepository
 import com.wrbug.polymarketbot.repository.OddsPlatformMatchRepository
 import com.wrbug.polymarketbot.repository.OddsSnapshotRepository
 import com.wrbug.polymarketbot.repository.SystemConfigRepository
@@ -412,6 +416,115 @@ class OddsMonitorServiceDashboardTest {
         assertEquals("多伦多国际", dashboard.matches.single().homeTeam)
         assertEquals("温哥华FC", dashboard.matches.single().awayTeam)
         assertEquals(listOf("crown"), dashboard.matches.single().matchedPlatforms)
+    }
+
+    @Test
+    fun `dashboard uses recent linked platform matches instead of earliest standard match page`() {
+        val configRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val logRepository = mock(OddsCollectionLogRepository::class.java)
+        val platformRepository = mock(OddsPlatformMatchRepository::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val linkRepository = mock(OddsMatchLinkRepository::class.java)
+        val recentPlatformMatch = OddsPlatformMatch(
+            id = 5001,
+            sourceKey = "crown",
+            sourceMatchId = "live-crown",
+            rawLeagueName = "Japan J1 League",
+            rawHomeTeam = "FC Tokyo",
+            rawAwayTeam = "Kawasaki Frontale",
+            rawStartTime = 1893456000000L,
+            rawPayloadJson = """{"showtype":"rb","retimeset":"1H^12:34"}""",
+            updatedAt = 9000L
+        )
+
+        `when`(platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("pinnacle")).thenReturn(emptyList())
+        `when`(platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")).thenReturn(listOf(recentPlatformMatch))
+        `when`(linkRepository.findByPlatformMatchIdIn(listOf(5001L))).thenReturn(
+            listOf(OddsMatchLink(matchId = 9001, platformMatchId = 5001))
+        )
+        `when`(matchRepository.findAllById(listOf(9001L))).thenReturn(
+            listOf(
+                OddsMatch(
+                    id = 9001,
+                    leagueName = "Japan J1 League",
+                    homeTeam = "FC Tokyo",
+                    awayTeam = "Kawasaki Frontale",
+                    startTime = 1893456000000L,
+                    status = "live",
+                    updatedAt = 9000L
+                )
+            )
+        )
+        `when`(marketRepository.findByMatchIdInAndSourceKey(listOf(9001L), "crown")).thenReturn(emptyList())
+
+        val dashboard = OddsMonitorService(
+            configRepository,
+            alertRepository,
+            logRepository,
+            platformRepository,
+            marketRepository,
+            snapshotRepository,
+            matchRepository,
+            linkRepository
+        ).getDashboard()
+
+        assertEquals(1, dashboard.matches.size)
+        assertEquals(9001L, dashboard.matches.single().id)
+        assertEquals("滚球", dashboard.matches.single().status)
+        assertEquals(listOf("crown"), dashboard.matches.single().matchedPlatforms)
+    }
+
+    @Test
+    fun `dashboard orders live and recently updated collected matches first`() {
+        val configRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val logRepository = mock(OddsCollectionLogRepository::class.java)
+        val platformRepository = mock(OddsPlatformMatchRepository::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+
+        `when`(platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("pinnacle")).thenReturn(emptyList())
+        `when`(platformRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")).thenReturn(
+            listOf(
+                OddsPlatformMatch(
+                    id = 701,
+                    sourceKey = "crown",
+                    sourceMatchId = "new-live",
+                    rawLeagueName = "Japan J1 League",
+                    rawHomeTeam = "FC Tokyo",
+                    rawAwayTeam = "Kawasaki Frontale",
+                    rawStartTime = 1893456000000L,
+                    rawPayloadJson = """{"showtype":"rb","retimeset":"1H^12:34"}""",
+                    updatedAt = 9000L
+                ),
+                OddsPlatformMatch(
+                    id = 702,
+                    sourceKey = "crown",
+                    sourceMatchId = "old-prematch",
+                    rawLeagueName = "England - Premier League",
+                    rawHomeTeam = "Arsenal",
+                    rawAwayTeam = "Chelsea",
+                    rawStartTime = 1893455000000L,
+                    updatedAt = 1000L
+                )
+            )
+        )
+        `when`(marketRepository.findByMatchIdInAndSourceKey(listOf(701), "crown")).thenReturn(emptyList())
+
+        val dashboard = OddsMonitorService(
+            configRepository,
+            alertRepository,
+            logRepository,
+            platformRepository,
+            marketRepository,
+            snapshotRepository
+        ).getDashboard()
+
+        assertEquals("东京FC", dashboard.matches.first().homeTeam)
+        assertEquals("滚球", dashboard.matches.first().status)
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.wrbug.polymarketbot.repository.OddsMatchLinkRepository
 import com.wrbug.polymarketbot.repository.OddsMatchRepository
 import com.wrbug.polymarketbot.repository.OddsPlatformMatchRepository
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentCaptor
@@ -34,6 +35,7 @@ class OddsStandardMatchServiceTest {
                 )
             )
         )
+        `when`(matchRepository.save(any(OddsMatch::class.java))).thenAnswer { it.arguments[0] }
         `when`(linkRepository.save(any(OddsMatchLink::class.java))).thenAnswer { it.arguments[0] }
 
         val standardMatch = OddsStandardMatchService(
@@ -128,6 +130,7 @@ class OddsStandardMatchServiceTest {
         `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(
             listOf(staleCrownMatch, pinnacleMatch)
         )
+        `when`(matchRepository.save(any(OddsMatch::class.java))).thenAnswer { it.arguments[0] }
         `when`(linkRepository.save(any(OddsMatchLink::class.java))).thenAnswer { it.arguments[0] }
 
         val standardMatch = OddsStandardMatchService(
@@ -257,5 +260,55 @@ class OddsStandardMatchServiceTest {
         )
 
         assertEquals(crownStartTime, resolvedMatch.startTime)
+    }
+
+    @Test
+    fun `refreshes standard match updated time when linked platform match is collected again`() {
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val linkRepository = mock(OddsMatchLinkRepository::class.java)
+        val platformMatchRepository = mock(OddsPlatformMatchRepository::class.java)
+        val standardMatch = OddsMatch(
+            id = 10,
+            leagueName = "Japan J1 League",
+            homeTeam = "FC Tokyo",
+            awayTeam = "Kawasaki Frontale",
+            startTime = 1893456000000L,
+            status = "live",
+            updatedAt = 1000L
+        )
+        `when`(linkRepository.findByPlatformMatchId(20)).thenReturn(
+            OddsMatchLink(matchId = 10, platformMatchId = 20)
+        )
+        `when`(linkRepository.findByMatchId(10)).thenReturn(
+            listOf(OddsMatchLink(matchId = 10, platformMatchId = 20))
+        )
+        `when`(matchRepository.findById(10)).thenReturn(Optional.of(standardMatch))
+        `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(listOf(standardMatch))
+        `when`(matchRepository.save(any(OddsMatch::class.java))).thenAnswer { it.arguments[0] }
+
+        val resolvedMatch = OddsStandardMatchService(
+            matchRepository,
+            linkRepository,
+            platformMatchRepository
+        ).resolveStandardMatch(
+            OddsPlatformMatch(
+                id = 20,
+                sourceKey = "crown",
+                sourceMatchId = "c1",
+                rawLeagueName = "Japan J1 League",
+                rawHomeTeam = "FC Tokyo",
+                rawAwayTeam = "Kawasaki Frontale",
+                rawStartTime = 1893456000000L,
+                rawPayloadJson = """{"showtype":"rb","retimeset":"1H^12:34"}""",
+                updatedAt = 5000L
+            )
+        )
+
+        assertEquals(10, resolvedMatch.id)
+        val captor = ArgumentCaptor.forClass(OddsMatch::class.java)
+        verify(matchRepository).save(captor.capture())
+        assertEquals("live", captor.value.status)
+        assertEquals(1893456000000L, captor.value.startTime)
+        assertTrue(captor.value.updatedAt > 1000L)
     }
 }

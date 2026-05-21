@@ -319,6 +319,65 @@ class AdsPowerLocalApiServiceTest {
     }
 
     @Test
+    fun `match crown session keeps opened state when active browser has no readable crown login`() {
+        TestAdsPowerServer().use { server ->
+            val debugPort = server.baseUrl.substringAfterLast(":")
+            server.onGet("/api/v1/browser/local-active") { exchange ->
+                exchange.respondJson(
+                    """
+                    {
+                      "code": 0,
+                      "msg": "success",
+                      "data": {
+                        "list": [
+                          {
+                            "user_id": "profile-open",
+                            "debug_port": "$debugPort"
+                          }
+                        ]
+                      }
+                    }
+                    """.trimIndent()
+                )
+            }
+            server.onGet("/api/v1/user/list") { exchange ->
+                exchange.respondJson(
+                    """
+                    {
+                      "code": 0,
+                      "msg": "success",
+                      "data": {
+                        "list": [
+                          {
+                            "user_id": "profile-open",
+                            "name": "cuu0i93ltuo",
+                            "username": "cuu0i93ltuo",
+                            "remark": ""
+                          }
+                        ]
+                      }
+                    }
+                    """.trimIndent()
+                )
+            }
+            server.onGet("/json/list") { exchange ->
+                exchange.respondJson("""[]""")
+            }
+            val service = AdsPowerLocalApiService(
+                objectMapper = jacksonObjectMapper(),
+                baseUrl = server.baseUrl,
+                apiKey = null
+            )
+
+            val result = service.matchCrownSession(loginName = "cuu0i93ltuo", loginUrl = "https://m407.mos077.com/", now = 6790)
+
+            assertTrue(result.opened)
+            assertFalse(result.loggedIn)
+            assertEquals("no_logged_in_crown_profile", result.accountStatus)
+        }
+    }
+
+    @Test
     fun `crown session analyzer reports online account and balance`() {
         val result = CrownSessionPageAnalyzer.analyze(
             """
