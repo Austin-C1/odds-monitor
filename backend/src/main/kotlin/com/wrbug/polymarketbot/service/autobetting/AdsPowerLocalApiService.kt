@@ -431,6 +431,47 @@ class AdsPowerLocalApiService(
         )
     }
 
+    override fun verifyPlacedBet(command: CrownBetPlacementCommand, ticketReference: String?): CrownBetPlacementResult {
+        val active = checkProfileActive(command.profileId)
+        if (!active.opened) {
+            return CrownBetPlacementResult(true, false, ticketReference, "profile_not_opened")
+        }
+        val debugPort = active.debugPort?.trim().orEmpty()
+        if (debugPort.isBlank()) {
+            return CrownBetPlacementResult(true, false, ticketReference, "browser_debug_port_missing")
+        }
+        closeCrownPrintTargets(debugPort)
+        val target = readCrownPageTarget(debugPort, command.loginUrl)
+            ?: return CrownBetPlacementResult(true, false, ticketReference, "crown_page_not_found")
+        val initialWsUrl = target.webSocketDebuggerUrl?.trim().orEmpty()
+        if (initialWsUrl.isBlank()) {
+            return CrownBetPlacementResult(true, false, ticketReference, "crown_debug_target_missing")
+        }
+        val activated = activateCrownPageBeforePlacement(debugPort, target, command.loginUrl)
+            ?: return CrownBetPlacementResult(true, false, ticketReference, "crown_page_activation_failed")
+        val wsUrl = activated.wsUrl
+        val session = CrownSessionPageAnalyzer.analyze(activated.snapshot.text, activated.snapshot.title)
+        if (!session.loggedIn) {
+            if (session.accountStatus == CROWN_NETWORK_UNSTABLE_STATUS) {
+                dismissCrownNetworkPrompt(wsUrl)
+            }
+            return CrownBetPlacementResult(true, false, ticketReference, session.accountStatus)
+        }
+
+        val argsJson = objectMapper.writeValueAsString(command)
+        val ticketReferenceJson = objectMapper.writeValueAsString(ticketReference.orEmpty())
+        val resultText = evaluateCrownPageJson(wsUrl, crownBetHistoryVerificationScript(argsJson, ticketReferenceJson))
+            ?: return CrownBetPlacementResult(true, false, ticketReference, "crown_history_unverified")
+        val result = runCatching { objectMapper.readTree(resultText) }.getOrNull()
+            ?: return CrownBetPlacementResult(true, false, ticketReference, "crown_execution_parse_failed")
+        return CrownBetPlacementResult(
+            placed = true,
+            historyVerified = result.path("historyVerified").asBoolean(false),
+            ticketReference = result.path("ticketReference").textOrNull() ?: ticketReference,
+            message = result.path("message").textOrNull() ?: "crown_history_unverified"
+        )
+    }
+
     private fun activateCrownPageBeforePlacement(
         debugPort: String,
         target: BrowserTarget,
@@ -439,26 +480,14 @@ class AdsPowerLocalApiService(
         val initialWsUrl = target.webSocketDebuggerUrl?.trim().orEmpty()
         if (initialWsUrl.isBlank()) return null
 
-        reloadCrownPage(initialWsUrl)
-        Thread.sleep(3_500)
-
-        val refreshedTarget = readCrownPageTarget(debugPort, loginUrl) ?: target
-        val refreshedWsUrl = refreshedTarget.webSocketDebuggerUrl?.trim()?.takeIf { it.isNotBlank() } ?: initialWsUrl
-        val snapshot = waitForCrownPageSnapshot(refreshedWsUrl, refreshedTarget) ?: return null
+        val activeTarget = readCrownPageTarget(debugPort, loginUrl) ?: target
+        val activeWsUrl = activeTarget.webSocketDebuggerUrl?.trim()?.takeIf { it.isNotBlank() } ?: initialWsUrl
+        var snapshot = waitForCrownPageSnapshot(activeWsUrl, activeTarget) ?: return null
         if (CrownSessionPageAnalyzer.analyze(snapshot.text, snapshot.title).accountStatus == CROWN_NETWORK_UNSTABLE_STATUS) {
-            dismissCrownNetworkPrompt(refreshedWsUrl)
+            dismissCrownNetworkPrompt(activeWsUrl)
+            snapshot = waitForCrownPageSnapshot(activeWsUrl, activeTarget) ?: snapshot
         }
-        return CrownPageActivationResult(refreshedTarget, refreshedWsUrl, snapshot)
-    }
-
-    private fun reloadCrownPage(wsUrl: String): Boolean {
-        val expression = """
-            (async () => {
-              setTimeout(() => window.location.reload(), 0);
-              return JSON.stringify({ reloaded: true });
-            })()
-        """.trimIndent()
-        return evaluateCrownPageJson(wsUrl, expression) != null
+        return CrownPageActivationResult(activeTarget, activeWsUrl, snapshot)
     }
 
     private fun waitForCrownPageSnapshot(wsUrl: String, target: BrowserTarget): CrownPageSnapshot? {
@@ -1497,6 +1526,111 @@ class AdsPowerLocalApiService(
                 message: 'crown_history_verified',
                 currentOdds
               });
+            })()
+        """.trimIndent()
+    }
+
+    private fun crownBetHistoryVerificationScript(argsJson: String, ticketReferenceJson: String): String {
+        return """
+            (async () => {
+              const args = $argsJson;
+              const ticketReference = $ticketReferenceJson;
+              const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+              const accessibleWindows = () => {
+                const windows = [];
+                const seen = new Set();
+                const visit = (win) => {
+                  if (!win || seen.has(win)) return;
+                  seen.add(win);
+                  try {
+                    if (win.document) windows.push(win);
+                    for (const frame of Array.from(win.frames || [])) visit(frame);
+                  } catch (_) {
+                    // Ignore cross-origin frames.
+                  }
+                };
+                visit(window);
+                return windows;
+              };
+              const documents = () => accessibleWindows().map((win) => win.document).filter(Boolean);
+              const byId = (id) => {
+                for (const doc of documents()) {
+                  const element = doc.getElementById(id);
+                  if (element) return element;
+                }
+                return null;
+              };
+              const text = () => documents().map((doc) => doc.body?.innerText || '').join('\n');
+              const rawText = () => documents().map((doc) => doc.documentElement?.innerText || '').join('\n');
+              const normalizeLine = (value) => String(value || '').replace(/\s+/g, '').replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 65248));
+              const extractReceiptReference = (value) => {
+                const ticketMatch = String(value || '').match(/Ticket No:\s*([A-Za-z0-9-]+)/i);
+                if (ticketMatch) return ticketMatch[1];
+                const fantasyMatch = String(value || '').match(/\b(?:OU|HDP|FS|FT|BK)[A-Z0-9]*\d{6,}\b/i);
+                return fantasyMatch ? fantasyMatch[0] : null;
+              };
+              const matchTokens = () => String(args.matchTitle || '')
+                .split(/\s+vs\s+|\s+v\s+/i)
+                .map((part) => part.trim().toLowerCase())
+                .filter((part) => part.length >= 2);
+              const stakeText = () => Number(args.stakeAmount).toFixed(2);
+              const expectedOpenBetSide = () => {
+                const market = String(args.marketType || '').toLowerCase();
+                const selection = String(args.selectionName || '').toLowerCase();
+                if (market === 'total') {
+                  if (selection.includes('大') || selection.includes('over') || selection === 'o') return 'Over';
+                  if (selection.includes('小') || selection.includes('under') || selection === 'u') return 'Under';
+                }
+                return null;
+              };
+              const expectedOpenBetSelection = () => {
+                const market = String(args.marketType || '').toLowerCase();
+                const selectionText = String(args.selectionName || '').trim();
+                const selection = selectionText.toLowerCase();
+                if (market !== 'handicap') return null;
+                const tokens = matchTokens();
+                if (selection === 'home' || selection === '主队') return tokens[0] || null;
+                if (selection === 'away' || selection === '客队') return tokens[1] || null;
+                return selectionText || null;
+              };
+              const historyVerified = (value) => {
+                const content = String(value || '');
+                const lower = content.toLowerCase();
+                if (ticketReference && content.includes(ticketReference)) return true;
+                const tokens = matchTokens();
+                if (tokens.length >= 2 && !tokens.every((token) => lower.includes(token))) return false;
+                if (args.lineValue && !normalizeLine(content).includes(normalizeLine(args.lineValue))) return false;
+                if (!content.includes(stakeText()) && !content.includes(String(Number(args.stakeAmount)))) return false;
+                const side = expectedOpenBetSide();
+                if (side && !(new RegExp('\\b' + side + '\\b', 'i')).test(content)) return false;
+                const selection = expectedOpenBetSelection();
+                if (selection && !lower.includes(selection.toLowerCase())) return false;
+                return /OPEN BETS|Open Bets|Confirmed|Statement|My Bets|Ticket No:/i.test(content);
+              };
+              const result = (verified, value) => JSON.stringify({
+                placed: true,
+                historyVerified: verified,
+                ticketReference: extractReceiptReference(value) || ticketReference || null,
+                message: verified ? 'crown_history_verified' : 'crown_history_unverified'
+              });
+
+              const initial = rawText() || text();
+              if (historyVerified(initial)) return result(true, initial);
+
+              const historyButton = byId('header_todaywagers') || byId('menu_todaywagers');
+              if (historyButton) {
+                historyButton.scrollIntoView({ block: 'center', inline: 'center' });
+                historyButton.click();
+                await sleep(1800);
+              }
+
+              const deadline = Date.now() + 15000;
+              while (Date.now() <= deadline) {
+                const current = rawText() || text();
+                if (historyVerified(current)) return result(true, current);
+                await sleep(500);
+              }
+              return result(false, rawText() || text());
             })()
         """.trimIndent()
     }

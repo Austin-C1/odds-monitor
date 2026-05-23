@@ -166,6 +166,8 @@ const nonRetriableAutoBettingReasons = new Set([
   'crown_place_button_disabled',
   'crown_market_not_found',
   'crown_line_mismatch',
+  'crown_phase_unknown',
+  'crown_phase_mismatch',
   'target_odds_below_minimum',
 ])
 
@@ -194,6 +196,8 @@ const autoBettingReasonLabels: Record<string, string> = {
   crown_execution_timeout: '皇冠执行确认超时',
   crown_network_unstable: '皇冠网络不稳定，请刷新后重试',
   crown_page_activation_failed: '皇冠页面刷新确认失败',
+  crown_phase_unknown: '皇冠比赛阶段无法确认',
+  crown_phase_mismatch: '皇冠比赛阶段与信号不一致',
   crown_history_unverified: '下注后未确认到历史记录',
   stale_signal: '信号已过期',
   duplicate_active_intent: '已有投注任务处理中，重复信号已跳过',

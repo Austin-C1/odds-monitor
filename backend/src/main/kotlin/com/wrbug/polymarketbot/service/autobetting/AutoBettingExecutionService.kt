@@ -46,8 +46,39 @@ private data class CrownMatchResolution(
     val reversed: Boolean
 )
 
+private data class CrownMatchResolutionCandidate(
+    val match: OddsPlatformMatch,
+    val reversed: Boolean,
+    val score: Double
+)
+
+private data class CrownMatchLookupResult(
+    val resolution: CrownMatchResolution?,
+    val rejectReason: String = "crown_market_not_found"
+)
+
+private data class CrownCommandBuildResult(
+    val command: CrownBetPlacementCommand?,
+    val rejectReason: String = "crown_market_not_found"
+)
+
+private enum class CrownPhaseMatchState {
+    MATCH,
+    MISMATCH,
+    UNKNOWN
+}
+
 interface CrownBetPlacementGateway {
     fun placeBet(command: CrownBetPlacementCommand): CrownBetPlacementResult
+
+    fun verifyPlacedBet(command: CrownBetPlacementCommand, ticketReference: String?): CrownBetPlacementResult {
+        return CrownBetPlacementResult(
+            placed = true,
+            historyVerified = false,
+            ticketReference = ticketReference,
+            message = "crown_history_unverified"
+        )
+    }
 }
 
 @Service
@@ -55,10 +86,12 @@ class AutoBettingExecutionService(
     private val intentRepository: AutoBettingIntentRepository,
     private val platformMatchRepository: OddsPlatformMatchRepository,
     private val objectMapper: ObjectMapper,
-    private val crownBetPlacementGateway: CrownBetPlacementGateway
+    private val crownBetPlacementGateway: CrownBetPlacementGateway,
+    private val profileExecutionLock: CrownProfileExecutionLock = CrownProfileExecutionLock()
 ) {
     private val staleReadyTimeoutMillis = 180_000L
     private val stalePlacingTimeoutMillis = 180_000L
+    private val unverifiedRecheckDelayMillis = 30_000L
 
     fun executeCrownIntent(
         intentId: Long,
@@ -72,7 +105,7 @@ class AutoBettingExecutionService(
             return intent.toDecision("crown_history_verified")
         }
         if (intent.status == STATUS_PLACED_UNVERIFIED) {
-            return intent.toDecision(intent.rejectReason ?: "crown_history_unverified")
+            return recheckUnverifiedCrownIntent(intent, request, now)
         }
         if (intent.status != STATUS_READY) {
             return intent.toDecision(intent.rejectReason ?: "intent_not_ready")
@@ -94,10 +127,13 @@ class AutoBettingExecutionService(
             return latest.toDecision(latest.rejectReason ?: "intent_not_ready")
         }
         val placing = intentRepository.save(intent.copy(status = STATUS_PLACING, updatedAt = now))
-        val command = buildCommand(placing, request)
-            ?: return reject(placing, "crown_market_not_found", now)
+        val commandResult = buildCommand(placing, request)
+        val command = commandResult.command
+            ?: return reject(placing, commandResult.rejectReason, now)
         val placement = try {
-            crownBetPlacementGateway.placeBet(command)
+            profileExecutionLock.withProfileLock(profileId) {
+                crownBetPlacementGateway.placeBet(command)
+            }
         } catch (_: Exception) {
             return reject(placing, "crown_execution_error", now)
         }
@@ -136,27 +172,110 @@ class AutoBettingExecutionService(
         return reject(placing, shortReason(placement.message.ifBlank { "crown_bet_failed" }), now)
     }
 
-    private fun buildCommand(intent: AutoBettingIntent, request: AutoBettingExecutionRequest): CrownBetPlacementCommand? {
-        val teams = splitMatchTitle(intent.matchTitle) ?: return null
-        val resolvedMatch = resolveCrownMatch(intent, teams) ?: return null
+    private fun recheckUnverifiedCrownIntent(
+        intent: AutoBettingIntent,
+        request: AutoBettingExecutionRequest,
+        now: Long
+    ): AutoBettingDecisionDto {
+        val lastCheckedAt = intent.crownHistoryCheckedAt ?: intent.updatedAt
+        if (now - lastCheckedAt < unverifiedRecheckDelayMillis) {
+            return intent.toDecision("crown_history_recheck_pending")
+        }
 
-        val betElementId = buildBetElementId(intent, resolvedMatch) ?: return null
-        return CrownBetPlacementCommand(
-            profileId = request.profileId.trim(),
-            loginUrl = request.loginUrl?.trim()?.takeIf { it.isNotBlank() },
-            matchPhase = intent.matchPhase.trim().lowercase(Locale.ROOT),
-            matchTitle = "${resolvedMatch.match.rawHomeTeam} vs ${resolvedMatch.match.rawAwayTeam}",
-            marketType = intent.marketType,
-            selectionName = intent.selectionName,
-            betElementId = betElementId,
-            stakeAmount = intent.stakeAmount.setScale(4, RoundingMode.HALF_UP),
-            targetOdds = (request.minimumTargetOdds ?: intent.targetOdds).setScale(8, RoundingMode.HALF_UP),
-            lineValue = intent.lineValue
+        val profileId = request.profileId.trim()
+        if (profileId.isBlank()) {
+            return intent.toDecision("profile_id_required")
+        }
+
+        val placing = intentRepository.save(intent.copy(status = STATUS_PLACING, updatedAt = now))
+        val commandResult = buildCommand(placing, request)
+        val command = commandResult.command
+        if (command == null) {
+            val unverified = intentRepository.save(
+                placing.copy(
+                    status = STATUS_PLACED_UNVERIFIED,
+                    rejectReason = commandResult.rejectReason,
+                    crownHistoryVerified = false,
+                    crownHistoryCheckedAt = now,
+                    updatedAt = now
+                )
+            )
+            return unverified.toDecision(commandResult.rejectReason)
+        }
+
+        val verification = try {
+            profileExecutionLock.withProfileLock(profileId) {
+                crownBetPlacementGateway.verifyPlacedBet(command, placing.crownBetReference)
+            }
+        } catch (_: Exception) {
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = false,
+                ticketReference = placing.crownBetReference,
+                message = "crown_history_recheck_failed"
+            )
+        }
+
+        if (verification.placed && verification.historyVerified) {
+            val reason = shortReason(verification.message.ifBlank { "crown_history_verified" })
+            val placed = intentRepository.save(
+                placing.copy(
+                    status = STATUS_PLACED,
+                    rejectReason = null,
+                    activeDedupeKey = placing.dedupeKey,
+                    crownHistoryVerified = true,
+                    crownHistoryCheckedAt = now,
+                    crownBetReference = verification.ticketReference ?: placing.crownBetReference,
+                    updatedAt = now
+                )
+            )
+            return placed.toDecision(reason)
+        }
+
+        val reason = shortReason(verification.message.ifBlank { "crown_history_unverified" })
+        val unverified = intentRepository.save(
+            placing.copy(
+                status = STATUS_PLACED_UNVERIFIED,
+                rejectReason = reason,
+                crownHistoryVerified = false,
+                crownHistoryCheckedAt = now,
+                crownBetReference = verification.ticketReference ?: placing.crownBetReference,
+                updatedAt = now
+            )
+        )
+        return unverified.toDecision(reason)
+    }
+
+    private fun buildCommand(intent: AutoBettingIntent, request: AutoBettingExecutionRequest): CrownCommandBuildResult {
+        val teams = splitMatchTitle(intent.matchTitle)
+            ?: return CrownCommandBuildResult(null, "crown_market_not_found")
+        val matchLookup = resolveCrownMatch(intent, teams)
+        val resolvedMatch = matchLookup.resolution
+            ?: return CrownCommandBuildResult(null, matchLookup.rejectReason)
+
+        val betElementId = buildBetElementId(intent, resolvedMatch)
+            ?: return CrownCommandBuildResult(null, "crown_market_not_found")
+        return CrownCommandBuildResult(
+            CrownBetPlacementCommand(
+                profileId = request.profileId.trim(),
+                loginUrl = request.loginUrl?.trim()?.takeIf { it.isNotBlank() },
+                matchPhase = intent.matchPhase.trim().lowercase(Locale.ROOT),
+                matchTitle = "${resolvedMatch.match.rawHomeTeam} vs ${resolvedMatch.match.rawAwayTeam}",
+                marketType = intent.marketType,
+                selectionName = intent.selectionName,
+                betElementId = betElementId,
+                stakeAmount = intent.stakeAmount.setScale(4, RoundingMode.HALF_UP),
+                targetOdds = (request.minimumTargetOdds ?: intent.targetOdds).setScale(8, RoundingMode.HALF_UP),
+                lineValue = intent.lineValue
+            )
         )
     }
 
-    private fun resolveCrownMatch(intent: AutoBettingIntent, teams: Pair<String, String>): CrownMatchResolution? {
+    private fun resolveCrownMatch(intent: AutoBettingIntent, teams: Pair<String, String>): CrownMatchLookupResult {
         val phase = intent.matchPhase.trim().lowercase(Locale.ROOT)
+        if (phase != "prematch" && phase != "live") {
+            return CrownMatchLookupResult(null, "crown_phase_unknown")
+        }
         val exactMatch = platformMatchRepository
             .findTop1BySourceKeyAndRawLeagueNameAndRawHomeTeamAndRawAwayTeamOrderByUpdatedAtDesc(
                 "crown",
@@ -164,22 +283,8 @@ class AutoBettingExecutionService(
                 teams.first,
                 teams.second
             )
-        if (exactMatch != null && crownMatchMatchesPhase(exactMatch, phase)) {
-            return CrownMatchResolution(exactMatch, reversed = false)
-        }
 
-        val recentCrownMatches = platformMatchRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")
-        if (exactMatch != null) {
-            recentCrownMatches
-                .firstOrNull { match ->
-                    match.rawLeagueName == intent.leagueName &&
-                        match.rawHomeTeam == teams.first &&
-                        match.rawAwayTeam == teams.second &&
-                        crownMatchMatchesPhase(match, phase)
-                }
-                ?.let { return CrownMatchResolution(it, reversed = false) }
-        }
-
+        val recentCrownMatches = platformMatchRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown").orEmpty()
         val signalCandidate = OddsMatchCandidate(
             id = null,
             leagueName = intent.leagueName,
@@ -187,7 +292,12 @@ class AutoBettingExecutionService(
             awayTeam = teams.second,
             startTime = null
         )
-        val scoredMatches = recentCrownMatches
+
+        val candidates = mutableListOf<CrownMatchResolutionCandidate>()
+        if (exactMatch != null) {
+            candidates += CrownMatchResolutionCandidate(exactMatch, reversed = false, score = Double.MAX_VALUE)
+        }
+        candidates += recentCrownMatches
             .asSequence()
             .map { match ->
                 val score = OddsMatchMatcher.score(
@@ -203,17 +313,36 @@ class AutoBettingExecutionService(
                 match to score
             }
             .filter { (_, score) -> OddsMatchMatcher.shouldMerge(score) }
+            .map { (match, score) -> CrownMatchResolutionCandidate(match, score.reversed, score.score) }
             .toList()
 
-        return scoredMatches
-            .filter { (match, _) -> crownMatchMatchesPhase(match, phase) }
-            .maxByOrNull { (_, score) -> score.score }
-            ?.let { (match, score) -> CrownMatchResolution(match, score.reversed) }
+        val distinctCandidates = candidates
+            .distinctBy { it.match.id ?: "${it.match.sourceKey}:${it.match.sourceMatchId}:${it.match.rawLeagueName}:${it.match.rawHomeTeam}:${it.match.rawAwayTeam}" }
+
+        val verifiedPhaseMatch = distinctCandidates
+            .filter { phaseMatchState(it.match, phase) == CrownPhaseMatchState.MATCH }
+            .maxByOrNull { it.score }
+
+        if (verifiedPhaseMatch != null) {
+            return CrownMatchLookupResult(
+                CrownMatchResolution(verifiedPhaseMatch.match, verifiedPhaseMatch.reversed)
+            )
+        }
+
+        if (distinctCandidates.any { phaseMatchState(it.match, phase) == CrownPhaseMatchState.UNKNOWN }) {
+            return CrownMatchLookupResult(null, "crown_phase_unknown")
+        }
+        if (distinctCandidates.any { phaseMatchState(it.match, phase) == CrownPhaseMatchState.MISMATCH }) {
+            return CrownMatchLookupResult(null, "crown_phase_mismatch")
+        }
+
+        return CrownMatchLookupResult(null, "crown_market_not_found")
     }
 
-    private fun crownMatchMatchesPhase(match: OddsPlatformMatch, phase: String): Boolean {
-        if (phase != "prematch" && phase != "live") return true
-        return crownMatchPhase(match)?.let { it == phase } ?: true
+    private fun phaseMatchState(match: OddsPlatformMatch, phase: String): CrownPhaseMatchState {
+        if (phase != "prematch" && phase != "live") return CrownPhaseMatchState.UNKNOWN
+        val matchPhase = crownMatchPhase(match) ?: return CrownPhaseMatchState.UNKNOWN
+        return if (matchPhase == phase) CrownPhaseMatchState.MATCH else CrownPhaseMatchState.MISMATCH
     }
 
     private fun crownMatchPhase(match: OddsPlatformMatch): String? {

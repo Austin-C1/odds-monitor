@@ -448,7 +448,55 @@ class AutoBettingExecutionServiceTest {
         )
 
         assertEquals("rejected", result.status)
-        assertEquals("crown_market_not_found", result.reason)
+        assertEquals("crown_phase_mismatch", result.reason)
+        assertEquals(listOf("placing", "rejected"), captor.allValues.map { it.status })
+        verifyNoInteractions(gateway)
+    }
+
+    @Test
+    fun `crown execution rejects crown match when page phase cannot be verified`() {
+        val intent = liveHandicapIntent()
+        val phaseUnknownMatch = crownPlatformMatch(isLive = null)
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        stubCrownPlatformMatchFor(intent, phaseUnknownMatch)
+        `when`(platformMatchRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")).thenReturn(listOf(phaseUnknownMatch))
+        `when`(
+            gateway.placeBet(
+                CrownBetPlacementCommand(
+                    profileId = "k1chipm1",
+                    loginUrl = "https://m407.mos077.com/",
+                    matchTitle = crownMatchTitle(phaseUnknownMatch),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
+                    betElementId = "bet_8764315_11049615_REH",
+                    stakeAmount = BigDecimal("10.0000"),
+                    targetOdds = BigDecimal("0.87000000"),
+                    lineValue = "0/0.5"
+                )
+            )
+        ).thenReturn(
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = true,
+                ticketReference = "CROWN-PHASE-UNKNOWN",
+                message = "crown_history_verified",
+                currentOdds = BigDecimal("0.87000000")
+            )
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("rejected", result.status)
+        assertEquals("crown_phase_unknown", result.reason)
         assertEquals(listOf("placing", "rejected"), captor.allValues.map { it.status })
         verifyNoInteractions(gateway)
     }
@@ -500,6 +548,85 @@ class AutoBettingExecutionServiceTest {
         assertEquals("CROWN-10002", result.crownBetReference)
         assertEquals(listOf("placing", "placed_unverified"), captor.allValues.map { it.status })
         assertEquals("crown_history_unverified", captor.allValues.last().rejectReason)
+    }
+
+    @Test
+    fun `recent unverified crown placement waits before delayed history recheck`() {
+        val intent = liveHandicapIntent().copy(
+            status = "placed_unverified",
+            rejectReason = "crown_history_unverified",
+            crownHistoryVerified = false,
+            crownHistoryCheckedAt = 1_990_000,
+            crownBetReference = "CROWN-10002"
+        )
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("placed_unverified", result.status)
+        assertEquals("crown_history_recheck_pending", result.reason)
+        verifyNoInteractions(gateway)
+    }
+
+    @Test
+    fun `old unverified crown placement is rechecked and promoted when history appears`() {
+        val intent = liveHandicapIntent().copy(
+            status = "placed_unverified",
+            rejectReason = "crown_history_unverified",
+            crownHistoryVerified = false,
+            crownHistoryCheckedAt = 1_900_000,
+            crownBetReference = "CROWN-10002"
+        )
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        stubCrownPlatformMatchFor(intent)
+        `when`(
+            gateway.verifyPlacedBet(
+                CrownBetPlacementCommand(
+                    profileId = "k1chipm1",
+                    loginUrl = "https://m407.mos077.com/",
+                    matchTitle = crownMatchTitle(crownPlatformMatch()),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
+                    betElementId = "bet_8764315_11049615_REH",
+                    stakeAmount = BigDecimal("10.0000"),
+                    targetOdds = BigDecimal("0.87000000"),
+                    lineValue = "0/0.5"
+                ),
+                "CROWN-10002"
+            )
+        ).thenReturn(
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = true,
+                ticketReference = "CROWN-10002",
+                message = "crown_history_verified",
+                currentOdds = BigDecimal("0.87000000")
+            )
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("placed", result.status)
+        assertEquals("crown_history_verified", result.reason)
+        assertEquals(true, result.crownHistoryVerified)
+        assertEquals("CROWN-10002", result.crownBetReference)
+        assertEquals(listOf("placing", "placed"), captor.allValues.map { it.status })
     }
 
     @Test
@@ -601,7 +728,10 @@ class AutoBettingExecutionServiceTest {
         assertEquals("CROWN-10003", result.crownBetReference)
     }
 
-    private fun stubCrownPlatformMatchFor(intent: AutoBettingIntent, match: OddsPlatformMatch = crownPlatformMatch()) {
+    private fun stubCrownPlatformMatchFor(
+        intent: AutoBettingIntent,
+        match: OddsPlatformMatch = crownPlatformMatch(isLive = intent.matchPhase == "live")
+    ) {
         val teams = intent.matchTitle.split(Regex("""\s+vs\s+|\s+v\s+""", RegexOption.IGNORE_CASE), limit = 2)
             .map { it.trim() }
         `when`(
@@ -645,7 +775,7 @@ class AutoBettingExecutionServiceTest {
         sourceMatchId: String = "8764315",
         gid: String = "8764315",
         ecid: String = "11049615",
-        isLive: Boolean? = null
+        isLive: Boolean? = true
     ) = OddsPlatformMatch(
         id = id,
         sourceKey = "crown",

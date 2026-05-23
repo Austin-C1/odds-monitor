@@ -72,7 +72,7 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
-    fun `crown placement refreshes crown page and checks session before betting`() {
+    fun `crown placement checks session before betting without refreshing crown page`() {
         val gatewayBlock = source.substringAfter("override fun placeBet")
             .substringBefore("private fun readCrownPageSnapshot")
         val activationBlock = source.substringAfter("private fun activateCrownPageBeforePlacement")
@@ -83,8 +83,8 @@ class AdsPowerLocalApiServiceSourceTest {
             gatewayBlock.indexOf("activateCrownPageBeforePlacement") <
                 gatewayBlock.indexOf("crownBetExecutionScript(argsJson)")
         )
-        assertTrue(activationBlock.contains("window.location.reload()"))
-        assertTrue(activationBlock.contains("Thread.sleep"))
+        assertFalse(activationBlock.contains("window.location.reload()"))
+        assertFalse(source.contains("private fun reloadCrownPage"))
         assertTrue(activationBlock.contains("dismissCrownNetworkPrompt"))
         assertTrue(source.contains("crown_network_unstable"))
         assertTrue(source.contains("网络不稳定"))

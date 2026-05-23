@@ -8,6 +8,9 @@ const mockApiState = vi.hoisted(() => ({
   alerts: [] as any[],
   intentId: 7000,
   liveOnlyModeEnabled: true,
+  executionResults: [] as any[],
+  activeExecutions: 0,
+  maxConcurrentExecutions: 0,
 }))
 
 vi.mock('./services/api', () => ({
@@ -79,19 +82,40 @@ vi.mock('./services/api', () => ({
         })
       }
       if (/^\/auto-betting\/intents\/\d+\/execute-crown$/.test(url)) {
-        return Promise.resolve({
+        mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions) + 1
+        mockApiState.maxConcurrentExecutions = Math.max(
+          mockApiState.maxConcurrentExecutions,
+          mockApiState.activeExecutions,
+        )
+        const executionResult = mockApiState.executionResults.length > 0
+          ? mockApiState.executionResults.shift()
+          : {
+              status: 'placed',
+              reason: 'crown_history_verified',
+              crownHistoryVerified: true,
+              crownBetReference: 'OU123',
+            }
+        const response = {
           data: {
             code: 0,
             data: {
               id: Number(url.split('/')[3]),
-              status: 'placed',
-              reason: 'crown_history_verified',
-              crownHistoryVerified: true,
+              status: executionResult.status,
+              reason: executionResult.reason,
+              crownHistoryVerified: executionResult.crownHistoryVerified,
               crownHistoryCheckedAt: Date.now(),
-              crownBetReference: 'OU123',
+              crownBetReference: executionResult.crownBetReference,
             },
           },
-        })
+        }
+        const finish = () => {
+          mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions - 1)
+          return response
+        }
+        if (executionResult.delayMs) {
+          return new Promise((resolve) => setTimeout(() => resolve(finish()), executionResult.delayMs))
+        }
+        return Promise.resolve(finish())
       }
       return Promise.resolve({ data: { code: 0, data: [] } })
     }),
@@ -102,7 +126,7 @@ vi.mock('./pages/BettingHistory', () => ({
   default: () => <div>下注成功页面</div>,
 }))
 
-const writeAutomationStorage = (autoMode: 'prematch' | 'live' = 'live') => {
+const writeAutomationStorage = (autoMode: 'prematch' | 'live' = 'live', accounts?: any[]) => {
   window.localStorage.setItem('jwt_token', 'valid-token')
   window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
     autoMode,
@@ -112,7 +136,7 @@ const writeAutomationStorage = (autoMode: 'prematch' | 'live' = 'live') => {
     minimumBetOdds: 1.01,
     signalMaxAgeSeconds: 600,
   }))
-  window.localStorage.setItem('crown-betting-accounts', JSON.stringify([
+  window.localStorage.setItem('crown-betting-accounts', JSON.stringify(accounts || [
     {
       id: 'account-a',
       displayName: '投注账号',
@@ -147,6 +171,9 @@ describe('App background crown betting automation', () => {
     writeAutomationStorage()
     mockApiState.intentId = 7000
     mockApiState.liveOnlyModeEnabled = true
+    mockApiState.executionResults = []
+    mockApiState.activeExecutions = 0
+    mockApiState.maxConcurrentExecutions = 0
     mockApiState.alerts = [{
       id: 5001,
       alertType: 'odds_change',
@@ -223,5 +250,47 @@ describe('App background crown betting automation', () => {
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
       /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
     ))).toBe(true)
+  })
+
+  it('runs background account executions one by one for ten accounts', async () => {
+    window.localStorage.clear()
+    writeAutomationStorage('live', Array.from({ length: 10 }, (_, index) => ({
+      id: `account-${index + 1}`,
+      displayName: `Account ${index + 1}`,
+      loginName: `demo_${index + 1}`,
+      loginUrl: 'https://m407.mos077.com/',
+      adsPowerProfileId: `profile-${index + 1}`,
+      adsPowerStatus: 'opened',
+      bettingEnabled: true,
+      status: 'success',
+      balance: 2000,
+      currency: 'CNY',
+    })))
+    window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
+      autoMode: 'live',
+      autoEnabled: true,
+      perAccountLimit: 50,
+      betLimit: 500,
+      minimumBetOdds: 1.01,
+      signalMaxAgeSeconds: 600,
+    }))
+    mockApiState.executionResults = Array.from({ length: 10 }, (_, index) => ({
+      status: 'placed',
+      reason: 'crown_history_verified',
+      crownHistoryVerified: true,
+      crownBetReference: `BG-${index + 1}`,
+      delayMs: 20,
+    }))
+
+    render(<App />)
+
+    await waitFor(() => {
+      const executeCalls = vi.mocked(apiClient.post).mock.calls.filter(([url]) => (
+        /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+      ))
+      expect(executeCalls).toHaveLength(10)
+    }, { timeout: 5000 })
+
+    expect(mockApiState.maxConcurrentExecutions).toBe(1)
   })
 })

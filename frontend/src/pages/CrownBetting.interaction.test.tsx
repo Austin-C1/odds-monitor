@@ -48,6 +48,8 @@ const mockApiState = vi.hoisted(() => ({
   alerts: [] as any[],
   crownSession: null as any,
   executionResults: [] as any[],
+  activeExecutions: 0,
+  maxConcurrentExecutions: 0,
   notificationConfigs: [] as any[],
   intentId: 9000,
 }))
@@ -149,6 +151,11 @@ vi.mock('../services/api', () => ({
         })
       }
       if (/^\/auto-betting\/intents\/\d+\/execute-crown$/.test(url)) {
+        mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions) + 1
+        mockApiState.maxConcurrentExecutions = Math.max(
+          mockApiState.maxConcurrentExecutions,
+          mockApiState.activeExecutions,
+        )
         const executionResult = mockApiState.executionResults.length > 0
           ? mockApiState.executionResults.shift()
           : {
@@ -170,10 +177,14 @@ vi.mock('../services/api', () => ({
             },
           },
         }
-        if (executionResult.delayMs) {
-          return new Promise((resolve) => setTimeout(() => resolve(response), executionResult.delayMs))
+        const finish = () => {
+          mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions - 1)
+          return response
         }
-        return Promise.resolve(response)
+        if (executionResult.delayMs) {
+          return new Promise((resolve) => setTimeout(() => resolve(finish()), executionResult.delayMs))
+        }
+        return Promise.resolve(finish())
       }
       return Promise.resolve({ data: { code: 0, data: [] } })
     }),
@@ -268,6 +279,8 @@ describe('CrownBetting auto betting execution interaction', () => {
     ]
     mockApiState.crownSession = null
     mockApiState.executionResults = []
+    mockApiState.activeExecutions = 0
+    mockApiState.maxConcurrentExecutions = 0
     mockApiState.notificationConfigs = []
     const storage = new Map<string, string>()
     Object.defineProperty(window, 'localStorage', {
@@ -505,6 +518,73 @@ describe('CrownBetting auto betting execution interaction', () => {
       expect(screen.getByText('队列 #1')).toBeTruthy()
     })
   }, 30000)
+
+  it.each([2, 5, 8, 10])('executes %i eligible accounts one by one instead of in parallel', async (accountCount) => {
+    window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
+      autoMode: 'prematch',
+      autoEnabled: true,
+      perAccountLimit: 50,
+      betLimit: 500,
+      minimumBetOdds: 0.70,
+    }))
+    writeAccounts(Array.from({ length: accountCount }, (_, index) => ({
+      id: `account-${index + 1}`,
+      displayName: `Account ${index + 1}`,
+      loginName: `demo_${index + 1}`,
+      loginUrl: 'https://m407.mos077.com/',
+      adsPowerProfileId: `profile-${index + 1}`,
+      adsPowerStatus: 'opened',
+      bettingEnabled: true,
+      status: 'success',
+      balance: 1000,
+      currency: 'CNY',
+      lastCheckedAt: Date.now(),
+    })))
+    mockApiState.alerts = [
+      {
+        id: 1201,
+        alertType: 'odds_change',
+        severity: 'info',
+        matchName: '1201',
+        title: '赔率变动：曼城 vs 利物浦',
+        message: `赛前赔率变动
+
+联赛：英超
+比赛：曼城 vs 利物浦
+
+盘口：让球 主队 -0.5
+平博：0.91 -> 0.95
+皇冠：0.90 -> 0.94
+
+筛选：动水通过 / 合水通过
+时间：2026-05-14 16:04:10`,
+        createdAt: Date.now(),
+        acknowledged: false,
+      },
+    ]
+    mockApiState.executionResults = Array.from({ length: accountCount }, (_, index) => ({
+        status: 'placed',
+        reason: 'crown_history_verified',
+        crownHistoryVerified: true,
+        crownBetReference: `CROWN-${index + 1}`,
+        delayMs: 20,
+    }))
+
+    render(<CrownBetting />)
+
+    await screen.findByText('自动化接入投注功能')
+    await waitFor(() => {
+      expect(screen.getByText('当前账号')).toBeTruthy()
+      expect(screen.getAllByText(/Account/).length).toBeGreaterThan(0)
+    }, { timeout: 3000 })
+    await waitFor(() => {
+      const executeCalls = vi.mocked(apiClient.post).mock.calls
+        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+      expect(executeCalls).toHaveLength(accountCount)
+    }, { timeout: 15000 })
+
+    expect(mockApiState.maxConcurrentExecutions).toBe(1)
+  }, 45000)
 
   it('runs live checks from the latest crown alert rise without pinnacle', async () => {
     const alertCreatedAt = Date.now()

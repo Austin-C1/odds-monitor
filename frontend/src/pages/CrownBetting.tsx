@@ -157,6 +157,14 @@ type AutomationSettings = {
   signalMaxAgeSeconds: number
 }
 
+type CurrentExecutionStep = {
+  accountName: string
+  stageLabel: string
+  phaseLabel: string
+  signalTitle: string
+  queueLabel: string
+} | null
+
 const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   autoMode: 'prematch',
   autoEnabled: false,
@@ -214,6 +222,15 @@ const automationSignalStyle: CSSProperties = {
   padding: '10px 0',
   borderTop: '1px solid #f0f0f0',
   borderBottom: '1px solid #f0f0f0',
+  marginBottom: 12,
+}
+
+const executionStageStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+  gap: 12,
+  padding: '10px 0',
+  borderTop: '1px solid #f0f0f0',
   marginBottom: 12,
 }
 
@@ -721,10 +738,16 @@ const CrownBetting = () => {
   }
 
   const [executionRunning, setExecutionRunning] = useState(false)
+  const [currentExecutionStep, setCurrentExecutionStep] = useState<CurrentExecutionStep>(null)
   const executionRunningRef = useRef(false)
   const automationPollingRef = useRef(false)
   const attemptedSignalAtRef = useRef<Map<string, number>>(new Map())
   const completedSignalKeysRef = useRef<Set<string>>(new Set())
+  const mountedRef = useRef(true)
+
+  useEffect(() => () => {
+    mountedRef.current = false
+  }, [])
 
   const executeLatestCrownSignal = useCallback(async () => {
     const currentAccounts = accountsRef.current
@@ -743,6 +766,7 @@ const CrownBetting = () => {
         '/odds-monitor/alerts/list',
         {},
       )
+      if (!mountedRef.current) return
       if (alertResponse.data.code !== 0) {
         throw new Error(alertResponse.data.msg || '监控信号读取失败')
       }
@@ -776,17 +800,33 @@ const CrownBetting = () => {
         executionStarted = true
         executionRunningRef.current = true
         setExecutionRunning(true)
+        setCurrentExecutionStep({
+          accountName: '-',
+          stageLabel: '读取信号',
+          phaseLabel: signal?.modeLabel || (autoMode === 'prematch' ? '赛前' : '滚球'),
+          signalTitle: signal?.matchTitle || '等待监控信号',
+          queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
+        })
       }
       const checkedAccounts = shouldExecuteSignal
         ? []
         : currentAccounts
       if (shouldExecuteSignal) {
         for (let index = 0; index < currentAccounts.length; index += 1) {
+          if (!mountedRef.current) return
           const account = currentAccounts[index]
+          setCurrentExecutionStep({
+            accountName: account.displayName,
+            stageLabel: '检查账号',
+            phaseLabel: signal?.modeLabel || (autoMode === 'prematch' ? '赛前' : '滚球'),
+            signalTitle: signal?.matchTitle || '等待监控信号',
+            queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
+          })
           checkedAccounts.push(await verifyAccountBeforeBetting(account))
           const hasNextEnabledAccount = currentAccounts.slice(index + 1).some(isBettingEnabledAccount)
           if (isBettingEnabledAccount(account) && hasNextEnabledAccount) {
             await wait(AUTO_BETTING_ACCOUNT_CHECK_DELAY_MS)
+            if (!mountedRef.current) return
           }
         }
       }
@@ -811,12 +851,21 @@ const CrownBetting = () => {
         signal || !currentPlan?.signal ? nextPlan : currentPlan
       ))
       if (!nextPlan.canExecute) {
+        setCurrentExecutionStep((current) => current ? { ...current, stageLabel: nextPlan.summary } : null)
         return
       }
 
-      const checkedRows = await Promise.all(nextPlan.rows.map(async (row) => {
+      const executeRow = async (row: (typeof nextPlan.rows)[number]) => {
         if (row.status !== 'passed' || row.stakeAmount <= 0) return row
+        if (!mountedRef.current) return row
         try {
+          setCurrentExecutionStep({
+            accountName: row.accountName,
+            stageLabel: '创建投注任务',
+            phaseLabel: row.modeLabel,
+            signalTitle: row.matchTitle,
+            queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
+          })
           const checkedAccount = checkedAccountById.get(row.id)
           const profileId = checkedAccount?.adsPowerProfileId?.trim()
           if (!profileId) {
@@ -853,11 +902,19 @@ const CrownBetting = () => {
               maxSignalAgeSeconds: signalMaxAgeSeconds,
             },
           )
+          if (!mountedRef.current) return row
           if (signalResponse.data.code !== 0 || !signalResponse.data.data) {
             throw new Error(signalResponse.data.msg || '后端投注判断失败')
           }
           const decision = signalResponse.data.data
           if (decision.status !== 'ready' || typeof decision.id !== 'number') {
+            setCurrentExecutionStep({
+              accountName: row.accountName,
+              stageLabel: '跳过账号',
+              phaseLabel: row.modeLabel,
+              signalTitle: row.matchTitle,
+              queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
+            })
             return {
               ...row,
               status: 'skipped' as const,
@@ -867,6 +924,13 @@ const CrownBetting = () => {
               reason: formatAutoBettingReason(decision.reason),
             }
           }
+          setCurrentExecutionStep({
+            accountName: row.accountName,
+            stageLabel: '下注与历史验证',
+            phaseLabel: row.modeLabel,
+            signalTitle: row.matchTitle,
+            queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
+          })
           const executionResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
             `/auto-betting/intents/${decision.id}/execute-crown`,
             {
@@ -876,11 +940,19 @@ const CrownBetting = () => {
             },
             { timeout: 120000 },
           )
+          if (!mountedRef.current) return row
           if (executionResponse.data.code !== 0 || !executionResponse.data.data) {
             throw new Error(executionResponse.data.msg || '皇冠实际下注失败')
           }
           const executionDecision = executionResponse.data.data
           const historyVerified = executionDecision.status === 'placed' && executionDecision.crownHistoryVerified === true
+          setCurrentExecutionStep({
+            accountName: row.accountName,
+            stageLabel: historyVerified ? '账号完成' : '账号跳过',
+            phaseLabel: row.modeLabel,
+            signalTitle: row.matchTitle,
+            queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
+          })
           return {
             ...row,
             status: historyVerified ? 'passed' as const : 'skipped' as const,
@@ -892,6 +964,13 @@ const CrownBetting = () => {
               : formatAutoBettingReason(executionDecision.reason),
           }
         } catch (error: any) {
+          setCurrentExecutionStep({
+            accountName: row.accountName,
+            stageLabel: '账号异常',
+            phaseLabel: row.modeLabel,
+            signalTitle: row.matchTitle,
+            queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
+          })
           return {
             ...row,
             status: 'skipped' as const,
@@ -900,7 +979,12 @@ const CrownBetting = () => {
             reason: extractApiErrorMessage(error, '皇冠实际下注失败'),
           }
         }
-      }))
+      }
+      const checkedRows: typeof nextPlan.rows = []
+      for (const row of nextPlan.rows) {
+        if (!mountedRef.current) return
+        checkedRows.push(await executeRow(row))
+      }
       const placedRows = checkedRows.filter((row) => row.status === 'passed')
       const shouldStopRetryingSignal = checkedRows.some((row) => row.stopRetry)
       const placedStake = placedRows.reduce((total, row) => total + row.stakeAmount, 0)
@@ -921,6 +1005,7 @@ const CrownBetting = () => {
       } else {
         message.warning('没有确认成功的下注')
       }
+      setCurrentExecutionStep((current) => current ? { ...current, stageLabel: '本轮完成' } : null)
     } catch (error: any) {
       message.error(extractApiErrorMessage(error, '监控信号读取失败'))
     } finally {
@@ -1280,6 +1365,31 @@ const CrownBetting = () => {
             <div>{currentExecutionSignal?.bettingLogic || '-'}</div>
           </div>
         </div>
+
+        {currentExecutionStep ? (
+          <div style={executionStageStyle}>
+            <div>
+              <Text type="secondary">当前阶段</Text>
+              <div><Tag color={executionRunning ? 'processing' : 'default'}>{currentExecutionStep.stageLabel}</Tag></div>
+            </div>
+            <div>
+              <Text type="secondary">当前账号</Text>
+              <div><Text strong>{currentExecutionStep.accountName}</Text></div>
+            </div>
+            <div>
+              <Text type="secondary">当前模式</Text>
+              <div>{currentExecutionStep.phaseLabel}</div>
+            </div>
+            <div>
+              <Text type="secondary">当前队列</Text>
+              <div>{currentExecutionStep.queueLabel}</div>
+            </div>
+            <div>
+              <Text type="secondary">当前信号</Text>
+              <div>{currentExecutionStep.signalTitle}</div>
+            </div>
+          </div>
+        ) : null}
 
         <div style={{ marginBottom: 12 }}>
           <Space wrap style={{ marginBottom: 8 }}>

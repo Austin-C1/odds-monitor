@@ -13,6 +13,17 @@ type RuntimeLog = {
   startedAt: number
   finishedAt?: number
   recordsCount: number
+  matchCount?: number
+  marketCount?: number
+  emptyMarketCount?: number
+  failureReason?: string
+}
+
+const renderFailureReason = (record: RuntimeLog) => {
+  if (record.status === 'success') {
+    return '成功'
+  }
+  return record.failureReason || record.message || '-'
 }
 
 const RuntimeLogs = () => {
@@ -38,9 +49,13 @@ const RuntimeLogs = () => {
         columns={[
           { title: '数据源', dataIndex: 'sourceKey' },
           { title: '状态', dataIndex: 'status', render: (value: string) => <Tag>{value}</Tag> },
+          { title: '错误分类', render: (_: unknown, record: RuntimeLog) => renderFailureReason(record) },
           { title: '开始时间', dataIndex: 'startedAt', render: (value: number) => new Date(value).toLocaleString('zh-CN') },
           { title: '结束时间', dataIndex: 'finishedAt', render: (value?: number) => value ? new Date(value).toLocaleString('zh-CN') : '-' },
           { title: '数量', dataIndex: 'recordsCount' },
+          { title: '比赛', dataIndex: 'matchCount', render: (value?: number) => value ?? '-' },
+          { title: '盘口', dataIndex: 'marketCount', render: (value?: number) => value ?? '-' },
+          { title: '空盘口', dataIndex: 'emptyMarketCount', render: (value?: number) => value ?? '-' },
           { title: '说明', dataIndex: 'message', render: (value?: string) => value || '-' },
         ]}
       />

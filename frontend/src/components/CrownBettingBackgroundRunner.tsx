@@ -238,7 +238,7 @@ const runAutomationForSignal = async (
     return { succeeded: false, stopRetry: false }
   }
 
-  const results = await Promise.all(plan.rows.map(async (row) => {
+  const executeRow = async (row: (typeof plan.rows)[number]) => {
     if (row.status !== 'passed' || row.stakeAmount <= 0) return { succeeded: false, stopRetry: false }
     const checkedAccount = checkedAccountById.get(row.id)
     const profileId = checkedAccount?.adsPowerProfileId?.trim()
@@ -289,7 +289,11 @@ const runAutomationForSignal = async (
       succeeded,
       stopRetry: !succeeded && isNonRetriableAutoBettingReason(executionDecision?.reason),
     }
-  }))
+  }
+  const results: Array<{ succeeded: boolean; stopRetry: boolean }> = []
+  for (const row of plan.rows) {
+    results.push(await executeRow(row))
+  }
   return {
     succeeded: results.some((result) => result.succeeded),
     stopRetry: results.some((result) => result.stopRetry),

@@ -482,6 +482,8 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     expect(formatAutoBettingReason('')).toBe('')
     expect(formatAutoBettingReason('crown_network_unstable')).toBe('皇冠网络不稳定，请刷新后重试')
     expect(formatAutoBettingReason('crown_page_activation_failed')).toBe('皇冠页面刷新确认失败')
+    expect(formatAutoBettingReason('crown_phase_unknown')).toBe('皇冠比赛阶段无法确认')
+    expect(formatAutoBettingReason('crown_phase_mismatch')).toBe('皇冠比赛阶段与信号不一致')
   })
 
   it('does not keep removed auto betting restriction reason labels', () => {
