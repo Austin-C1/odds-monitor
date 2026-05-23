@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { apiClient } from '../services/api'
+import { getVersionText } from '../utils'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -38,7 +39,7 @@ interface CleanupResult {
 
 const SystemUpdate: React.FC = () => {
     const { t, i18n } = useTranslation()
-    const [currentVersion, setCurrentVersion] = useState('')
+    const [currentVersion, setCurrentVersion] = useState(getVersionText())
     const [updateChecking, setUpdateChecking] = useState(false)
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
     const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
@@ -59,7 +60,7 @@ const SystemUpdate: React.FC = () => {
         try {
             const response = await apiClient.get('/update/version')
             if (response.data.code === 0 && response.data.data) {
-                setCurrentVersion(response.data.data.version)
+                setCurrentVersion(response.data.data.version || getVersionText())
             }
         } catch (error: any) {
             console.error('获取版本失败:', error)
@@ -245,7 +246,7 @@ const SystemUpdate: React.FC = () => {
                             {t('systemUpdate.currentVersion')}
                         </div>
                         <div style={{ fontSize: '20px', fontWeight: 600 }}>
-                            v{currentVersion || 'unknown'}
+                            v{currentVersion}
                         </div>
                     </div>
                     <CheckCircleOutlined style={{ fontSize: '32px', opacity: 0.8 }} />
