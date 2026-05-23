@@ -72,6 +72,25 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
+    fun `crown placement refreshes crown page and checks session before betting`() {
+        val gatewayBlock = source.substringAfter("override fun placeBet")
+            .substringBefore("private fun readCrownPageSnapshot")
+        val activationBlock = source.substringAfter("private fun activateCrownPageBeforePlacement")
+            .substringBefore("private fun readCrownPageSnapshot")
+
+        assertTrue(gatewayBlock.contains("activateCrownPageBeforePlacement(debugPort, target, command.loginUrl)"))
+        assertTrue(
+            gatewayBlock.indexOf("activateCrownPageBeforePlacement") <
+                gatewayBlock.indexOf("crownBetExecutionScript(argsJson)")
+        )
+        assertTrue(activationBlock.contains("window.location.reload()"))
+        assertTrue(activationBlock.contains("Thread.sleep"))
+        assertTrue(activationBlock.contains("dismissCrownNetworkPrompt"))
+        assertTrue(source.contains("crown_network_unstable"))
+        assertTrue(source.contains("网络不稳定"))
+    }
+
+    @Test
     fun `crown placement treats confirmed receipt reference as verified placement`() {
         val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
             .substringBefore("private fun buildUrl")

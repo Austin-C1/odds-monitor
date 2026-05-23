@@ -480,6 +480,8 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
   it('formats backend betting failure codes for operators', () => {
     expect(formatAutoBettingReason('unknown_reason')).toBe('unknown_reason')
     expect(formatAutoBettingReason('')).toBe('')
+    expect(formatAutoBettingReason('crown_network_unstable')).toBe('皇冠网络不稳定，请刷新后重试')
+    expect(formatAutoBettingReason('crown_page_activation_failed')).toBe('皇冠页面刷新确认失败')
   })
 
   it('does not keep removed auto betting restriction reason labels', () => {

@@ -6,6 +6,7 @@ import com.wrbug.polymarketbot.dto.AdsPowerCrownSessionCandidateDto
 import com.wrbug.polymarketbot.dto.AdsPowerCrownSessionDto
 import com.wrbug.polymarketbot.dto.AdsPowerProfileActiveDto
 import com.wrbug.polymarketbot.dto.AdsPowerStatusDto
+import com.wrbug.polymarketbot.util.TextEncodingUtils
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -20,6 +21,8 @@ import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+
+private const val CROWN_NETWORK_UNSTABLE_STATUS = "crown_network_unstable"
 
 @Service
 class AdsPowerLocalApiService(
@@ -395,14 +398,19 @@ class AdsPowerLocalApiService(
         closeCrownPrintTargets(debugPort)
         val target = readCrownPageTarget(debugPort, command.loginUrl)
             ?: return CrownBetPlacementResult(false, false, null, "crown_page_not_found")
-        val wsUrl = target.webSocketDebuggerUrl?.trim().orEmpty()
-        if (wsUrl.isBlank()) {
+        val initialWsUrl = target.webSocketDebuggerUrl?.trim().orEmpty()
+        if (initialWsUrl.isBlank()) {
             return CrownBetPlacementResult(false, false, null, "crown_debug_target_missing")
         }
-        val snapshot = readPageSnapshotViaCdp(wsUrl, target)
-            ?: return CrownBetPlacementResult(false, false, null, "crown_page_not_found")
+        val activated = activateCrownPageBeforePlacement(debugPort, target, command.loginUrl)
+            ?: return CrownBetPlacementResult(false, false, null, "crown_page_activation_failed")
+        val wsUrl = activated.wsUrl
+        val snapshot = activated.snapshot
         val session = CrownSessionPageAnalyzer.analyze(snapshot.text, snapshot.title)
         if (!session.loggedIn) {
+            if (session.accountStatus == CROWN_NETWORK_UNSTABLE_STATUS) {
+                dismissCrownNetworkPrompt(wsUrl)
+            }
             return CrownBetPlacementResult(false, false, null, session.accountStatus)
         }
 
@@ -421,6 +429,106 @@ class AdsPowerLocalApiService(
             message = result.path("message").textOrNull() ?: "crown_bet_failed",
             currentOdds = result.path("currentOdds").takeIf { !it.isMissingNode && !it.isNull }?.decimalValue()
         )
+    }
+
+    private fun activateCrownPageBeforePlacement(
+        debugPort: String,
+        target: BrowserTarget,
+        loginUrl: String?
+    ): CrownPageActivationResult? {
+        val initialWsUrl = target.webSocketDebuggerUrl?.trim().orEmpty()
+        if (initialWsUrl.isBlank()) return null
+
+        reloadCrownPage(initialWsUrl)
+        Thread.sleep(3_500)
+
+        val refreshedTarget = readCrownPageTarget(debugPort, loginUrl) ?: target
+        val refreshedWsUrl = refreshedTarget.webSocketDebuggerUrl?.trim()?.takeIf { it.isNotBlank() } ?: initialWsUrl
+        val snapshot = waitForCrownPageSnapshot(refreshedWsUrl, refreshedTarget) ?: return null
+        if (CrownSessionPageAnalyzer.analyze(snapshot.text, snapshot.title).accountStatus == CROWN_NETWORK_UNSTABLE_STATUS) {
+            dismissCrownNetworkPrompt(refreshedWsUrl)
+        }
+        return CrownPageActivationResult(refreshedTarget, refreshedWsUrl, snapshot)
+    }
+
+    private fun reloadCrownPage(wsUrl: String): Boolean {
+        val expression = """
+            (async () => {
+              setTimeout(() => window.location.reload(), 0);
+              return JSON.stringify({ reloaded: true });
+            })()
+        """.trimIndent()
+        return evaluateCrownPageJson(wsUrl, expression) != null
+    }
+
+    private fun waitForCrownPageSnapshot(wsUrl: String, target: BrowserTarget): CrownPageSnapshot? {
+        var lastSnapshot: CrownPageSnapshot? = null
+        repeat(6) {
+            val snapshot = readPageSnapshotViaCdp(wsUrl, target)
+            if (snapshot != null) {
+                lastSnapshot = snapshot
+                if (snapshot.text.isNotBlank()) return snapshot
+            }
+            Thread.sleep(750)
+        }
+        return lastSnapshot
+    }
+
+    private fun dismissCrownNetworkPrompt(wsUrl: String): Boolean {
+        val expression = """
+            (async () => {
+              const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+              const networkPattern = /网络不稳定|網絡不穩定|网络异常|網絡異常|重新更新|重新整理|network.{0,24}(unstable|error)|please.{0,24}(refresh|reload)/i;
+              const seen = new Set();
+              const documents = [];
+              const visit = (win) => {
+                if (!win || seen.has(win)) return;
+                seen.add(win);
+                try {
+                  if (win.document) documents.push(win.document);
+                  for (const frame of Array.from(win.frames || [])) visit(frame);
+                } catch (_) {
+                  // Ignore cross-origin frames.
+                }
+              };
+              visit(window);
+              const isVisible = (element) => Boolean(element && (() => {
+                const view = element.ownerDocument?.defaultView || window;
+                const style = view.getComputedStyle(element);
+                return style.display !== 'none'
+                  && style.visibility !== 'hidden'
+                  && style.visibility !== 'collapse'
+                  && style.opacity !== '0'
+                  && (element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+              })());
+              const fireClick = (element) => {
+                const view = element.ownerDocument?.defaultView || window;
+                const MouseEventCtor = view.MouseEvent || window.MouseEvent;
+                element.scrollIntoView({ block: 'center', inline: 'center' });
+                for (const type of ['mouseover', 'mousedown', 'mouseup', 'click']) {
+                  element.dispatchEvent(new MouseEventCtor(type, { bubbles: true, cancelable: true, view }));
+                }
+              };
+              const pageText = documents
+                .map((doc) => doc.body ? doc.body.innerText || doc.body.textContent || '' : '')
+                .join('\n');
+              if (!networkPattern.test(pageText)) {
+                return JSON.stringify({ networkPrompt: false, dismissed: false });
+              }
+              const buttons = documents.flatMap((doc) => Array.from(doc.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"], a')));
+              const button = buttons.find((element) => {
+                const text = String(element.innerText || element.value || element.textContent || '').trim();
+                return isVisible(element) && /确认|確定|确定|OK|知道|关闭|Close/i.test(text);
+              }) || buttons.find(isVisible);
+              if (button) {
+                fireClick(button);
+                await sleep(300);
+              }
+              return JSON.stringify({ networkPrompt: true, dismissed: Boolean(button) });
+            })()
+        """.trimIndent()
+        val result = evaluateCrownPageJson(wsUrl, expression) ?: return false
+        return runCatching { objectMapper.readTree(result).path("networkPrompt").asBoolean(false) }.getOrDefault(false)
     }
 
     private fun readCrownPageSnapshot(debugPort: String, loginUrl: String?): CrownPageSnapshot? {
@@ -1516,6 +1624,12 @@ class AdsPowerLocalApiService(
         val text: String
     )
 
+    private data class CrownPageActivationResult(
+        val target: BrowserTarget,
+        val wsUrl: String,
+        val snapshot: CrownPageSnapshot
+    )
+
     private data class CrownAnalyzedSnapshot(
         val snapshot: CrownPageSnapshot,
         val analysis: CrownSessionAnalysis
@@ -1608,6 +1722,10 @@ internal object CrownSessionPageAnalyzer {
     )
     private val loginFormPattern = Regex("""(?:登录|登入|Login).{0,80}(?:密码|Password)""", RegexOption.IGNORE_CASE)
     private val abnormalPattern = Regex("""账号(?:异常|停用|冻结|锁定)|账户(?:异常|停用|冻结|锁定)|封号|被锁定""")
+    private val networkUnstablePattern = Regex(
+        """网络不稳定|網絡不穩定|网络异常|網絡異常|重新更新|重新整理|network.{0,24}(?:unstable|error)|please.{0,24}(?:refresh|reload)""",
+        RegexOption.IGNORE_CASE
+    )
     private val loggedInMenuMarkers = listOf(
         "账户历史",
         "账户安全",
@@ -1619,9 +1737,14 @@ internal object CrownSessionPageAnalyzer {
     )
 
     fun analyze(text: String, pageTitle: String? = null): CrownSessionAnalysis {
-        val normalized = text.replace('\u00A0', ' ').trim()
-        if (normalized.isBlank()) {
+        val rawNormalized = text.replace('\u00A0', ' ').trim()
+        if (rawNormalized.isBlank()) {
             return CrownSessionAnalysis(false, "unknown", null, message = "皇冠页面未返回内容")
+        }
+        val repaired = TextEncodingUtils.repairMojibake(rawNormalized)
+        val normalized = listOf(rawNormalized, repaired).distinct().joinToString("\n")
+        if (networkUnstablePattern.containsMatchIn(normalized)) {
+            return CrownSessionAnalysis(false, CROWN_NETWORK_UNSTABLE_STATUS, null, message = "皇冠网络不稳定，请刷新后重试")
         }
         if (abnormalPattern.containsMatchIn(normalized)) {
             return CrownSessionAnalysis(false, "abnormal", null, message = "账号异常")

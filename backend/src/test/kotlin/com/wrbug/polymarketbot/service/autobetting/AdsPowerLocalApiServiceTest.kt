@@ -411,6 +411,23 @@ class AdsPowerLocalApiServiceTest {
     }
 
     @Test
+    fun `crown session analyzer rejects network unstable overlay before treating account as online`() {
+        val result = CrownSessionPageAnalyzer.analyze(
+            """
+            skjd447RMB2,000.00
+            账户历史总览
+            5月23日
+            网络不稳定，请重新更新。
+            确认
+            """.trimIndent()
+        )
+
+        assertFalse(result.loggedIn)
+        assertEquals("crown_network_unstable", result.accountStatus)
+        assertNull(result.balance)
+    }
+
+    @Test
     fun `crown session analyzer prefers visible account header over stale page title`() {
         val result = CrownSessionPageAnalyzer.analyze(
             text = """
