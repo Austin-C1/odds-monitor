@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 private const val CROWN_NETWORK_UNSTABLE_STATUS = "crown_network_unstable"
+private const val CROWN_BET_PLACEMENT_TIMEOUT_SECONDS = 30L
 
 @Service
 class AdsPowerLocalApiService(
@@ -402,9 +403,11 @@ class AdsPowerLocalApiService(
         if (initialWsUrl.isBlank()) {
             return CrownBetPlacementResult(false, false, null, "crown_debug_target_missing")
         }
+        installCrownPrintGuard(initialWsUrl)
         val activated = activateCrownPageBeforePlacement(debugPort, target, command.loginUrl)
             ?: return CrownBetPlacementResult(false, false, null, "crown_page_activation_failed")
         val wsUrl = activated.wsUrl
+        installCrownPrintGuard(wsUrl)
         val snapshot = activated.snapshot
         val session = CrownSessionPageAnalyzer.analyze(snapshot.text, snapshot.title)
         if (!session.loggedIn) {
@@ -447,9 +450,11 @@ class AdsPowerLocalApiService(
         if (initialWsUrl.isBlank()) {
             return CrownBetPlacementResult(true, false, ticketReference, "crown_debug_target_missing")
         }
+        installCrownPrintGuard(initialWsUrl)
         val activated = activateCrownPageBeforePlacement(debugPort, target, command.loginUrl)
             ?: return CrownBetPlacementResult(true, false, ticketReference, "crown_page_activation_failed")
         val wsUrl = activated.wsUrl
+        installCrownPrintGuard(wsUrl)
         val session = CrownSessionPageAnalyzer.analyze(activated.snapshot.text, activated.snapshot.title)
         if (!session.loggedIn) {
             if (session.accountStatus == CROWN_NETWORK_UNSTABLE_STATUS) {
@@ -610,6 +615,147 @@ class AdsPowerLocalApiService(
         } catch (_: Exception) {
             emptyList()
         }
+    }
+
+    private fun crownPrintGuardScript(): String {
+        return """
+            (() => {
+              const install = (win) => {
+                if (!win || win.__autoBetPrintGuardInstalled) return;
+                win.__autoBetPrintGuardInstalled = true;
+                const noop = () => {};
+                const fakeBody = { innerHTML: '', innerText: '', textContent: '', appendChild: noop };
+                const fakeDocument = {
+                  body: fakeBody,
+                  documentElement: fakeBody,
+                  write: noop,
+                  writeln: noop,
+                  close: noop,
+                  open: () => fakeDocument,
+                  createElement: () => fakeBody
+                };
+                const fakePopup = {
+                  closed: false,
+                  document: fakeDocument,
+                  location: { href: 'about:blank' },
+                  print: noop,
+                  close: noop,
+                  focus: noop,
+                  blur: noop,
+                  addEventListener: noop,
+                  removeEventListener: noop
+                };
+                try {
+                  Object.defineProperty(win, 'print', {
+                    configurable: true,
+                    writable: true,
+                    value: noop
+                  });
+                } catch (_) {
+                  try { win.print = noop; } catch (_) {}
+                }
+                try {
+                  if (!win.__autoBetOriginalOpen && typeof win.open === 'function') {
+                    win.__autoBetOriginalOpen = win.open.bind(win);
+                  }
+                  const openWindow = win.__autoBetOriginalOpen;
+                  if (typeof openWindow === 'function') {
+                    Object.defineProperty(win, 'open', {
+                      configurable: true,
+                      writable: true,
+                      value: (...openArgs) => {
+                        const targetUrl = String(openArgs[0] || '');
+                        const targetName = String(openArgs[1] || '');
+                        if (!targetUrl || /print|receipt|statement|wager|welcome/i.test(targetUrl) || /print|receipt|statement|wager|welcome/i.test(targetName)) {
+                          return fakePopup;
+                        }
+                        const popup = openWindow(...openArgs);
+                        try {
+                          if (popup) {
+                            install(popup);
+                            setTimeout(() => install(popup), 50);
+                            setTimeout(() => install(popup), 250);
+                          }
+                        } catch (_) {
+                          // Ignore popup access failures.
+                        }
+                        return popup;
+                      }
+                    });
+                  }
+                } catch (_) {
+                  // Ignore window.open guard failures.
+                }
+                try {
+                  if (win.document && !win.document.__autoBetOriginalExecCommand && typeof win.document.execCommand === 'function') {
+                    win.document.__autoBetOriginalExecCommand = win.document.execCommand.bind(win.document);
+                  }
+                  const execCommand = win.document?.__autoBetOriginalExecCommand;
+                  if (typeof execCommand === 'function') {
+                    win.document.execCommand = (...execArgs) => {
+                      const command = String(execArgs[0] || '').toLowerCase();
+                      if (command === 'print') return false;
+                      return execCommand(...execArgs);
+                    };
+                  }
+                } catch (_) {
+                  // Ignore document command guard failures.
+                }
+                try {
+                  win.onbeforeprint = null;
+                  win.onafterprint = null;
+                  if (win.document) {
+                    win.document.onbeforeprint = null;
+                    win.document.onafterprint = null;
+                  }
+                } catch (_) {
+                  // Ignore print handler cleanup failures.
+                }
+              };
+              const visit = (win) => {
+                try {
+                  install(win);
+                  for (const frame of Array.from(win.frames || [])) {
+                    visit(frame);
+                  }
+                } catch (_) {
+                  // Ignore cross-frame print guard failures.
+                }
+              };
+              visit(window);
+              if (!window.__autoBetPrintGuardTimer) {
+                window.__autoBetPrintGuardTimer = setInterval(() => visit(window), 250);
+              }
+              return true;
+            })()
+        """.trimIndent()
+    }
+
+    private fun installCrownPrintGuard(wsUrl: String) {
+        if (!wsUrl.startsWith("ws://127.0.0.1:") && !wsUrl.startsWith("ws://localhost:")) {
+            return
+        }
+        val source = crownPrintGuardScript()
+        val addScriptCommand = objectMapper.writeValueAsString(
+            mapOf(
+                "id" to 1,
+                "method" to "Page.addScriptToEvaluateOnNewDocument",
+                "params" to mapOf("source" to source)
+            )
+        )
+        executeCdpCommand(wsUrl, addScriptCommand, timeoutSeconds = 3)
+        val evaluateCommand = objectMapper.writeValueAsString(
+            mapOf(
+                "id" to 1,
+                "method" to "Runtime.evaluate",
+                "params" to mapOf(
+                    "expression" to source,
+                    "returnByValue" to true,
+                    "awaitPromise" to true
+                )
+            )
+        )
+        executeCdpCommand(wsUrl, evaluateCommand, timeoutSeconds = 3)
     }
 
     private fun closeCrownPrintTargets(debugPort: String) {
@@ -887,7 +1033,7 @@ class AdsPowerLocalApiService(
                 )
             )
         )
-        return executeCdpCommand(wsUrl, command, timeoutSeconds = 75)
+        return executeCdpCommand(wsUrl, command, timeoutSeconds = CROWN_BET_PLACEMENT_TIMEOUT_SECONDS)
     }
 
     private fun executeCdpCommand(wsUrl: String, command: String, timeoutSeconds: Long): String? {
@@ -993,17 +1139,26 @@ class AdsPowerLocalApiService(
               const disableNativePrint = () => {
                 const guardWindow = (win) => {
                   const noop = () => {};
+                  const fakeBody = { innerHTML: '', innerText: '', textContent: '', appendChild: noop };
+                  const fakeDocument = {
+                    body: fakeBody,
+                    documentElement: fakeBody,
+                    write: noop,
+                    writeln: noop,
+                    close: noop,
+                    open: () => fakeDocument,
+                    createElement: () => fakeBody
+                  };
                   const fakePopup = {
                     print: noop,
                     close: noop,
                     focus: noop,
                     blur: noop,
-                    document: {
-                      write: noop,
-                      close: noop,
-                      open: noop,
-                      body: null
-                    }
+                    closed: false,
+                    document: fakeDocument,
+                    location: { href: 'about:blank' },
+                    addEventListener: noop,
+                    removeEventListener: noop
                   };
                   try {
                     Object.defineProperty(win, 'print', {
@@ -1025,7 +1180,8 @@ class AdsPowerLocalApiService(
                         writable: true,
                         value: (...openArgs) => {
                           const targetUrl = String(openArgs[0] || '');
-                          if (/print|receipt|statement|wager/i.test(targetUrl)) {
+                          const targetName = String(openArgs[1] || '');
+                          if (!targetUrl || /print|receipt|statement|wager|welcome/i.test(targetUrl) || /print|receipt|statement|wager|welcome/i.test(targetName)) {
                             return fakePopup;
                           }
                           const popup = openWindow(...openArgs);
@@ -1191,6 +1347,9 @@ class AdsPowerLocalApiService(
                       && (element.offsetWidth || element.offsetHeight || element.getClientRects().length);
                   })()
                 ));
+                const visibleStakeInput = (...selectors) => selectors
+                  .map((selector) => findSelector(selector))
+                  .find((input) => input && isVisible(input)) || null;
                 const parseCrownOddsText = (value) => {
                   const matches = String(value || '').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/g);
                   if (!matches || matches.length === 0) return null;
@@ -1241,6 +1400,46 @@ class AdsPowerLocalApiService(
                   }
                   return false;
                 };
+                const closeSuccessfulReceiptPanel = async () => {
+                  const receiptMarker = /YOUR BETS HAVE BEEN SUCCESSFULLY PLACED|successfully placed|BET RECEIPT/i;
+                  const retainMarker = /Retain Selection/i;
+                  const receiptVisible = () => {
+                    const text = currentText();
+                    const rawText = currentRawText();
+                    return receiptMarker.test(text) || receiptMarker.test(rawText) || retainMarker.test(text);
+                  };
+                  if (!receiptVisible()) return false;
+                  const selectors = [
+                    '#order_close',
+                    '#btn_close',
+                    '#close_btn',
+                    '.close',
+                    '.btn_close',
+                    '.order_close',
+                    'button',
+                    '[role="button"]',
+                    'a',
+                    'div'
+                  ];
+                  for (let attempt = 0; attempt < 8; attempt += 1) {
+                    const candidates = selectors.flatMap((selector) => findAllSelector(selector));
+                    const okButton = candidates.find((element) => {
+                      if (!isVisible(element)) return false;
+                      const text = String(element.innerText || element.textContent || element.value || '').trim();
+                      if (text === 'OK') return true;
+                      const id = String(element.id || '');
+                      const className = String(element.className || '');
+                      return /order_close|close|ok/i.test(id) || /order_close|close|ok/i.test(className);
+                    });
+                    if (okButton) {
+                      clickElement(okButton);
+                      await sleep(500);
+                      if (!receiptVisible()) return true;
+                    }
+                    await sleep(250);
+                  }
+                  return false;
+                };
                 const clearExistingSlip = async () => {
                   for (const button of findAllSelector('[id^="delete_betslip_"]')) {
                     clickElement(button);
@@ -1261,40 +1460,69 @@ class AdsPowerLocalApiService(
                   const HTMLInputElementCtor = view.HTMLInputElement || window.HTMLInputElement;
                   const findStakeElementById = (id) => stakeDocument.getElementById(id) || findElementById(id);
                   const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElementCtor.prototype, 'value')?.set;
-                  const applyStakeDirectly = () => {
+                  const stakeMatches = () => String(stakeInput.value || '').trim() === stake;
+                  const focusStakeInput = async () => {
+                    stakeInput.scrollIntoView({ block: 'center', inline: 'center' });
+                    stakeInput.focus();
+                    clickElement(stakeInput);
+                    await sleep(150);
+                  };
+                  const setStakeValue = (value) => {
                     if (valueSetter) {
-                      valueSetter.call(stakeInput, '');
+                      valueSetter.call(stakeInput, value);
                     } else {
-                      stakeInput.value = '';
+                      stakeInput.value = value;
                     }
-                    stakeInput.dispatchEvent(new EventCtor('input', { bubbles: true }));
-                    stakeInput.dispatchEvent(new EventCtor('change', { bubbles: true }));
-                    if (valueSetter) {
-                      valueSetter.call(stakeInput, stake);
-                    } else {
-                      stakeInput.value = stake;
-                    }
+                  };
+                  const emitStakeInput = (data = null) => {
                     stakeInput.dispatchEvent(new InputEventCtor('input', {
                       bubbles: true,
-                      inputType: 'insertText',
-                      data: stake
-                    }));
-                    stakeInput.dispatchEvent(new KeyboardEventCtor('keyup', {
-                      bubbles: true,
-                      cancelable: true,
-                      key: stake.slice(-1) || '0',
-                      code: 'Digit' + (stake.slice(-1) || '0')
+                      inputType: data === null ? 'deleteContentBackward' : 'insertText',
+                      data
                     }));
                     stakeInput.dispatchEvent(new EventCtor('change', { bubbles: true }));
-                    return String(stakeInput.value || '').trim() === stake;
                   };
+                  const applyStakeDirectly = () => {
+                    setStakeValue('');
+                    emitStakeInput(null);
+                    for (const char of stake) {
+                      stakeInput.dispatchEvent(new KeyboardEventCtor('keydown', {
+                        bubbles: true,
+                        cancelable: true,
+                        key: char,
+                        code: 'Digit' + char
+                      }));
+                      stakeInput.dispatchEvent(new KeyboardEventCtor('keypress', {
+                        bubbles: true,
+                        cancelable: true,
+                        key: char,
+                        code: 'Digit' + char
+                      }));
+                      setStakeValue(String(stakeInput.value || '') + char);
+                      emitStakeInput(char);
+                      stakeInput.dispatchEvent(new KeyboardEventCtor('keyup', {
+                        bubbles: true,
+                        cancelable: true,
+                        key: char,
+                        code: 'Digit' + char
+                      }));
+                    }
+                    stakeInput.dispatchEvent(new EventCtor('blur', { bubbles: true }));
+                    stakeInput.dispatchEvent(new EventCtor('change', { bubbles: true }));
+                    return stakeMatches();
+                  };
+                  await focusStakeInput();
                   if (applyStakeDirectly()) {
                     await sleep(500);
-                    return;
+                    if (stakeMatches()) return true;
                   }
+                  await focusStakeInput();
                   const keyboardVisible = () => isVisible(findStakeElementById('num_0'))
                     && isVisible(findStakeElementById('num_done'));
-                  if (!keyboardVisible()) return;
+                  if (!keyboardVisible()) {
+                    await sleep(500);
+                  }
+                  if (!keyboardVisible()) return stakeMatches();
                   for (let index = 0; index < 14; index += 1) {
                     const deleteButton = findStakeElementById('num_x');
                     if (deleteButton) clickElement(deleteButton);
@@ -1311,6 +1539,8 @@ class AdsPowerLocalApiService(
                     clickElement(doneButton);
                     await sleep(250);
                   }
+                  await sleep(500);
+                  return stakeMatches();
                 };
                 const waitFor = async (reader, timeoutMs = 10000, intervalMs = 250) => {
                   const deadline = Date.now() + timeoutMs;
@@ -1383,17 +1613,22 @@ class AdsPowerLocalApiService(
                 const beforeWagerCount = readWagerCount();
                 clickElement(betElement);
                 const stake = String(Number(args.stakeAmount));
-                const stakeInput = await waitFor(() => findSelector('input#bet_gold_pc')
-                  || findSelector('input#bet_gold')
-                  || findSelector('input[placeholder="Enter Stake"]'), 10000, 250);
+                const stakeInput = await waitFor(() => visibleStakeInput(
+                  'input#bet_gold_pc',
+                  'input#bet_gold',
+                  'input[placeholder="Enter Stake"]'
+                ), 10000, 250);
                 if (!stakeInput) {
                   return finish({ placed: false, historyVerified: false, message: 'crown_stake_input_missing', currentOdds });
                 }
-                await fillStakeInput(stakeInput, stake);
+                const stakeFilled = await fillStakeInput(stakeInput, stake);
+                if (!stakeFilled) {
+                  return finish({ placed: false, historyVerified: false, message: 'crown_stake_input_not_applied', currentOdds });
+                }
   
                 let orderButton = await waitFor(() => {
                   const button = findElementById('order_bet');
-                  return button && !button.disabled ? button : null;
+                  return button && !button.disabled && isVisible(button) ? button : null;
                 }, 4000, 250);
                 if (!orderButton) {
                   const addButton = findElementById('add_total_bet');
@@ -1420,10 +1655,13 @@ class AdsPowerLocalApiService(
                   if (!slipStakeInput) {
                     return finish({ placed: false, historyVerified: false, message: 'crown_betslip_stake_input_missing', currentOdds });
                   }
-                  await fillStakeInput(slipStakeInput, stake);
+                  const slipStakeFilled = await fillStakeInput(slipStakeInput, stake);
+                  if (!slipStakeFilled) {
+                    return finish({ placed: false, historyVerified: false, message: 'crown_betslip_stake_input_not_applied', currentOdds });
+                  }
                   orderButton = await waitFor(() => {
                     const button = findElementById('order_bet');
-                    return button && !button.disabled ? button : null;
+                    return button && !button.disabled && isVisible(button) ? button : null;
                   }, 8000, 250);
                 }
                 if (!orderButton) {
@@ -1461,6 +1699,7 @@ class AdsPowerLocalApiService(
                 return null;
               }, 18000, 500);
               if (receiptText && openBetVerified(receiptText)) {
+                await closeSuccessfulReceiptPanel();
                 return finish(verifiedOpenBetPayload(receiptText, currentOdds));
               }
               if (!receiptText || !receiptVerified(receiptText)) {
@@ -1474,6 +1713,7 @@ class AdsPowerLocalApiService(
               }
               const ticketReference = extractReceiptReference(receiptText);
               if (ticketReference && receiptVerified(receiptText)) {
+                await closeSuccessfulReceiptPanel();
                 return finish({
                   placed: true,
                   historyVerified: true,
@@ -1519,6 +1759,7 @@ class AdsPowerLocalApiService(
                 });
               }
               const verifiedTicketReference = ticketReference || extractReceiptReference(historyText);
+              await closeSuccessfulReceiptPanel();
               return finish({
                 placed: true,
                 historyVerified: true,

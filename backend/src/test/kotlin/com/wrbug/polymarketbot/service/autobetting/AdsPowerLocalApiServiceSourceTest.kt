@@ -43,15 +43,36 @@ class AdsPowerLocalApiServiceSourceTest {
             .substringBefore("private fun buildUrl")
         val gatewayBlock = source.substringAfter("override fun placeBet")
             .substringBefore("private fun readCrownPageSnapshot")
+        val printGuardBlock = source.substringAfter("private fun crownPrintGuardScript")
+            .substringBefore("private fun installCrownPrintGuard")
 
         assertTrue(placementBlock.contains("disableNativePrint"))
         assertTrue(placementBlock.contains("win.print"))
         assertTrue(placementBlock.contains("win.open"))
+        assertTrue(printGuardBlock.contains("!targetUrl"))
         assertTrue(gatewayBlock.contains("closeCrownPrintTargets(debugPort)"))
+        assertTrue(gatewayBlock.contains("installCrownPrintGuard(initialWsUrl)"))
+        assertTrue(gatewayBlock.contains("installCrownPrintGuard(wsUrl)"))
         assertTrue(
             placementBlock.indexOf("disableNativePrint();").let { guardIndex ->
                 guardIndex >= 0 && guardIndex < placementBlock.indexOf("clickElement(orderButton)")
             }
+        )
+    }
+
+    @Test
+    fun `crown placement installs print guard into new documents before betting`() {
+        val printGuardInstaller = source.substringAfter("private fun installCrownPrintGuard")
+            .substringBefore("private fun closeCrownPrintTargets")
+        val gatewayBlock = source.substringAfter("override fun placeBet")
+            .substringBefore("private fun readCrownPageSnapshot")
+
+        assertTrue(printGuardInstaller.contains("Page.addScriptToEvaluateOnNewDocument"))
+        assertTrue(printGuardInstaller.contains("Runtime.evaluate"))
+        assertTrue(printGuardInstaller.contains("crownPrintGuardScript()"))
+        assertTrue(
+            gatewayBlock.indexOf("installCrownPrintGuard(initialWsUrl)") in 0 until
+                gatewayBlock.indexOf("activateCrownPageBeforePlacement")
         )
     }
 
@@ -98,6 +119,25 @@ class AdsPowerLocalApiServiceSourceTest {
         assertTrue(placementBlock.contains("receiptVerified"))
         assertTrue(placementBlock.contains("ticketReference && receiptVerified"))
         assertTrue(placementBlock.contains("message: 'crown_receipt_verified'"))
+    }
+
+    @Test
+    fun `crown placement closes successful receipt panel before returning success`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("private fun buildUrl")
+        val closeReceiptIndex = placementBlock.indexOf("await closeSuccessfulReceiptPanel()")
+        val receiptSuccessIndex = placementBlock.indexOf("message: 'crown_receipt_verified'")
+        val historySuccessIndex = placementBlock.indexOf("message: 'crown_history_verified'", receiptSuccessIndex)
+
+        assertTrue(placementBlock.contains("closeSuccessfulReceiptPanel"))
+        assertTrue(placementBlock.contains("YOUR BETS HAVE BEEN SUCCESSFULLY PLACED"))
+        assertTrue(placementBlock.contains("Retain Selection"))
+        assertTrue(placementBlock.contains("text === 'OK'"))
+        assertTrue(closeReceiptIndex >= 0 && closeReceiptIndex < receiptSuccessIndex)
+        assertTrue(
+            historySuccessIndex < 0 ||
+                placementBlock.lastIndexOf("await closeSuccessfulReceiptPanel()", historySuccessIndex) >= receiptSuccessIndex
+        )
     }
 
     @Test
@@ -155,20 +195,21 @@ class AdsPowerLocalApiServiceSourceTest {
 
         assertTrue(placementBlock.contains("accessibleWindows"))
         assertTrue(placementBlock.contains("findElementById(args.betElementId)"))
-        assertTrue(placementBlock.contains("findSelector('input#bet_gold_pc')"))
+        assertTrue(placementBlock.contains("visibleStakeInput("))
+        assertTrue(placementBlock.contains("'input#bet_gold_pc'"))
         assertTrue(placementBlock.contains("ownerDocument?.defaultView"))
     }
 
     @Test
-    fun `crown placement writes stake directly before focusing stake input`() {
+    fun `crown placement opens stake input before applying stake amount`() {
         val placementBlock = source.substringAfter("const fillStakeInput")
             .substringBefore("const waitFor")
 
         assertTrue(placementBlock.contains("const applyStakeDirectly"))
         assertTrue(
-            placementBlock.indexOf("applyStakeDirectly()").let { directIndex ->
-                val focusIndex = placementBlock.indexOf("stakeInput.focus()")
-                directIndex >= 0 && (focusIndex < 0 || directIndex < focusIndex)
+            placementBlock.indexOf("await focusStakeInput()").let { focusIndex ->
+                val directIndex = placementBlock.indexOf("applyStakeDirectly()")
+                focusIndex >= 0 && directIndex > focusIndex
             }
         )
     }
@@ -209,10 +250,38 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
-    fun `crown placement cdp timeout covers receipt and history verification waits`() {
+    fun `crown placement ignores hidden stake inputs and hidden order buttons`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+
+        assertTrue(placementBlock.contains("const visibleStakeInput"))
+        assertTrue(placementBlock.contains("input && isVisible(input)"))
+        assertTrue(placementBlock.contains("button && !button.disabled && isVisible(button) ? button : null"))
+    }
+
+    @Test
+    fun `crown placement reports unapplied stake before treating place button as disabled`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+        val fillBlock = source.substringAfter("const fillStakeInput")
+            .substringBefore("const waitFor")
+
+        assertTrue(fillBlock.contains("const focusStakeInput"))
+        assertTrue(fillBlock.contains("await focusStakeInput()"))
+        assertTrue(fillBlock.contains("return stakeMatches()"))
+        assertTrue(placementBlock.contains("const stakeFilled = await fillStakeInput(stakeInput, stake);"))
+        assertTrue(placementBlock.contains("message: 'crown_stake_input_not_applied'"))
+        assertTrue(placementBlock.contains("message: 'crown_betslip_stake_input_not_applied'"))
+        assertTrue(
+            placementBlock.indexOf("message: 'crown_stake_input_not_applied'") <
+                placementBlock.indexOf("message: 'crown_place_button_disabled'")
+        )
+    }
+
+    @Test
+    fun `crown placement cdp timeout limits one account to thirty seconds`() {
         val evaluationBlock = source.substringAfter("private fun evaluateCrownPageJson")
             .substringBefore("private fun executeCdpCommand")
 
-        assertTrue(evaluationBlock.contains("timeoutSeconds = 75"))
+        assertTrue(source.contains("CROWN_BET_PLACEMENT_TIMEOUT_SECONDS = 30L"))
+        assertTrue(evaluationBlock.contains("timeoutSeconds = CROWN_BET_PLACEMENT_TIMEOUT_SECONDS"))
     }
 }

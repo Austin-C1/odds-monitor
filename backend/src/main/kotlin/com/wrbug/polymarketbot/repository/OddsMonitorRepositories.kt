@@ -37,6 +37,17 @@ interface OddsAlertRecordRepository : JpaRepository<OddsAlertRecord, Long> {
         nativeQuery = true
     )
     fun deleteLegacyBrokenTemplateRecords(): Int
+
+    @Modifying
+    @Transactional
+    @Query(
+        """
+        DELETE FROM odds_alert_records
+        LIMIT :limit
+        """,
+        nativeQuery = true
+    )
+    fun deleteBatchAll(@Param("limit") limit: Int): Int
 }
 
 @Repository
@@ -70,6 +81,17 @@ interface OddsCollectionLogRepository : JpaRepository<OddsCollectionLog, Long> {
         @Param("before") before: Long,
         @Param("limit") limit: Int
     ): Int
+
+    @Modifying
+    @Transactional
+    @Query(
+        """
+        DELETE FROM odds_collection_logs
+        LIMIT :limit
+        """,
+        nativeQuery = true
+    )
+    fun deleteBatchAll(@Param("limit") limit: Int): Int
 }
 
 @Repository

@@ -76,6 +76,7 @@ export type AutoBettingExecutionPlanRow = {
   stakeAmount: number
   reason: string
   stopRetry?: boolean
+  retryable?: boolean
 }
 
 export type AutoBettingExecutionPlan = {
@@ -171,9 +172,30 @@ const nonRetriableAutoBettingReasons = new Set([
   'target_odds_below_minimum',
 ])
 
+const completedDuplicateAutoBettingReasons = new Set([
+  'duplicate_placed_intent',
+])
+
 export const isNonRetriableAutoBettingReason = (reason?: string | null): boolean => (
   Boolean(reason && nonRetriableAutoBettingReasons.has(reason))
 )
+
+export const isCompletedDuplicateAutoBettingReason = (reason?: string | null): boolean => (
+  Boolean(reason && completedDuplicateAutoBettingReasons.has(reason))
+)
+
+export const isCompletedAutoBettingRow = (row: AutoBettingExecutionPlanRow): boolean => (
+  row.status === 'passed' || row.stopRetry === true || row.retryable === false
+)
+
+export const shouldCompleteCrownSignalForAccounts = (
+  rows: AutoBettingExecutionPlanRow[],
+  accountIds: string[],
+): boolean => {
+  const targetIds = new Set(accountIds)
+  const targetRows = rows.filter((row) => targetIds.has(row.id))
+  return targetRows.length > 0 && targetRows.every(isCompletedAutoBettingRow)
+}
 
 export const executionOddsFloor = (signalOdds: number, configuredMinimumOdds: number): number => (
   Number(Math.max(signalOdds, configuredMinimumOdds).toFixed(4))
@@ -189,11 +211,14 @@ const autoBettingReasonLabels: Record<string, string> = {
   crown_odds_missing: '皇冠水位未读取到',
   crown_place_button_disabled: '皇冠下注按钮不可用',
   crown_stake_input_missing: '皇冠金额输入框未找到',
+  crown_stake_input_not_applied: '皇冠金额未成功输入',
   crown_betslip_stake_input_missing: '皇冠注单金额输入框未找到',
+  crown_betslip_stake_input_not_applied: '皇冠注单金额未成功输入',
   crown_stake_below_minimum: '低于皇冠最低下注金额',
   crown_stake_above_maximum: '高于皇冠最高下注金额',
   crown_execution_error: '皇冠执行异常',
   crown_execution_timeout: '皇冠执行确认超时',
+  crown_bet_not_confirmed: '皇冠下注未确认成功',
   crown_network_unstable: '皇冠网络不稳定，请刷新后重试',
   crown_page_activation_failed: '皇冠页面刷新确认失败',
   crown_phase_unknown: '皇冠比赛阶段无法确认',
@@ -390,7 +415,7 @@ export const buildAutoBettingExecutionPlan = (
       return skippedRow(account, signal, '投注未启用')
     }
     if (!hasAdsPowerProfile(account)) {
-      return skippedRow(account, signal, '未绑定 AdsPower Profile')
+      return skippedRow(account, signal, '未绑定 AdsPower 档案')
     }
     if (account.adsPowerStatus === 'closed') {
       return skippedRow(account, signal, 'AdsPower 环境未打开')
@@ -543,7 +568,7 @@ const isAutomationReady = (account: ExecutionAccount) => (
 
 const unavailableReason = (account: ExecutionAccount) => {
   if (account.bettingEnabled === false) return '投注未启用'
-  if (!hasAdsPowerProfile(account)) return '未绑定 AdsPower Profile'
+  if (!hasAdsPowerProfile(account)) return '未绑定 AdsPower 档案'
   if (account.adsPowerStatus === 'closed') return 'AdsPower 环境未打开'
   if (account.adsPowerStatus === 'error') return 'AdsPower 环境异常'
   if (account.adsPowerStatus !== 'opened') return 'AdsPower 环境未打开'

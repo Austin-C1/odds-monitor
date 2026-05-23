@@ -152,7 +152,7 @@ class CrownCollector(
             )
         )
         val marketId = market.id ?: return
-        val previousOdds = snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(marketId)?.oddsValue
+        val previousSnapshot = snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(marketId)
         snapshotRepository.save(
             OddsSnapshot(
                 marketId = marketId,
@@ -162,7 +162,14 @@ class CrownCollector(
                 rawPayloadJson = objectMapper.writeValueAsString(row.rawPayload)
             )
         )
-        oddsChangeNotificationService.notifyIfChanged(platformMatch, market, previousOdds, row.oddsValue)
+        oddsChangeNotificationService.notifyIfChanged(
+            platformMatch,
+            market,
+            previousSnapshot?.oddsValue,
+            row.oddsValue,
+            previousCapturedAt = previousSnapshot?.capturedAt,
+            currentCapturedAt = row.capturedAt
+        )
     }
 
     private fun saveFailure(startedAt: Long, status: String, message: String?) {

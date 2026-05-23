@@ -11,6 +11,11 @@ import org.springframework.transaction.annotation.Transactional
 @Repository
 interface AutoBettingIntentRepository : JpaRepository<AutoBettingIntent, Long> {
     fun existsByDedupeKeyAndStatusIn(dedupeKey: String, statuses: Collection<String>): Boolean
+    fun findTopByDedupeKeyAndStatusInOrderByCreatedAtDesc(
+        dedupeKey: String,
+        statuses: Collection<String>
+    ): AutoBettingIntent?
+
     fun findTop100ByOrderByCreatedAtDesc(): List<AutoBettingIntent>
     fun findTop100ByStatusAndCrownHistoryVerifiedTrueOrderByCreatedAtDesc(status: String): List<AutoBettingIntent>
 

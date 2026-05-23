@@ -27,10 +27,13 @@ import {
   extractCrownAlertSignalCandidates,
   filterFreshCrownAlertSignals,
   formatAutoBettingReason,
+  isCompletedDuplicateAutoBettingReason,
   isNonRetriableAutoBettingReason,
   selectNextCrownAlertSignal,
+  shouldCompleteCrownSignalForAccounts,
   type AutoBettingMode,
   type AutoBettingExecutionPlan,
+  type AutoBettingExecutionPlanRow,
   type QueuedCrownAlertSignal,
   type OddsAlertRecord,
 } from './crownBettingExecutionPlan'
@@ -147,6 +150,8 @@ const LEGACY_SEEDED_ACCOUNT_PREFIX = 'crown-seed-'
 const AUTO_BETTING_POLL_INTERVAL_MS = 5000
 const AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS = AUTO_BETTING_POLL_INTERVAL_MS
 const AUTO_BETTING_ACCOUNT_CHECK_DELAY_MS = 200
+const AUTO_BETTING_ACCOUNT_EXECUTION_TIMEOUT_MS = 30000
+const AUTO_BETTING_ACCOUNT_EXECUTION_TIMEOUT_MESSAGE = '账号投注超过30秒，已进入下一个账号'
 
 type AutomationSettings = {
   autoMode: AutoBettingMode
@@ -171,7 +176,7 @@ const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   perAccountLimit: 50,
   betLimit: 100,
   minimumBetOdds: 0.70,
-  signalMaxAgeSeconds: 600,
+  signalMaxAgeSeconds: 360,
 }
 
 const summaryGridStyle: CSSProperties = {
@@ -375,13 +380,27 @@ const shouldKeepKnownOnlineCrownSession = (
   unreadableOpenedCrownSessionStatuses.has(result.accountStatus)
 )
 
+const toExecutionAccounts = (accounts: CrownAccount[]) => accounts.map((account) => ({
+  id: account.id,
+  displayName: account.displayName,
+  status: account.status,
+  adsPowerProfileId: account.adsPowerProfileId,
+  adsPowerStatus: account.adsPowerStatus,
+  bettingEnabled: account.bettingEnabled === true,
+}))
+
+const isAccountExecutionTimeoutError = (error: any) => {
+  const message = String(error?.message || '')
+  return error?.code === 'ECONNABORTED' || /timeout|exceeded/i.test(message)
+}
+
 const adsPowerStatusLabel = (account: CrownAccount) => {
-  if (!hasAdsPowerProfile(account)) return '未绑定 AdsPower Profile'
+  if (!hasAdsPowerProfile(account)) return '未绑定 AdsPower 档案'
   if (account.adsPowerStatus === 'starting') return '正在打开 AdsPower 环境'
   if (account.adsPowerStatus === 'opened') return 'AdsPower 环境已打开'
   if (account.adsPowerStatus === 'closed') return 'AdsPower 环境未打开'
   if (account.adsPowerStatus === 'error') return account.adsPowerMessage || 'AdsPower 环境异常'
-  return '已绑定 AdsPower Profile'
+  return '已绑定 AdsPower 档案'
 }
 
 const adsPowerStatusColor = (account: CrownAccount) => {
@@ -660,7 +679,7 @@ const CrownBetting = () => {
   const openAdsPowerProfile = async (account: CrownAccount) => {
     const profileId = account.adsPowerProfileId?.trim()
     if (!profileId) {
-      message.warning('未绑定 AdsPower Profile')
+      message.warning('未绑定 AdsPower 档案')
       return
     }
     updateAccount(account.id, {
@@ -808,54 +827,39 @@ const CrownBetting = () => {
           queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
         })
       }
-      const checkedAccounts = shouldExecuteSignal
-        ? []
-        : currentAccounts
-      if (shouldExecuteSignal) {
-        for (let index = 0; index < currentAccounts.length; index += 1) {
-          if (!mountedRef.current) return
-          const account = currentAccounts[index]
-          setCurrentExecutionStep({
-            accountName: account.displayName,
-            stageLabel: '检查账号',
-            phaseLabel: signal?.modeLabel || (autoMode === 'prematch' ? '赛前' : '滚球'),
-            signalTitle: signal?.matchTitle || '等待监控信号',
-            queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
-          })
-          checkedAccounts.push(await verifyAccountBeforeBetting(account))
-          const hasNextEnabledAccount = currentAccounts.slice(index + 1).some(isBettingEnabledAccount)
-          if (isBettingEnabledAccount(account) && hasNextEnabledAccount) {
-            await wait(AUTO_BETTING_ACCOUNT_CHECK_DELAY_MS)
-            if (!mountedRef.current) return
-          }
-        }
-      }
-      const checkedAccountById = new Map(checkedAccounts.map((account) => [account.id, account]))
-      const nextPlan = buildAutoBettingExecutionPlan({
+      const checkedAccountById = new Map<string, CrownAccount>()
+      const accountsForPlan = () => currentAccounts.map((account) => checkedAccountById.get(account.id) || account)
+      const buildExecutionPlan = (planAccounts: CrownAccount[]) => buildAutoBettingExecutionPlan({
         signal,
         mode: autoMode,
         enabled: autoEnabled,
         perAccountLimit,
         betLimit,
         minimumBetOdds,
-        accounts: checkedAccounts.map((account) => ({
-          id: account.id,
-          displayName: account.displayName,
-          status: account.status,
-          adsPowerProfileId: account.adsPowerProfileId,
-          adsPowerStatus: account.adsPowerStatus,
-          bettingEnabled: account.bettingEnabled === true,
-        })),
+        accounts: toExecutionAccounts(planAccounts),
       })
+      let nextPlan = buildExecutionPlan(currentAccounts)
       setExecutionPlan((currentPlan) => (
         signal || !currentPlan?.signal ? nextPlan : currentPlan
       ))
-      if (!nextPlan.canExecute) {
+      if (!shouldExecuteSignal) {
+        return
+      }
+      const executionAccounts = currentAccounts.filter(isBettingEnabledAccount)
+      if (executionAccounts.length === 0) {
         setCurrentExecutionStep((current) => current ? { ...current, stageLabel: nextPlan.summary } : null)
         return
       }
 
-      const executeRow = async (row: (typeof nextPlan.rows)[number]) => {
+      const resolvedRowsById = new Map<string, AutoBettingExecutionPlanRow>()
+      const publishPlan = () => {
+        setExecutionPlan({
+          ...nextPlan,
+          rows: nextPlan.rows.map((row) => resolvedRowsById.get(row.id) || row),
+        })
+      }
+
+      const executeRow = async (row: AutoBettingExecutionPlanRow, checkedAccount: CrownAccount) => {
         if (row.status !== 'passed' || row.stakeAmount <= 0) return row
         if (!mountedRef.current) return row
         try {
@@ -866,7 +870,6 @@ const CrownBetting = () => {
             signalTitle: row.matchTitle,
             queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
           })
-          const checkedAccount = checkedAccountById.get(row.id)
           const profileId = checkedAccount?.adsPowerProfileId?.trim()
           if (!profileId) {
             return {
@@ -874,7 +877,7 @@ const CrownBetting = () => {
               status: 'skipped' as const,
               statusLabel: '跳过',
               stakeAmount: 0,
-              reason: '未绑定 AdsPower Profile',
+              reason: '未绑定 AdsPower 档案',
             }
           }
           const signalResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
@@ -908,9 +911,10 @@ const CrownBetting = () => {
           }
           const decision = signalResponse.data.data
           if (decision.status !== 'ready' || typeof decision.id !== 'number') {
+            const completedDuplicate = isCompletedDuplicateAutoBettingReason(decision.reason)
             setCurrentExecutionStep({
               accountName: row.accountName,
-              stageLabel: '跳过账号',
+              stageLabel: completedDuplicate ? '账号已投过' : '跳过账号',
               phaseLabel: row.modeLabel,
               signalTitle: row.matchTitle,
               queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
@@ -918,9 +922,10 @@ const CrownBetting = () => {
             return {
               ...row,
               status: 'skipped' as const,
-              statusLabel: '跳过',
+              statusLabel: completedDuplicate ? '已下注' : '跳过',
               stakeAmount: 0,
               stopRetry: isNonRetriableAutoBettingReason(decision.reason),
+              retryable: completedDuplicate ? false : undefined,
               reason: formatAutoBettingReason(decision.reason),
             }
           }
@@ -938,7 +943,7 @@ const CrownBetting = () => {
               loginUrl: checkedAccount?.loginUrl,
               minimumTargetOdds: executionOddsFloor(row.targetOdds, minimumBetOdds),
             },
-            { timeout: 120000 },
+            { timeout: AUTO_BETTING_ACCOUNT_EXECUTION_TIMEOUT_MS },
           )
           if (!mountedRef.current) return row
           if (executionResponse.data.code !== 0 || !executionResponse.data.data) {
@@ -971,37 +976,72 @@ const CrownBetting = () => {
             signalTitle: row.matchTitle,
             queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
           })
+          const reason = isAccountExecutionTimeoutError(error)
+            ? AUTO_BETTING_ACCOUNT_EXECUTION_TIMEOUT_MESSAGE
+            : extractApiErrorMessage(error, '皇冠实际下注失败')
           return {
             ...row,
             status: 'skipped' as const,
             statusLabel: '跳过',
             stakeAmount: 0,
-            reason: extractApiErrorMessage(error, '皇冠实际下注失败'),
+            reason,
           }
         }
       }
-      const checkedRows: typeof nextPlan.rows = []
-      for (const row of nextPlan.rows) {
+      for (let index = 0; index < executionAccounts.length; index += 1) {
         if (!mountedRef.current) return
-        checkedRows.push(await executeRow(row))
+        const account = executionAccounts[index]
+        setCurrentExecutionStep({
+          accountName: account.displayName,
+          stageLabel: '检查账号',
+          phaseLabel: signal?.modeLabel || (autoMode === 'prematch' ? '赛前' : '滚球'),
+          signalTitle: signal?.matchTitle || '等待监控信号',
+          queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
+        })
+        const checkedAccount = await verifyAccountBeforeBetting(account)
+        checkedAccountById.set(checkedAccount.id, checkedAccount)
+        nextPlan = buildExecutionPlan(accountsForPlan())
+        publishPlan()
+        const row = nextPlan.rows.find((candidate) => candidate.id === checkedAccount.id)
+        if (row) {
+          const resolvedRow = await executeRow(row, checkedAccount)
+          resolvedRowsById.set(row.id, resolvedRow)
+          publishPlan()
+        }
+        const hasNextEnabledAccount = executionAccounts.slice(index + 1).some(isBettingEnabledAccount)
+        if (hasNextEnabledAccount) {
+          await wait(AUTO_BETTING_ACCOUNT_CHECK_DELAY_MS)
+          if (!mountedRef.current) return
+        }
       }
-      const placedRows = checkedRows.filter((row) => row.status === 'passed')
-      const shouldStopRetryingSignal = checkedRows.some((row) => row.stopRetry)
+      const finalRows = nextPlan.rows.map((row) => resolvedRowsById.get(row.id) || row)
+      const placedRows = finalRows.filter((row) => row.status === 'passed')
+      const shouldStopRetryingSignal = finalRows.some((row) => row.stopRetry)
+      const shouldCompleteSignal = shouldCompleteCrownSignalForAccounts(
+        finalRows,
+        executionAccounts.map((account) => account.id),
+      )
       const placedStake = placedRows.reduce((total, row) => total + row.stakeAmount, 0)
       setExecutionPlan({
         ...nextPlan,
-        rows: checkedRows,
+        rows: finalRows,
         canExecute: placedRows.length > 0,
         totalStake: placedStake,
         availableAccountCount: placedRows.length,
-        summary: placedRows.length > 0 ? `下注成功 ${placedRows.length} 个账号` : '没有确认成功的下注',
+        summary: shouldCompleteSignal
+          ? `下注成功 ${placedRows.length} 个账号`
+          : placedRows.length > 0
+            ? `部分账号已成功 ${placedRows.length} 个，未完成账号稍后补投`
+            : '没有确认成功的下注',
       })
-      if (placedRows.length > 0) {
+      if (shouldCompleteSignal) {
         if (signalKey) completedSignalKeysRef.current.add(signalKey)
         message.success('下注成功，已确认皇冠下注成功')
       } else if (shouldStopRetryingSignal) {
         if (signalKey) completedSignalKeysRef.current.add(signalKey)
         message.warning('盘口不可投，已停止重复尝试该信号')
+      } else if (placedRows.length > 0) {
+        message.warning('部分账号已成功，未完成账号稍后补投同一信号')
       } else {
         message.warning('没有确认成功的下注')
       }
@@ -1056,7 +1096,7 @@ const CrownBetting = () => {
       <Space align="center" style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <div>
           <Title level={2} style={{ margin: 0 }}>皇冠投注</Title>
-          <Text type="secondary">监控保持本地浏览器直连，投注检测和执行只走 AdsPower Profile。</Text>
+          <Text type="secondary">监控保持本地浏览器直连，投注检测和执行只走 AdsPower 环境。</Text>
         </div>
         <Space wrap>
           <Button icon={<ApiOutlined />} loading={adsPowerChecking} onClick={checkAdsPowerStatus}>
@@ -1082,7 +1122,7 @@ const CrownBetting = () => {
           <Statistic title="异常账号" value={abnormalCount} suffix="个" valueStyle={{ color: abnormalCount ? '#cf1322' : '#3f8600' }} />
         </Card>
         <Card size="small">
-          <Statistic title="AdsPower Profile" value={boundProfileCount} suffix="个" />
+          <Statistic title="AdsPower 环境" value={boundProfileCount} suffix="个" />
           {adsPowerStatus ? (
             <Tag color={adsPowerStatus.available ? 'success' : 'error'} style={{ marginTop: 6 }}>
               {adsPowerStatus.available ? 'AdsPower 已连接' : 'AdsPower 未连接'}
@@ -1096,7 +1136,7 @@ const CrownBetting = () => {
         title="账号与 AdsPower 环境"
         extra={(
           <Space wrap>
-            <Tag color="blue">每个账号绑定一个独立 Profile</Tag>
+            <Tag color="blue">每个账号绑定一个独立 AdsPower 环境</Tag>
             <Tag color="default">监控账号不进入投注区</Tag>
           </Space>
         )}
@@ -1160,7 +1200,7 @@ const CrownBetting = () => {
                     <Text type={account.status === 'error' ? 'danger' : 'secondary'}>
                       {accountCheckSummary(account)}
                     </Text>
-                    <Tag icon={<ApiOutlined />}>投注自动化使用 AdsPower Profile</Tag>
+                    <Tag icon={<ApiOutlined />}>投注自动化使用 AdsPower 环境</Tag>
                   </Space>
                 </div>
 
@@ -1178,7 +1218,7 @@ const CrownBetting = () => {
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        AdsPower Profile ID / 编号：{account.adsPowerProfileId}
+                        AdsPower 档案 ID / 编号：{account.adsPowerProfileId}
                       </Text>
                     ) : null}
                     {account.adsPowerMessage && account.adsPowerStatus === 'error' ? (
@@ -1510,7 +1550,7 @@ const CrownBetting = () => {
             <Input placeholder="皇冠登录账号" />
           </Form.Item>
           <Form.Item
-            label="AdsPower Profile ID / 编号"
+            label="AdsPower 档案 ID / 编号"
             name="adsPowerProfileId"
           >
             <Input placeholder="可不填；也可填 AdsPower 环境ID或左侧编号，程序会自动匹配已登录环境" />

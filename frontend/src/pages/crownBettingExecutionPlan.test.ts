@@ -8,6 +8,8 @@ import {
   filterFreshCrownAlertSignals,
   formatAutoBettingReason,
   selectNextCrownAlertSignal,
+  shouldCompleteCrownSignalForAccounts,
+  type AutoBettingExecutionPlanRow,
   type AutoBettingSignal,
 } from './crownBettingExecutionPlan'
 
@@ -280,7 +282,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     expect(filterFreshCrownAlertSignals(
       [freshSignal, expiredSignal],
       1_000_000,
-      600,
+      360,
     )).toEqual([freshSignal])
   })
 
@@ -484,9 +486,51 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     expect(formatAutoBettingReason('crown_page_activation_failed')).toBe('皇冠页面刷新确认失败')
     expect(formatAutoBettingReason('crown_phase_unknown')).toBe('皇冠比赛阶段无法确认')
     expect(formatAutoBettingReason('crown_phase_mismatch')).toBe('皇冠比赛阶段与信号不一致')
+    expect(formatAutoBettingReason('crown_stake_input_not_applied')).toBe('皇冠金额未成功输入')
+    expect(formatAutoBettingReason('crown_betslip_stake_input_not_applied')).toBe('皇冠注单金额未成功输入')
+    expect(formatAutoBettingReason('duplicate_placed_intent')).toBe('已成功投注，重复信号已跳过')
   })
 
   it('does not keep removed auto betting restriction reason labels', () => {
     expect(formatAutoBettingReason('crown_odds_moved')).toBe('crown_odds_moved')
+  })
+
+  it('keeps a signal retryable until every betting account is complete', () => {
+    const row = (id: string, overrides: Partial<AutoBettingExecutionPlanRow>): AutoBettingExecutionPlanRow => ({
+      id,
+      accountName: id,
+      status: 'skipped',
+      statusLabel: '跳过',
+      modeLabel: zh.live,
+      bettingMode: 'live',
+      matchPhase: 'live',
+      leagueName: zh.league,
+      matchTitle: 'Lazio v Pisa',
+      marketType: 'handicap',
+      marketTitle: zh.handicap,
+      lineValue: '-0.5',
+      selectionName: 'Lazio',
+      referenceSourceKey: 'crown',
+      targetSourceKey: 'crown',
+      referenceOdds: 1.08,
+      targetOdds: 1.17,
+      odds: 1.17,
+      edge: 0.09,
+      bettingLogic: 'test',
+      capturedAt: Date.now(),
+      stakeAmount: 0,
+      reason: '账号投注超过30秒，已进入下一个账号',
+      ...overrides,
+    })
+
+    expect(shouldCompleteCrownSignalForAccounts([
+      row('account-a', { status: 'passed', statusLabel: '已下注', stakeAmount: 50, reason: '已确认下注' }),
+      row('account-b', {}),
+    ], ['account-a', 'account-b'])).toBe(false)
+
+    expect(shouldCompleteCrownSignalForAccounts([
+      row('account-a', { retryable: false, reason: '已成功投注，重复信号已跳过' }),
+      row('account-b', { status: 'passed', statusLabel: '已下注', stakeAmount: 50, reason: '已确认下注' }),
+    ], ['account-a', 'account-b'])).toBe(true)
   })
 })

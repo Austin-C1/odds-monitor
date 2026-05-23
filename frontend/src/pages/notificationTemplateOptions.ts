@@ -5,18 +5,18 @@ export const DEFAULT_NOTIFICATION_TEMPLATE_TYPE = 'ODDS_PREMATCH_PUSH'
 export const FOCUSED_NOTIFICATION_TEMPLATE_TYPES: TemplateTypeInfo[] = [
   {
     type: 'ODDS_PREMATCH_PUSH',
-    name: 'Prematch Odds Push',
-    description: 'Notification sent when prematch odds change',
+    name: '赛前赔率推送',
+    description: '赛前赔率变化时发送的通知',
   },
   {
     type: 'ODDS_LIVE_PUSH',
-    name: 'Live Odds Push',
-    description: 'Notification sent when live odds change',
+    name: '滚球赔率推送',
+    description: '滚球赔率变化时发送的通知',
   },
   {
     type: 'BETTING_TEMPLATE',
-    name: 'Betting Template',
-    description: 'Reserved template slot for future betting notifications',
+    name: '投注通知模板',
+    description: '预留给后续投注通知使用',
   },
 ]
 

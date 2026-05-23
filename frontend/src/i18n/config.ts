@@ -5,10 +5,10 @@ import { i18nResources } from './resources'
 /**
  * 检测系统语言
  * 支持的语言：zh-CN, zh-TW, en
- * 如果不支持，默认使用 en
+ * 如果不支持，默认使用 zh-CN
  */
 const detectSystemLanguage = (): string => {
-  const systemLanguage = navigator.language || navigator.languages?.[0] || 'en'
+  const systemLanguage = navigator.language || navigator.languages?.[0] || 'zh-CN'
   const lang = systemLanguage.toLowerCase()
   
   if (lang.startsWith('zh')) {
@@ -17,7 +17,7 @@ const detectSystemLanguage = (): string => {
     }
     return 'zh-CN'
   }
-  return 'en'
+  return 'zh-CN'
 }
 
 const detectLanguage = (): string => {
@@ -29,8 +29,8 @@ const detectLanguage = (): string => {
     return detectSystemLanguage()
   }
   
-  // 如果设置了具体语言，使用设置的语言
-  if (['zh-CN', 'zh-TW', 'en'].includes(savedLanguage)) {
+  // 如果设置了具体中文，使用用户设置；历史 en 设置统一回到中文界面
+  if (['zh-CN', 'zh-TW'].includes(savedLanguage)) {
     return savedLanguage
   }
   
@@ -45,7 +45,7 @@ i18n
       ...i18nResources
     },
     lng: detectLanguage(),
-    fallbackLng: 'en',
+    fallbackLng: 'zh-CN',
     interpolation: {
       escapeValue: false // React 已经转义了
     }
@@ -57,13 +57,14 @@ export default i18n
  * 切换语言
  */
 export const changeLanguage = (lng: 'zh-CN' | 'zh-TW' | 'en') => {
-  localStorage.setItem('i18n_language', lng)
-  i18n.changeLanguage(lng)
+  const nextLanguage = lng === 'en' ? 'zh-CN' : lng
+  localStorage.setItem('i18n_language', nextLanguage)
+  i18n.changeLanguage(nextLanguage)
 }
 
 /**
  * 获取当前语言
  */
 export const getCurrentLanguage = (): string => {
-  return i18n.language || 'en'
+  return i18n.language || 'zh-CN'
 }

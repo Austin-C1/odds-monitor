@@ -149,6 +149,126 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
+    fun `odds change alert is suppressed when previous snapshot is clearly older than source interval`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val dataSourceConfigRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            dataSourceConfigRepository = dataSourceConfigRepository
+        )
+        val now = System.currentTimeMillis()
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(dataSourceConfigRepository.findBySourceKey("crown")).thenReturn(
+            OddsDataSourceConfig(sourceKey = "crown", displayName = "Crown", enabled = true, intervalSeconds = 60)
+        )
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown", startTime = now + 20 * 60_000),
+            oddsMarket(sourceKey = "crown"),
+            BigDecimal("0.88"),
+            BigDecimal("0.98"),
+            previousCapturedAt = now - 75_000,
+            currentCapturedAt = now
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
+    fun `odds change alert tolerates one second scheduler drift around source interval`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val dataSourceConfigRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            dataSourceConfigRepository = dataSourceConfigRepository
+        )
+        val now = System.currentTimeMillis()
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(dataSourceConfigRepository.findBySourceKey("crown")).thenReturn(
+            OddsDataSourceConfig(sourceKey = "crown", displayName = "Crown", enabled = true, intervalSeconds = 60)
+        )
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown", startTime = now + 20 * 60_000),
+            oddsMarket(sourceKey = "crown"),
+            BigDecimal("0.88"),
+            BigDecimal("0.98"),
+            previousCapturedAt = now - 60_500,
+            currentCapturedAt = now
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
+    fun `odds change alert is kept when previous snapshot is within source interval`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val dataSourceConfigRepository = mock(OddsDataSourceConfigRepository::class.java)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            dataSourceConfigRepository = dataSourceConfigRepository
+        )
+        val now = System.currentTimeMillis()
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapOddsMoveMin = "0.08"))
+            )
+        }
+        `when`(dataSourceConfigRepository.findBySourceKey("crown")).thenReturn(
+            OddsDataSourceConfig(sourceKey = "crown", displayName = "Crown", enabled = true, intervalSeconds = 60)
+        )
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown", startTime = now + 20 * 60_000),
+            oddsMarket(sourceKey = "crown"),
+            BigDecimal("0.88"),
+            BigDecimal("0.98"),
+            previousCapturedAt = now - 60_000,
+            currentCapturedAt = now
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
     fun `combined water filter suppresses odds alert below configured limit`() {
         val configs = listOf(telegramMonitorConfig(handicapCombinedWaterMin = "1.88"))
 

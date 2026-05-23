@@ -1,4 +1,5 @@
 const AUTOMATION_LOCK_KEY = 'crown-betting-automation-lock'
+const DEFAULT_AUTOMATION_LOCK_TTL_MS = 360000
 
 type AutomationLock = {
   owner: string
@@ -16,7 +17,7 @@ const readLock = (): AutomationLock | null => {
 
 export const acquireCrownBettingAutomationLock = (
   owner: string,
-  ttlMs = 180000,
+  ttlMs = DEFAULT_AUTOMATION_LOCK_TTL_MS,
   now = Date.now(),
 ): boolean => {
   try {

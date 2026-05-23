@@ -187,49 +187,7 @@ const zhCN = {
   },
 }
 
-const en = {
-  common: {
-    actions: 'Actions',
-    cancel: 'Cancel',
-    confirm: 'Confirm',
-    copyFailed: 'Copy failed',
-    save: 'Save',
-  },
-  message: {
-    error: 'Operation failed',
-  },
-  resetPassword: {
-    title: 'Reset Password',
-    firstUse: 'First use',
-    firstUseDesc: 'Use the reset key from the administrator to set the initial password',
-    resetKey: 'Reset Key',
-    resetKeyRequired: 'Enter reset key',
-    resetKeyPlaceholder: 'Enter reset key',
-    username: 'Username',
-    usernameRequired: 'Enter username',
-    usernamePlaceholder: 'Enter username',
-    newPassword: 'New Password',
-    newPasswordRequired: 'Enter new password',
-    passwordMinLength: 'Password must be at least 6 characters',
-    passwordPlaceholder: 'At least 6 characters',
-    passwordStrength: 'Password strength',
-    confirmPassword: 'Confirm Password',
-    confirmPasswordRequired: 'Confirm password',
-    confirmPasswordPlaceholder: 'Enter password again',
-    passwordMismatch: 'Passwords do not match',
-    submit: 'Reset Password',
-    success: 'Password reset successfully',
-    failed: 'Password reset failed',
-    weak: 'Weak',
-    fair: 'Fair',
-    medium: 'Medium',
-    strong: 'Strong',
-    veryStrong: 'Very strong',
-  },
-  systemUpdate: zhCN.systemUpdate,
-  notificationSettings: zhCN.notificationSettings,
-  telegramConfig: zhCN.telegramConfig,
-}
+const en = zhCN
 
 const zhTW = zhCN
 

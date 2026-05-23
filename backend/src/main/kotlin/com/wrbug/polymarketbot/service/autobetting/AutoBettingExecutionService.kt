@@ -90,7 +90,7 @@ class AutoBettingExecutionService(
     private val profileExecutionLock: CrownProfileExecutionLock = CrownProfileExecutionLock()
 ) {
     private val staleReadyTimeoutMillis = 180_000L
-    private val stalePlacingTimeoutMillis = 180_000L
+    private val stalePlacingTimeoutMillis = 30_000L
     private val unverifiedRecheckDelayMillis = 30_000L
 
     fun executeCrownIntent(

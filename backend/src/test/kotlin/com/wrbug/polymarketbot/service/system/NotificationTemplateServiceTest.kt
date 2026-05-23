@@ -32,6 +32,16 @@ class NotificationTemplateServiceTest {
     }
 
     @Test
+    fun `template type labels should be fully Chinese`() {
+        val templateTypes = service.getTemplateTypes()
+
+        assertEquals(listOf("赛前赔率推送", "滚球赔率推送", "投注通知模板"), templateTypes.map { it.name })
+        assertTrue(templateTypes.all { it.description.contains("通知") || it.description.contains("模板") })
+        assertFalse(templateTypes.any { it.name.contains("Push") || it.name.contains("Template") })
+        assertFalse(templateTypes.any { it.description.contains("Notification") || it.description.contains("Reserved") })
+    }
+
+    @Test
     fun `removed notification templates should not expose configuration variables`() {
         listOf(
             "ORDER_SUCCESS",

@@ -11,10 +11,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 data class OddsMonitorCleanupResult(
     val deletedSnapshots: Int,
     val deletedCollectionLogs: Int,
-    val deletedBrokenAlertRecords: Int
+    val deletedBrokenAlertRecords: Int,
+    val deletedAlertRecords: Int = 0
 ) {
     val hasDeletes: Boolean
-        get() = deletedSnapshots > 0 || deletedCollectionLogs > 0 || deletedBrokenAlertRecords > 0
+        get() = deletedSnapshots > 0 ||
+            deletedCollectionLogs > 0 ||
+            deletedBrokenAlertRecords > 0 ||
+            deletedAlertRecords > 0
 }
 
 @Service
@@ -39,10 +43,11 @@ class OddsMonitorMaintenanceService(
             val result = cleanup()
             if (result.hasDeletes) {
                 logger.info(
-                    "Odds monitor cleanup deleted snapshots={}, collectionLogs={}, brokenAlertRecords={}",
+                    "Odds monitor cleanup deleted snapshots={}, collectionLogs={}, brokenAlertRecords={}, alertRecords={}",
                     result.deletedSnapshots,
                     result.deletedCollectionLogs,
-                    result.deletedBrokenAlertRecords
+                    result.deletedBrokenAlertRecords,
+                    result.deletedAlertRecords
                 )
             }
         } catch (ex: Exception) {
@@ -55,7 +60,8 @@ class OddsMonitorMaintenanceService(
     fun cleanup(
         now: Long = System.currentTimeMillis(),
         batchSize: Int = DEFAULT_BATCH_SIZE,
-        maxBatches: Int = DEFAULT_MAX_BATCHES
+        maxBatches: Int = DEFAULT_MAX_BATCHES,
+        includeVisibleHistory: Boolean = false
     ): OddsMonitorCleanupResult {
         val safeBatchSize = batchSize.coerceIn(1, DEFAULT_BATCH_SIZE)
         val safeMaxBatches = maxBatches.coerceAtLeast(1)
@@ -65,15 +71,33 @@ class OddsMonitorMaintenanceService(
         val deletedSnapshots = deleteInBatches(safeMaxBatches, safeBatchSize) {
             snapshotRepository.deleteBatchOlderThan(snapshotCutoff, safeBatchSize)
         }
-        val deletedCollectionLogs = deleteInBatches(safeMaxBatches, safeBatchSize) {
-            collectionLogRepository.deleteBatchOlderThan(collectionLogCutoff, safeBatchSize)
+        val deletedCollectionLogs = if (includeVisibleHistory) {
+            deleteInBatches(safeMaxBatches, safeBatchSize) {
+                collectionLogRepository.deleteBatchAll(safeBatchSize)
+            }
+        } else {
+            deleteInBatches(safeMaxBatches, safeBatchSize) {
+                collectionLogRepository.deleteBatchOlderThan(collectionLogCutoff, safeBatchSize)
+            }
         }
-        val deletedBrokenAlertRecords = alertRecordRepository.deleteLegacyBrokenTemplateRecords()
+        val deletedAlertRecords = if (includeVisibleHistory) {
+            deleteInBatches(safeMaxBatches, safeBatchSize) {
+                alertRecordRepository.deleteBatchAll(safeBatchSize)
+            }
+        } else {
+            0
+        }
+        val deletedBrokenAlertRecords = if (includeVisibleHistory) {
+            0
+        } else {
+            alertRecordRepository.deleteLegacyBrokenTemplateRecords()
+        }
 
         return OddsMonitorCleanupResult(
             deletedSnapshots = deletedSnapshots,
             deletedCollectionLogs = deletedCollectionLogs,
-            deletedBrokenAlertRecords = deletedBrokenAlertRecords
+            deletedBrokenAlertRecords = deletedBrokenAlertRecords,
+            deletedAlertRecords = deletedAlertRecords
         )
     }
 
@@ -82,7 +106,7 @@ class OddsMonitorMaintenanceService(
     }
 
     fun manualCleanup(now: Long): OddsMonitorCleanupResult {
-        return cleanup(now = now, maxBatches = MANUAL_CLEANUP_MAX_BATCHES)
+        return cleanup(now = now, maxBatches = MANUAL_CLEANUP_MAX_BATCHES, includeVisibleHistory = true)
     }
 
     private fun deleteInBatches(maxBatches: Int, batchSize: Int, deleteBatch: () -> Int): Int {

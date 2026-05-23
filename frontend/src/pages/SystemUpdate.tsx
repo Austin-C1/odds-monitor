@@ -34,6 +34,7 @@ interface UpdateStatus {
 interface CleanupResult {
     deletedSnapshots: number
     deletedCollectionLogs: number
+    deletedAlertRecords: number
     deletedBrokenAlertRecords: number
 }
 
@@ -182,8 +183,8 @@ const SystemUpdate: React.FC = () => {
             icon: <ExclamationCircleOutlined />,
             content: (
                 <div>
-                    <p>只清理旧赔率快照、旧采集日志和坏历史告警。</p>
-                    <p>账号、配置、投注记录和当前盘口不会被删除。</p>
+                    <p>会清理旧赔率快照、告警记录页记录、运行日志页记录和坏历史告警。</p>
+                    <p>账号、配置、已验证下注成功记录和当前盘口不会被删除。</p>
                     <p>清理过程按批次执行，数据量较大时可能需要几十秒。</p>
                 </div>
             ),
@@ -522,7 +523,7 @@ const SystemUpdate: React.FC = () => {
                                     历史数据大清理
                                 </div>
                                 <div style={{ fontSize: '14px', color: '#595959', lineHeight: 1.7 }}>
-                                    只清理旧赔率快照、旧采集日志和坏历史告警，不会删除账号、配置、投注记录和当前盘口。
+                                    清理旧赔率快照、告警记录页记录、运行日志页记录和坏历史告警，不会删除账号、配置、已验证下注成功记录和当前盘口。
                                 </div>
                             </div>
                             <Button
@@ -541,7 +542,8 @@ const SystemUpdate: React.FC = () => {
                                 description={
                                     <Space wrap size="large" style={{ marginTop: '4px' }}>
                                         <span>旧赔率快照：{cleanupResult.deletedSnapshots}</span>
-                                        <span>旧采集日志：{cleanupResult.deletedCollectionLogs}</span>
+                                        <span>运行日志：{cleanupResult.deletedCollectionLogs}</span>
+                                        <span>告警记录：{cleanupResult.deletedAlertRecords}</span>
                                         <span>坏历史告警：{cleanupResult.deletedBrokenAlertRecords}</span>
                                     </Space>
                                 }

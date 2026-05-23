@@ -24,6 +24,28 @@ describe('NotificationSettingsPage template configuration', () => {
     expect(templateTypes).toEqual(['ODDS_PREMATCH_PUSH', 'ODDS_LIVE_PUSH', 'BETTING_TEMPLATE'])
   })
 
+  it('keeps fallback template type names in Chinese', () => {
+    const visibleTypes = getVisibleNotificationTemplateTypes([])
+
+    expect(visibleTypes).toEqual([
+      {
+        type: 'ODDS_PREMATCH_PUSH',
+        name: '赛前赔率推送',
+        description: '赛前赔率变化时发送的通知',
+      },
+      {
+        type: 'ODDS_LIVE_PUSH',
+        name: '滚球赔率推送',
+        description: '滚球赔率变化时发送的通知',
+      },
+      {
+        type: 'BETTING_TEMPLATE',
+        name: '投注通知模板',
+        description: '预留给后续投注通知使用',
+      },
+    ])
+  })
+
   it('filters stale backend template types to the focused template set', () => {
     const visibleTypes = getVisibleNotificationTemplateTypes([
       { type: 'ORDER_SUCCESS', name: 'Order Success', description: 'old' },

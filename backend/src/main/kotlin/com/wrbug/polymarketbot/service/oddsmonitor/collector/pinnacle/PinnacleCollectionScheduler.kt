@@ -15,7 +15,7 @@ class PinnacleCollectionScheduler(
     private val running = AtomicBoolean(false)
     private var lastRunAt = 0L
 
-    @Scheduled(fixedDelay = 10_000)
+    @Scheduled(fixedDelay = 1_000)
     fun tick() {
         val config = dataSourceConfigRepository.findBySourceKey(PinnacleCollector.SOURCE_KEY) ?: return
         if (!config.enabled) {

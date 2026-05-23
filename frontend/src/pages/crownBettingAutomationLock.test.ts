@@ -18,11 +18,11 @@ describe('crownBettingAutomationLock', () => {
     })
   })
 
-  it('keeps the default lock active for a full crown execution window', () => {
+  it('keeps the default lock active for a full ten-account crown execution window', () => {
     expect(acquireCrownBettingAutomationLock('first', undefined, 1_000)).toBe(true)
 
-    expect(acquireCrownBettingAutomationLock('second', undefined, 121_000)).toBe(false)
-    expect(acquireCrownBettingAutomationLock('second', undefined, 181_001)).toBe(true)
+    expect(acquireCrownBettingAutomationLock('second', undefined, 301_000)).toBe(false)
+    expect(acquireCrownBettingAutomationLock('second', undefined, 361_001)).toBe(true)
   })
 
   it('releases only the owner lock', () => {

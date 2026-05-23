@@ -18,7 +18,8 @@ class UpdateControllerTest {
             OddsMonitorCleanupResult(
                 deletedSnapshots = 123,
                 deletedCollectionLogs = 4,
-                deletedBrokenAlertRecords = 5
+                deletedBrokenAlertRecords = 5,
+                deletedAlertRecords = 6
             )
         )
         val controller = UpdateController(updateService, maintenanceService)
@@ -29,6 +30,7 @@ class UpdateControllerTest {
         assertEquals(123, response.body?.data?.deletedSnapshots)
         assertEquals(4, response.body?.data?.deletedCollectionLogs)
         assertEquals(5, response.body?.data?.deletedBrokenAlertRecords)
+        assertEquals(6, response.body?.data?.deletedAlertRecords)
         verify(maintenanceService).manualCleanup()
     }
 }

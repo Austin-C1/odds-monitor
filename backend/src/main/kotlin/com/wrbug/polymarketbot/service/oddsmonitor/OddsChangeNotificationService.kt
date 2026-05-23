@@ -51,7 +51,9 @@ class OddsChangeNotificationService(
         match: OddsPlatformMatch,
         market: OddsMarket,
         previousOdds: BigDecimal?,
-        currentOdds: BigDecimal
+        currentOdds: BigDecimal,
+        previousCapturedAt: Long? = null,
+        currentCapturedAt: Long = System.currentTimeMillis()
     ) {
         if (match.sourceKey !in defaultExpectedSources) {
             return
@@ -60,6 +62,9 @@ class OddsChangeNotificationService(
             return
         }
         if (!hasOddsChanged(previousOdds, currentOdds)) {
+            return
+        }
+        if (isStaleOddsChangeComparison(market.sourceKey, previousCapturedAt, currentCapturedAt)) {
             return
         }
         if (shouldResetOddsBaselineAfterLineChange(market)) {
@@ -511,6 +516,28 @@ class OddsChangeNotificationService(
             }
         }
         return standardKey
+    }
+
+    private fun isStaleOddsChangeComparison(
+        sourceKey: String,
+        previousCapturedAt: Long?,
+        currentCapturedAt: Long
+    ): Boolean {
+        val previous = previousCapturedAt ?: return false
+        if (currentCapturedAt < previous) {
+            return true
+        }
+        val intervalMillis = dataSourceConfigRepository
+            ?.findBySourceKey(sourceKey)
+            ?.intervalSeconds
+            ?.coerceAtLeast(10)
+            ?.times(1000L)
+            ?: return false
+        return currentCapturedAt - previous > intervalMillis + STALE_ODDS_CHANGE_GRACE_MILLIS
+    }
+
+    companion object {
+        private const val STALE_ODDS_CHANGE_GRACE_MILLIS = 1_000L
     }
 }
 

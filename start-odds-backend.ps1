@@ -1,6 +1,9 @@
 ﻿$rootDir = (Resolve-Path (Split-Path -Parent $MyInvocation.MyCommand.Path)).Path
 $backendDir = Join-Path $rootDir 'backend'
 $javaExe = Join-Path $rootDir '.tools\jdk-17.0.18+8\bin\java.exe'
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 
 function Get-BackendJarVersion {
     param([System.IO.FileInfo]$JarFile)
@@ -150,9 +153,16 @@ if (-not (Test-Path $jarPath)) {
 
 Push-Location $backendDir
 try {
+    $javaArguments = @(
+        '-Dfile.encoding=UTF-8',
+        '-Dsun.stdout.encoding=UTF-8',
+        '-Dsun.stderr.encoding=UTF-8',
+        '-jar',
+        $jarPath
+    )
     $process = Start-Process `
         -FilePath $javaExe `
-        -ArgumentList @('-jar', $jarPath) `
+        -ArgumentList $javaArguments `
         -RedirectStandardOutput $outLog `
         -RedirectStandardError $errLog `
         -NoNewWindow `

@@ -21,7 +21,7 @@ class AutoBettingDecisionService(
     private val maxSignalFutureSkewMillis = 5_000L
     private val maxSingleStake = BigDecimal("500.00")
     private val staleReadyTimeoutMillis = 180_000L
-    private val stalePlacingTimeoutMillis = 180_000L
+    private val stalePlacingTimeoutMillis = 30_000L
 
     @Synchronized
     fun createIntent(request: AutoBettingSignalRequest, now: Long = System.currentTimeMillis()): AutoBettingDecisionDto {
@@ -126,7 +126,11 @@ class AutoBettingDecisionService(
         if (request.stakeAmount > maxSingleStake) {
             return Decision(STATUS_REJECTED, "stake_over_single_limit")
         }
-        if (intentRepository.existsByDedupeKeyAndStatusIn(dedupeKey, lockedStatuses)) {
+        val existingIntent = intentRepository.findTopByDedupeKeyAndStatusInOrderByCreatedAtDesc(dedupeKey, lockedStatuses)
+        if (existingIntent?.status in listOf(STATUS_PLACED, STATUS_PLACED_UNVERIFIED)) {
+            return Decision(STATUS_REJECTED, "duplicate_placed_intent")
+        }
+        if (existingIntent != null || intentRepository.existsByDedupeKeyAndStatusIn(dedupeKey, lockedStatuses)) {
             return Decision(STATUS_REJECTED, "duplicate_active_intent")
         }
         return Decision(STATUS_READY, "accepted")
@@ -284,6 +288,7 @@ class AutoBettingDecisionService(
         const val STATUS_REJECTED = "rejected"
         const val STATUS_PLACING = "placing"
         const val STATUS_PLACED = "placed"
+        const val STATUS_PLACED_UNVERIFIED = "placed_unverified"
         private const val DEFAULT_ACCOUNT_KEY = "default"
         private val supportedReferenceSources = setOf("pinnacle", "crown")
     }

@@ -134,7 +134,7 @@ const writeAutomationStorage = (autoMode: 'prematch' | 'live' = 'live', accounts
     perAccountLimit: 50,
     betLimit: 100,
     minimumBetOdds: 1.01,
-    signalMaxAgeSeconds: 600,
+    signalMaxAgeSeconds: 360,
   }))
   window.localStorage.setItem('crown-betting-accounts', JSON.stringify(accounts || [
     {
@@ -211,6 +211,10 @@ describe('App background crown betting automation', () => {
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
       /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
     ))).toBe(true)
+    const executeCall = vi.mocked(apiClient.post).mock.calls.find(([url]) => (
+      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+    ))
+    expect(executeCall?.[2]?.timeout).toBe(30000)
   })
 
   it('keeps prematch automatic betting running after navigating away from the crown betting page', async () => {
@@ -272,7 +276,7 @@ describe('App background crown betting automation', () => {
       perAccountLimit: 50,
       betLimit: 500,
       minimumBetOdds: 1.01,
-      signalMaxAgeSeconds: 600,
+      signalMaxAgeSeconds: 360,
     }))
     mockApiState.executionResults = Array.from({ length: 10 }, (_, index) => ({
       status: 'placed',
@@ -292,5 +296,9 @@ describe('App background crown betting automation', () => {
     }, { timeout: 5000 })
 
     expect(mockApiState.maxConcurrentExecutions).toBe(1)
+    const executeCalls = vi.mocked(apiClient.post).mock.calls.filter(([url]) => (
+      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+    ))
+    expect(executeCalls.every(([, , config]) => config?.timeout === 30000)).toBe(true)
   })
 })

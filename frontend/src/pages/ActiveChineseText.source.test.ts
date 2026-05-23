@@ -51,6 +51,8 @@ describe('active page Chinese text', () => {
     const combined = activeFiles
       .map((file) => readFileSync(join(process.cwd(), file), 'utf8'))
       .join('\n')
+    const i18nSource = readFileSync(join(process.cwd(), 'src', 'i18n', 'config.ts'), 'utf8')
+    const templateOptionsSource = readFileSync(join(process.cwd(), 'src', 'pages', 'notificationTemplateOptions.ts'), 'utf8')
 
     ;[
       '全平台赔率监控',
@@ -72,5 +74,13 @@ describe('active page Chinese text', () => {
       '筛选配置',
       '免密登录失败',
     ].forEach((label) => expect(combined).toContain(label))
+
+    expect(i18nSource).toContain("return 'zh-CN'")
+    expect(i18nSource).toContain("fallbackLng: 'zh-CN'")
+    expect(templateOptionsSource).toContain('赛前赔率推送')
+    expect(templateOptionsSource).toContain('滚球赔率推送')
+    expect(templateOptionsSource).not.toContain('Prematch Odds Push')
+    expect(templateOptionsSource).not.toContain('Live Odds Push')
+    expect(templateOptionsSource).not.toContain('Betting Template')
   })
 })

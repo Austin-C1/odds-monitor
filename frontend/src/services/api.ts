@@ -40,14 +40,14 @@ const getCurrentLanguage = (): string => {
     savedLanguage = localStorage.getItem('i18nextLng')
   }
 
-  if (savedLanguage && savedLanguage !== 'auto' && ['zh-CN', 'zh-TW', 'en'].includes(savedLanguage)) {
+  if (savedLanguage && savedLanguage !== 'auto' && ['zh-CN', 'zh-TW'].includes(savedLanguage)) {
     return savedLanguage
   }
 
-  const currentLang = i18n.language || 'en'
+  const currentLang = i18n.language || 'zh-CN'
   if (currentLang.startsWith('zh-CN')) return 'zh-CN'
   if (currentLang.startsWith('zh-TW') || currentLang.startsWith('zh-HK')) return 'zh-TW'
-  return 'en'
+  return 'zh-CN'
 }
 
 apiClient.interceptors.request.use(
