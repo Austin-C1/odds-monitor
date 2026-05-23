@@ -38,6 +38,14 @@ describe('frontend API surface', () => {
 
     expect(source).toContain('http://127.0.0.1:18000')
     expect(source).toContain('isPackagedLocalFrontend')
+    expect(source).toContain("'localhost'")
     expect(source).toContain("isPackagedLocalFrontend ? `${localBackendUrl}/api` : '/api'")
+  })
+
+  it('keeps development proxy aligned with the local backend port', () => {
+    const source = readFileSync(join(process.cwd(), 'vite.config.ts'), 'utf8')
+
+    expect(source).toContain("env.VITE_API_URL || 'http://127.0.0.1:18000'")
+    expect(source).toContain("env.VITE_WS_URL || 'ws://127.0.0.1:18000'")
   })
 })

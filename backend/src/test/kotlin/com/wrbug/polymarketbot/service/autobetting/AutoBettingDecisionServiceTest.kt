@@ -73,6 +73,27 @@ class AutoBettingDecisionServiceTest {
     }
 
     @Test
+    fun `monitor signal decision echoes frontend queue metadata`() {
+        val request = baseRequest(
+            referenceSourceKey = "crown",
+            targetSourceKey = "crown",
+            referenceOdds = BigDecimal("0.73"),
+            targetOdds = BigDecimal("0.76"),
+            queuePosition = 2,
+            queueTotal = 6
+        )
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
+            .thenReturn(false)
+        `when`(repository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 1_000_000)
+
+        assertEquals("ready", decision.status)
+        assertEquals(2, decision.queuePosition)
+        assertEquals(6, decision.queueTotal)
+    }
+
+    @Test
     fun `crown alert drop signal creates ready intent for reverse betting`() {
         val request = baseRequest(
             bettingMode = "live",
@@ -490,7 +511,9 @@ class AutoBettingDecisionServiceTest {
         oddsChangeDirection: String? = null,
         stakeAmount: BigDecimal = BigDecimal("50.00"),
         capturedAt: Long = 990_000,
-        maxSignalAgeSeconds: Long? = null
+        maxSignalAgeSeconds: Long? = null,
+        queuePosition: Int? = null,
+        queueTotal: Int? = null
     ) = AutoBettingSignalRequest(
         signalSource = "odds_monitor",
         accountKey = accountKey,
@@ -509,7 +532,9 @@ class AutoBettingDecisionServiceTest {
         oddsChangeDirection = oddsChangeDirection,
         stakeAmount = stakeAmount,
         capturedAt = capturedAt,
-        maxSignalAgeSeconds = maxSignalAgeSeconds
+        maxSignalAgeSeconds = maxSignalAgeSeconds,
+        queuePosition = queuePosition,
+        queueTotal = queueTotal
     )
 
     private fun lockedStatuses() = listOf("ready", "placing", "placed", "placed_unverified")

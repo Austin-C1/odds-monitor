@@ -1,10 +1,43 @@
 ﻿$rootDir = (Resolve-Path (Split-Path -Parent $MyInvocation.MyCommand.Path)).Path
 $backendDir = Join-Path $rootDir 'backend'
 $javaExe = Join-Path $rootDir '.tools\jdk-17.0.18+8\bin\java.exe'
-$jarFile = Get-ChildItem -Path (Join-Path $backendDir 'build\libs') -Filter 'odds-monitor-backend-*.jar' -File |
-    Where-Object { $_.Name -notlike '*-plain.jar' } |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
+
+function Get-BackendJarVersion {
+    param([System.IO.FileInfo]$JarFile)
+
+    $match = [regex]::Match($JarFile.BaseName, '^odds-monitor-backend-(?<version>\d+(?:\.\d+)*)(?:[-+].*)?$')
+    if (-not $match.Success) {
+        return [version]'0.0.0.0'
+    }
+
+    $parts = @($match.Groups['version'].Value.Split('.'))
+    while ($parts.Count -lt 4) {
+        $parts += '0'
+    }
+    return [version]($parts[0..3] -join '.')
+}
+
+function Sort-BackendJarCandidates {
+    param([System.IO.FileInfo[]]$JarFiles)
+
+    return $JarFiles |
+        Sort-Object `
+            @{ Expression = { Get-BackendJarVersion -JarFile $_ }; Descending = $true },
+            @{ Expression = { $_.LastWriteTimeUtc }; Descending = $true }
+}
+
+function Get-CurrentBackendJar {
+    $backendLibDir = Join-Path $backendDir 'build\libs'
+    if (-not (Test-Path $backendLibDir)) {
+        return $null
+    }
+
+    return Sort-BackendJarCandidates -JarFiles @(
+        Get-ChildItem -Path $backendLibDir -Filter 'odds-monitor-backend-*.jar' -File |
+            Where-Object { $_.Name -notlike '*-plain.jar' }
+    ) | Select-Object -First 1
+}
+$jarFile = Get-CurrentBackendJar
 $jarPath = if ($jarFile) { $jarFile.FullName } else { Join-Path $backendDir 'build\libs\odds-monitor-backend.jar' }
 $outLog = Join-Path $rootDir 'backend-live.out.log'
 $errLog = Join-Path $rootDir 'backend-live.err.log'
@@ -107,10 +140,7 @@ if ($needsBuild) {
         Pop-Location
     }
 
-    $jarFile = Get-ChildItem -Path (Join-Path $backendDir 'build\libs') -Filter 'odds-monitor-backend-*.jar' -File |
-        Where-Object { $_.Name -notlike '*-plain.jar' } |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
+    $jarFile = Get-CurrentBackendJar
     $jarPath = if ($jarFile) { $jarFile.FullName } else { Join-Path $backendDir 'build\libs\odds-monitor-backend.jar' }
 }
 

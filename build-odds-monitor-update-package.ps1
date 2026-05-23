@@ -13,6 +13,10 @@ $javaHome = Join-Path $rootDir '.tools\jdk-17.0.18+8'
 $frontendPackageJsonPath = Join-Path $frontendDir 'package.json'
 $backendBuildFilePath = Join-Path $backendDir 'build.gradle.kts'
 
+if ($IncludeJavaRuntime) {
+    throw "Java runtime files are not allowed in update packages. Build a full install package instead."
+}
+
 function Get-VersionFromBuildFiles {
     $frontendVersion = (Get-Content -Path $frontendPackageJsonPath -Raw | ConvertFrom-Json).version
     $backendBuildFileContent = Get-Content -Path $backendBuildFilePath -Raw
@@ -111,11 +115,6 @@ Copy-RequiredFile -Source (Join-Path $rootDir 'scripts\serve-odds-frontend.ps1')
 
 New-Item -ItemType Directory -Path (Join-Path $packageDir 'frontend') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $frontendDir 'dist') -Destination (Join-Path $packageDir 'frontend') -Recurse -Force
-
-if ($IncludeJavaRuntime) {
-    New-Item -ItemType Directory -Path (Join-Path $packageDir '.tools') -Force | Out-Null
-    Copy-Item -LiteralPath $javaHome -Destination (Join-Path $packageDir '.tools') -Recurse -Force
-}
 
 $files = Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force |
     ForEach-Object { $_.FullName.Substring($packageDir.Length + 1).Replace('\', '/') } |

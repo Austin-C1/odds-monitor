@@ -282,12 +282,40 @@ function Test-DesktopFrontendBuildAvailable {
     return $buildLatest -ge $sourceLatest
 }
 
+function Get-BackendJarVersion {
+    param([System.IO.FileInfo]$JarFile)
+
+    $match = [regex]::Match($JarFile.BaseName, '^odds-monitor-backend-(?<version>\d+(?:\.\d+)*)(?:[-+].*)?$')
+    if (-not $match.Success) {
+        return [version]'0.0.0.0'
+    }
+
+    $parts = @($match.Groups['version'].Value.Split('.'))
+    while ($parts.Count -lt 4) {
+        $parts += '0'
+    }
+    return [version]($parts[0..3] -join '.')
+}
+
+function Sort-BackendJarCandidates {
+    param([System.IO.FileInfo[]]$JarFiles)
+
+    return $JarFiles |
+        Sort-Object `
+            @{ Expression = { Get-BackendJarVersion -JarFile $_ }; Descending = $true },
+            @{ Expression = { $_.LastWriteTimeUtc }; Descending = $true }
+}
+
 function Get-CurrentBackendJar {
     $backendLibDir = Join-Path $backendDir 'build\libs'
-    return Get-ChildItem -Path $backendLibDir -Filter 'odds-monitor-backend-*.jar' -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notlike '*-plain.jar' } |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
+    if (-not (Test-Path $backendLibDir)) {
+        return $null
+    }
+
+    return Sort-BackendJarCandidates -JarFiles @(
+        Get-ChildItem -Path $backendLibDir -Filter 'odds-monitor-backend-*.jar' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notlike '*-plain.jar' }
+    ) | Select-Object -First 1
 }
 
 function Test-BackendBuildCurrent {

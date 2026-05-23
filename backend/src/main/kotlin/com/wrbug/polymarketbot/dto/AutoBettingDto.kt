@@ -20,7 +20,9 @@ data class AutoBettingSignalRequest(
     val oddsChangeDirection: String? = null,
     val stakeAmount: BigDecimal,
     val capturedAt: Long,
-    val maxSignalAgeSeconds: Long? = null
+    val maxSignalAgeSeconds: Long? = null,
+    val queuePosition: Int? = null,
+    val queueTotal: Int? = null
 )
 
 data class AutoBettingDecisionDto(
@@ -48,7 +50,9 @@ data class AutoBettingDecisionDto(
     val createdAt: Long,
     val crownHistoryVerified: Boolean = false,
     val crownHistoryCheckedAt: Long? = null,
-    val crownBetReference: String? = null
+    val crownBetReference: String? = null,
+    val queuePosition: Int? = null,
+    val queueTotal: Int? = null
 )
 
 data class AdsPowerStatusDto(

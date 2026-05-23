@@ -75,6 +75,7 @@ export type AutoBettingExecutionPlanRow = {
   capturedAt: number
   stakeAmount: number
   reason: string
+  stopRetry?: boolean
 }
 
 export type AutoBettingExecutionPlan = {
@@ -93,6 +94,88 @@ const modeLabels: Record<AutoBettingMode, string> = {
   prematch: '赛前',
   live: '滚球',
 }
+
+export type CrownAlertSignalSelectionOptions = {
+  completedSignalKeys: ReadonlySet<string>
+  attemptedSignalAt: ReadonlyMap<string, number>
+  now: number
+  retryCooldownMs: number
+}
+
+export type QueuedCrownAlertSignal = AutoBettingSignal & {
+  queuePosition: number
+  queueStatus: 'ready' | 'cooldown'
+}
+
+export const autoBettingSignalKey = (signal: AutoBettingSignal) => [
+  typeof signal.sourceAlertId === 'number' ? `alert:${signal.sourceAlertId}` : 'alert:none',
+  signal.matchPhase,
+  signal.matchTitle,
+  signal.marketType,
+  signal.lineValue || '',
+  signal.selectionName,
+  signal.referenceOdds,
+  signal.targetOdds,
+  signal.oddsChangeDirection || 'none',
+].join('|')
+
+export const buildCrownAlertSignalQueue = (
+  candidates: AutoBettingSignal[],
+  options: CrownAlertSignalSelectionOptions,
+): QueuedCrownAlertSignal[] => {
+  const pendingCandidates = candidates.filter((candidate) => (
+    !options.completedSignalKeys.has(autoBettingSignalKey(candidate))
+  ))
+  const neverAttempted = pendingCandidates.filter((candidate) => (
+    !options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
+  ))
+
+  const retryCooldownMs = Math.max(0, options.retryCooldownMs)
+  const attempted = pendingCandidates.filter((candidate) => (
+    options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
+  ))
+  const retryReady = attempted.filter((candidate) => {
+    const lastAttemptAt = options.attemptedSignalAt.get(autoBettingSignalKey(candidate)) || 0
+    return options.now - lastAttemptAt >= retryCooldownMs
+  })
+  const coolingDown = attempted.filter((candidate) => {
+    const lastAttemptAt = options.attemptedSignalAt.get(autoBettingSignalKey(candidate)) || 0
+    return options.now - lastAttemptAt < retryCooldownMs
+  })
+
+  return [...neverAttempted, ...retryReady, ...coolingDown].map((candidate, index) => ({
+    ...candidate,
+    queuePosition: index + 1,
+    queueStatus: coolingDown.includes(candidate) ? 'cooldown' : 'ready',
+  }))
+}
+
+export const selectNextCrownAlertSignal = (
+  candidates: AutoBettingSignal[],
+  options: CrownAlertSignalSelectionOptions,
+): AutoBettingSignal | null => {
+  const selected = buildCrownAlertSignalQueue(candidates, options)
+    .find((candidate) => candidate.queueStatus === 'ready')
+  return selected
+    ? candidates.find((candidate) => autoBettingSignalKey(candidate) === autoBettingSignalKey(selected)) || selected
+    : null
+}
+
+const nonRetriableAutoBettingReasons = new Set([
+  'crown_market_locked',
+  'crown_place_button_disabled',
+  'crown_market_not_found',
+  'crown_line_mismatch',
+  'target_odds_below_minimum',
+])
+
+export const isNonRetriableAutoBettingReason = (reason?: string | null): boolean => (
+  Boolean(reason && nonRetriableAutoBettingReasons.has(reason))
+)
+
+export const executionOddsFloor = (signalOdds: number, configuredMinimumOdds: number): number => (
+  Number(Math.max(signalOdds, configuredMinimumOdds).toFixed(4))
+)
 
 const autoBettingReasonLabels: Record<string, string> = {
   accepted: '已接收',
@@ -136,13 +219,6 @@ const alertText = {
   away: '客队',
 }
 
-export const extractLatestCrownAlertSignal = (
-  alerts: OddsAlertRecord[],
-  mode: AutoBettingMode,
-): AutoBettingSignal | null => {
-  return extractCrownAlertSignalCandidates(alerts, mode, 1)[0] || null
-}
-
 export const extractCrownAlertSignalCandidates = (
   alerts: OddsAlertRecord[],
   mode: AutoBettingMode,
@@ -155,14 +231,6 @@ export const extractCrownAlertSignalCandidates = (
     if (candidates.length >= limit) return candidates.slice(0, limit)
   }
   return candidates
-}
-
-export const filterLatestCrownAlertSignalBatch = (
-  candidates: AutoBettingSignal[],
-): AutoBettingSignal[] => {
-  const latestCreatedAt = candidates[0]?.sourceAlertCreatedAt
-  if (typeof latestCreatedAt !== 'number') return candidates
-  return candidates.filter((candidate) => candidate.sourceAlertCreatedAt === latestCreatedAt)
 }
 
 export const filterFreshCrownAlertSignals = (

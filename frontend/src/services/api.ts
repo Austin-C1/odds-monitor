@@ -18,8 +18,9 @@ const getBaseURL = (): string => {
   if (envApiUrl) return `${envApiUrl}/api`
 
   const localBackendUrl = 'http://127.0.0.1:18000'
+  const localFrontendHosts = ['127.0.0.1', 'localhost']
   const isPackagedLocalFrontend = (
-    window.location.hostname === '127.0.0.1' &&
+    localFrontendHosts.includes(window.location.hostname) &&
     window.location.port === '18881'
   )
   return isPackagedLocalFrontend ? `${localBackendUrl}/api` : '/api'

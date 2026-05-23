@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
+import kotlin.io.path.readText
 
 class UpdatePackageSafetyTest {
 
@@ -78,5 +79,44 @@ class UpdatePackageSafetyTest {
         assertTrue(script.contains("update-apply.log"))
         assertTrue(script.contains("更新失败"))
         assertTrue(script.contains("finally"))
+    }
+
+    @Test
+    fun `apply script removes stale backend jars before copying update`() {
+        val script = UpdateApplyScriptBuilder.render(
+            appRoot = Path.of("C:/odds-monitor"),
+            packageRoot = Path.of("C:/odds-monitor/updates/work-v4.0.1"),
+            backupRoot = Path.of("C:/odds-monitor/backups/update-v4.0.1"),
+            files = listOf(
+                "backend/build/libs/odds-monitor-backend-4.0.1.jar",
+                "frontend/dist/index.html"
+            ),
+            backendPid = 12345
+        )
+
+        assertTrue(script.contains("Remove-StaleBackendJars"))
+        assertTrue(script.contains("odds-monitor-backend-*.jar"))
+        assertTrue(script.contains("odds-monitor-backend-4.0.1.jar"))
+    }
+
+    @Test
+    fun `launch scripts choose backend jar by version instead of file timestamp`() {
+        val root = Path.of("..")
+        val startScript = root.resolve("start-odds-backend.ps1").readText()
+        val launchScript = root.resolve("launch-odds-monitor.ps1").readText()
+
+        assertTrue(startScript.contains("Get-BackendJarVersion"))
+        assertTrue(launchScript.contains("Get-BackendJarVersion"))
+        assertTrue(startScript.contains("Sort-BackendJarCandidates"))
+        assertTrue(launchScript.contains("Sort-BackendJarCandidates"))
+    }
+
+    @Test
+    fun `update package builder refuses java runtime files that updater will reject`() {
+        val script = Path.of("..").resolve("build-odds-monitor-update-package.ps1").readText()
+
+        assertTrue(script.contains("IncludeJavaRuntime"))
+        assertTrue(script.contains("Java runtime files are not allowed in update packages"))
+        assertFalse(script.contains("Copy-Item -LiteralPath ${'$'}javaHome -Destination (Join-Path ${'$'}packageDir '.tools') -Recurse -Force"))
     }
 }

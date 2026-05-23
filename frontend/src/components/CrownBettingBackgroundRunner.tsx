@@ -2,9 +2,14 @@ import { useEffect, useRef } from 'react'
 import { apiClient } from '../services/api'
 import type { ApiResponse } from '../types'
 import {
+  autoBettingSignalKey,
+  buildCrownAlertSignalQueue,
   buildAutoBettingExecutionPlan,
+  executionOddsFloor,
   extractCrownAlertSignalCandidates,
   filterFreshCrownAlertSignals,
+  isNonRetriableAutoBettingReason,
+  selectNextCrownAlertSignal,
   type AutoBettingMode,
   type AutoBettingSignal,
   type OddsAlertRecord,
@@ -168,22 +173,6 @@ const readMonitorMode = async (fallbackMode: AutoBettingMode): Promise<AutoBetti
   }
 }
 
-const signalKey = (signal: AutoBettingSignal) => {
-  if (typeof signal.sourceAlertId === 'number') {
-    return `alert:${signal.sourceAlertId}`
-  }
-  return [
-    signal.matchPhase,
-    signal.matchTitle,
-    signal.marketType,
-    signal.lineValue,
-    signal.selectionName,
-    signal.referenceOdds,
-    signal.targetOdds,
-    signal.oddsChangeDirection || 'none',
-  ].join('|')
-}
-
 const verifyAccountBeforeBetting = async (account: StoredCrownAccount): Promise<StoredCrownAccount> => {
   if (account.bettingEnabled !== true) {
     return account
@@ -221,7 +210,9 @@ const runAutomationForSignal = async (
   signal: AutoBettingSignal,
   settings: StoredAutomationSettings,
   accounts: StoredCrownAccount[],
-) => {
+  queuePosition?: number,
+  queueTotal?: number,
+): Promise<{ succeeded: boolean; stopRetry: boolean }> => {
   const checkedAccounts: StoredCrownAccount[] = []
   for (const account of accounts) {
     checkedAccounts.push(await verifyAccountBeforeBetting(account))
@@ -244,14 +235,14 @@ const runAutomationForSignal = async (
     })),
   })
   if (!plan.canExecute) {
-    return false
+    return { succeeded: false, stopRetry: false }
   }
 
   const results = await Promise.all(plan.rows.map(async (row) => {
-    if (row.status !== 'passed' || row.stakeAmount <= 0) return false
+    if (row.status !== 'passed' || row.stakeAmount <= 0) return { succeeded: false, stopRetry: false }
     const checkedAccount = checkedAccountById.get(row.id)
     const profileId = checkedAccount?.adsPowerProfileId?.trim()
-    if (!profileId) return false
+    if (!profileId) return { succeeded: false, stopRetry: false }
     const signalResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
       '/auto-betting/signals/odds-monitor',
       {
@@ -269,6 +260,8 @@ const runAutomationForSignal = async (
         referenceOdds: row.referenceOdds,
         targetOdds: row.targetOdds,
         minimumTargetOdds: settings.minimumBetOdds,
+        queuePosition,
+        queueTotal,
         oddsChangeDirection: row.oddsChangeDirection,
         stakeAmount: row.stakeAmount,
         capturedAt: row.capturedAt,
@@ -277,23 +270,30 @@ const runAutomationForSignal = async (
     )
     const decision = signalResponse.data.data
     if (signalResponse.data.code !== 0 || decision?.status !== 'ready' || typeof decision.id !== 'number') {
-      return false
+      return { succeeded: false, stopRetry: isNonRetriableAutoBettingReason(decision?.reason) }
     }
     const executionResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
       `/auto-betting/intents/${decision.id}/execute-crown`,
       {
         profileId,
         loginUrl: checkedAccount?.loginUrl || CROWN_LOGIN_URL,
-        minimumTargetOdds: settings.minimumBetOdds,
+        minimumTargetOdds: executionOddsFloor(row.targetOdds, settings.minimumBetOdds),
       },
       { timeout: 120000 },
     )
     const executionDecision = executionResponse.data.data
-    return executionResponse.data.code === 0 &&
+    const succeeded = executionResponse.data.code === 0 &&
       executionDecision?.status === 'placed' &&
       executionDecision.crownHistoryVerified === true
+    return {
+      succeeded,
+      stopRetry: !succeeded && isNonRetriableAutoBettingReason(executionDecision?.reason),
+    }
   }))
-  return results.some(Boolean)
+  return {
+    succeeded: results.some((result) => result.succeeded),
+    stopRetry: results.some((result) => result.stopRetry),
+  }
 }
 
 const CrownBettingBackgroundRunner = () => {
@@ -326,24 +326,35 @@ const CrownBettingBackgroundRunner = () => {
         if (alertResponse.data.code !== 0 || !Array.isArray(alertResponse.data.data)) {
           return
         }
-        const signal = filterFreshCrownAlertSignals(
+        const now = Date.now()
+        const candidates = filterFreshCrownAlertSignals(
           extractCrownAlertSignalCandidates(alertResponse.data.data, settings.autoMode),
-          Date.now(),
+          now,
           settings.signalMaxAgeSeconds,
-        ).find((candidate) => candidate.targetOdds >= settings.minimumBetOdds)
+        ).filter((candidate) => candidate.targetOdds >= settings.minimumBetOdds)
+        const signalSelectionOptions = {
+          completedSignalKeys: completedSignalKeysRef.current,
+          attemptedSignalAt: attemptedSignalAtRef.current,
+          now,
+          retryCooldownMs: SIGNAL_RETRY_COOLDOWN_MS,
+        }
+        const signalQueue = buildCrownAlertSignalQueue(candidates, signalSelectionOptions)
+        const signal = selectNextCrownAlertSignal(candidates, signalSelectionOptions)
         if (!signal) return
+        const selectedQueueItem = signalQueue.find((candidate) => (
+          autoBettingSignalKey(candidate) === autoBettingSignalKey(signal)
+        ))
 
-        const key = signalKey(signal)
-        if (completedSignalKeysRef.current.has(key)) {
-          return
-        }
-        const lastAttemptAt = attemptedSignalAtRef.current.get(key) || 0
-        if (Date.now() - lastAttemptAt < SIGNAL_RETRY_COOLDOWN_MS) {
-          return
-        }
-        attemptedSignalAtRef.current.set(key, Date.now())
-        const succeeded = await runAutomationForSignal(signal, settings, accounts)
-        if (succeeded) {
+        const key = autoBettingSignalKey(signal)
+        attemptedSignalAtRef.current.set(key, now)
+        const result = await runAutomationForSignal(
+          signal,
+          settings,
+          accounts,
+          selectedQueueItem?.queuePosition,
+          signalQueue.length,
+        )
+        if (result.succeeded || result.stopRetry) {
           completedSignalKeysRef.current.add(key)
         }
       } finally {

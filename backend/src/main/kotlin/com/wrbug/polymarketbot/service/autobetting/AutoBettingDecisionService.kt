@@ -58,7 +58,11 @@ class AutoBettingDecisionService(
                 updatedAt = now
             )
         )
-        return intent.toDecision(decision.reason)
+        return intent.toDecision(
+            decision.reason,
+            queuePosition = normalized.queuePosition,
+            queueTotal = normalized.queueTotal
+        )
     }
 
     fun listRecentIntents(): List<AutoBettingDecisionDto> {
@@ -141,8 +145,22 @@ class AutoBettingDecisionService(
             selectionName = request.selectionName.trim().lowercase(Locale.ROOT),
             referenceSourceKey = request.referenceSourceKey.trim().lowercase(Locale.ROOT),
             targetSourceKey = request.targetSourceKey.trim().lowercase(Locale.ROOT),
-            oddsChangeDirection = request.oddsChangeDirection?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+            oddsChangeDirection = request.oddsChangeDirection?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() },
+            queuePosition = normalizedQueuePosition(request.queuePosition, request.queueTotal),
+            queueTotal = normalizedQueueTotal(request.queuePosition, request.queueTotal)
         )
+    }
+
+    private fun normalizedQueuePosition(queuePosition: Int?, queueTotal: Int?): Int? {
+        val position = queuePosition?.takeIf { it > 0 } ?: return null
+        val total = queueTotal?.takeIf { it > 0 }
+        return if (total == null || position <= total) position else null
+    }
+
+    private fun normalizedQueueTotal(queuePosition: Int?, queueTotal: Int?): Int? {
+        val total = queueTotal?.takeIf { it > 0 } ?: return null
+        val position = queuePosition?.takeIf { it > 0 }
+        return if (position == null || position <= total) total else null
     }
 
     private fun normalizeTargetDecimalOdds(sourceKey: String, odds: BigDecimal): BigDecimal {
@@ -216,7 +234,11 @@ class AutoBettingDecisionService(
         return value.lowercase(Locale.ROOT).replace(pattern, "")
     }
 
-    private fun AutoBettingIntent.toDecision(reason: String): AutoBettingDecisionDto {
+    private fun AutoBettingIntent.toDecision(
+        reason: String,
+        queuePosition: Int? = null,
+        queueTotal: Int? = null
+    ): AutoBettingDecisionDto {
         return AutoBettingDecisionDto(
             id = id,
             status = status,
@@ -242,7 +264,9 @@ class AutoBettingDecisionService(
             createdAt = createdAt,
             crownHistoryVerified = crownHistoryVerified,
             crownHistoryCheckedAt = crownHistoryCheckedAt,
-            crownBetReference = crownBetReference
+            crownBetReference = crownBetReference,
+            queuePosition = queuePosition,
+            queueTotal = queueTotal
         )
     }
 

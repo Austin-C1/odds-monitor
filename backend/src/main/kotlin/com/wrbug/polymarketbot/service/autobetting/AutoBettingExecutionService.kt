@@ -178,7 +178,6 @@ class AutoBettingExecutionService(
                         crownMatchMatchesPhase(match, phase)
                 }
                 ?.let { return CrownMatchResolution(it, reversed = false) }
-            return CrownMatchResolution(exactMatch, reversed = false)
         }
 
         val signalCandidate = OddsMatchCandidate(
@@ -206,10 +205,9 @@ class AutoBettingExecutionService(
             .filter { (_, score) -> OddsMatchMatcher.shouldMerge(score) }
             .toList()
 
-        return (scoredMatches
+        return scoredMatches
             .filter { (match, _) -> crownMatchMatchesPhase(match, phase) }
             .maxByOrNull { (_, score) -> score.score }
-            ?: scoredMatches.maxByOrNull { (_, score) -> score.score })
             ?.let { (match, score) -> CrownMatchResolution(match, score.reversed) }
     }
 

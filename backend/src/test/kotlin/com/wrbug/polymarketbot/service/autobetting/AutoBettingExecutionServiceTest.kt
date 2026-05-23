@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.Mockito.`when`
 import java.math.BigDecimal
 import java.lang.reflect.Modifier
@@ -383,6 +384,73 @@ class AutoBettingExecutionServiceTest {
         assertEquals("placed", result.status)
         assertEquals("prematch", result.matchPhase)
         assertEquals("CROWN-PREMATCH-MATCH-1", result.crownBetReference)
+    }
+
+    @Test
+    fun `prematch crown execution rejects known live crown match when no prematch match exists`() {
+        val intent = liveHandicapIntent().copy(
+            dedupeKey = "crown-seed-cuu07crbyfa:prematch:沙特超级联赛阿尔菲斯vs纳加马安营哈:handicap:0/0.5:阿尔菲斯",
+            activeDedupeKey = "crown-seed-cuu07crbyfa:prematch:沙特超级联赛阿尔菲斯vs纳加马安营哈:handicap:0/0.5:阿尔菲斯",
+            bettingMode = "prematch",
+            matchPhase = "prematch"
+        )
+        val liveMatch = crownPlatformMatch(
+            id = 901L,
+            sourceMatchId = "live-8764315",
+            gid = "live8764315",
+            ecid = "live11049615",
+            isLive = true
+        )
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        `when`(
+            platformMatchRepository.findTop1BySourceKeyAndRawLeagueNameAndRawHomeTeamAndRawAwayTeamOrderByUpdatedAtDesc(
+                "crown",
+                intent.leagueName,
+                "闃垮皵鑿叉柉",
+                "绾冲姞椹畨钀樺搲"
+            )
+        ).thenReturn(liveMatch)
+        `when`(platformMatchRepository.findTop500BySourceKeyOrderByUpdatedAtDesc("crown")).thenReturn(listOf(liveMatch))
+        `when`(
+            gateway.placeBet(
+                CrownBetPlacementCommand(
+                    profileId = "k1chipm1",
+                    loginUrl = "https://m407.mos077.com/",
+                    matchPhase = "prematch",
+                    matchTitle = crownMatchTitle(liveMatch),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
+                    betElementId = "bet_live8764315_live11049615_RH",
+                    stakeAmount = BigDecimal("10.0000"),
+                    targetOdds = BigDecimal("0.87000000"),
+                    lineValue = "0/0.5"
+                )
+            )
+        ).thenReturn(
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = true,
+                ticketReference = "CROWN-WRONG-LIVE-FALLBACK",
+                message = "crown_history_verified",
+                currentOdds = BigDecimal("0.87000000")
+            )
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("rejected", result.status)
+        assertEquals("crown_market_not_found", result.reason)
+        assertEquals(listOf("placing", "rejected"), captor.allValues.map { it.status })
+        verifyNoInteractions(gateway)
     }
 
     @Test

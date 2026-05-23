@@ -157,7 +157,7 @@ vi.mock('../services/api', () => ({
               crownHistoryVerified: true,
               crownBetReference: 'CROWN-10001',
             }
-        return Promise.resolve({
+        const response = {
           data: {
             code: 0,
             data: {
@@ -169,7 +169,11 @@ vi.mock('../services/api', () => ({
               crownBetReference: executionResult.crownBetReference,
             },
           },
-        })
+        }
+        if (executionResult.delayMs) {
+          return new Promise((resolve) => setTimeout(() => resolve(response), executionResult.delayMs))
+        }
+        return Promise.resolve(response)
       }
       return Promise.resolve({ data: { code: 0, data: [] } })
     }),
@@ -344,7 +348,8 @@ describe('CrownBetting auto betting execution interaction', () => {
       expect(screen.queryByText('跳过')).toBeNull()
     })
     expect(screen.getByText('候选信号盘口')).toBeTruthy()
-    expect(screen.getByText('只显示符合当前配置')).toBeTruthy()
+    expect(screen.getByText('采集系统合格回传')).toBeTruthy()
+    expect(screen.getByText('按投注顺序排队')).toBeTruthy()
     let signalCalls = vi.mocked(apiClient.post).mock.calls
       .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
     expect(signalCalls).toHaveLength(2)
@@ -354,6 +359,8 @@ describe('CrownBetting auto betting execution interaction', () => {
       body.matchTitle === '曼城 vs 利物浦' &&
       body.selectionName === '曼城' &&
       body.referenceSourceKey === 'crown' &&
+      body.queuePosition === 1 &&
+      body.queueTotal === 2 &&
       body.maxSignalAgeSeconds === 600
     ))).toBe(true)
     let executeCalls = vi.mocked(apiClient.post).mock.calls
@@ -362,9 +369,14 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(executeCalls.every(([, body]) => (
       body.profileId &&
       body.loginUrl === 'https://m407.mos077.com/' &&
-      body.minimumTargetOdds === 0.70
+      body.minimumTargetOdds === 0.94
     ))).toBe(true)
     expect(executeCalls.every(([, , config]) => config?.timeout === 120000)).toBe(true)
+
+    expect(screen.getByText('信号来源：采集系统合格回传')).toBeTruthy()
+    expect(screen.getByText('按投注顺序排队')).toBeTruthy()
+    expect(screen.getByText('#1')).toBeTruthy()
+    expect(screen.getByText('#2')).toBeTruthy()
 
     mockApiState.alerts = [
       {
@@ -428,6 +440,72 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(screen.queryByText(/阿森纳|切尔西|国际米兰|尤文图斯/)).toBeNull()
   }, 30000)
 
+  it('shows the active betting market while automatic betting is running', async () => {
+    mockApiState.alerts = [
+      {
+        id: 1101,
+        alertType: 'odds_change',
+        severity: 'info',
+        matchName: '1101',
+        title: '赔率变动：罗马 vs 拉齐奥',
+        message: `滚球赔率变动
+
+联赛：意甲
+比赛：罗马 vs 拉齐奥
+进行：第 2 分钟
+比分：0-0
+
+盘口：大小球 大球 2.5
+皇冠：0.94 -> 0.98
+
+盘口：大小球 小球 2.5
+皇冠：1.06 -> 1.02
+
+筛选：动水通过 / 合水通过
+时间：2026-05-14 16:04:20`,
+        createdAt: Date.now(),
+        acknowledged: false,
+      },
+    ]
+    mockApiState.executionResults = [
+      {
+        status: 'placed',
+        reason: 'crown_history_verified',
+        crownHistoryVerified: true,
+        crownBetReference: 'CROWN-1101',
+        delayMs: 500,
+      },
+    ]
+    writeAccounts([
+      {
+        id: 'account-a',
+        displayName: 'Enabled account',
+        loginName: 'demo_a',
+        loginUrl: 'https://m407.mos077.com/',
+        adsPowerProfileId: 'profile-a',
+        adsPowerStatus: 'opened',
+        bettingEnabled: true,
+        status: 'success',
+        balance: 900,
+        currency: 'CNY',
+        lastCheckedAt: Date.now(),
+      },
+    ])
+
+    render(<CrownBetting />)
+
+    await screen.findByText('自动化接入投注功能')
+    fireEvent.click(screen.getByText('滚球'))
+
+    await waitFor(() => {
+      expect(screen.getAllByText('正在投注盘口').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('罗马 vs 拉齐奥').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('大小球 2.5').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('大球').length).toBeGreaterThan(0)
+      expect(screen.getByText('队列 #1')).toBeTruthy()
+    })
+  }, 30000)
+
   it('runs live checks from the latest crown alert rise without pinnacle', async () => {
     const alertCreatedAt = Date.now()
     mockApiState.alerts = [{ ...mockApiState.alerts[0], createdAt: alertCreatedAt }]
@@ -466,7 +544,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     const executeCalls = vi.mocked(apiClient.post).mock.calls
       .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
     expect(executeCalls).toHaveLength(2)
-    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 0.70)).toBe(true)
+    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 0.76)).toBe(true)
   }, 30000)
 
   it('checks enabled account login before sending one betting signal', async () => {
@@ -523,7 +601,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(executeCalls).toHaveLength(1)
     expect(executeCalls[0][1]).toEqual(expect.objectContaining({
       profileId: 'matched-profile',
-      minimumTargetOdds: 0.70,
+      minimumTargetOdds: 0.76,
     }))
     expect(firstCheckIndex).toBeGreaterThan(-1)
     expect(firstSignalIndex).toBeGreaterThan(firstCheckIndex)
@@ -559,6 +637,80 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(alertCallsAfterStateUpdates).toBe(1)
   }, 30000)
 
+  it('keeps the placed result visible when the original signal expires during crown execution', async () => {
+    window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
+      autoMode: 'live',
+      autoEnabled: true,
+      perAccountLimit: 50,
+      betLimit: 50,
+      minimumBetOdds: 0.70,
+      signalMaxAgeSeconds: 3,
+    }))
+    writeAccounts([
+      {
+        id: 'account-a',
+        displayName: '投注账号',
+        loginName: 'demo_a',
+        loginUrl: 'https://m407.mos077.com/',
+        adsPowerProfileId: 'profile-a',
+        adsPowerStatus: 'opened',
+        bettingEnabled: true,
+        status: 'success',
+        balance: 900,
+        currency: 'CNY',
+        lastCheckedAt: Date.now(),
+      },
+    ])
+    mockApiState.alerts = [
+      {
+        id: 1901,
+        alertType: 'odds_change',
+        severity: 'info',
+        matchName: '1901',
+        title: '赔率变动：米亚尔比 vs 哈马比',
+        message: `滚球赔率变动
+
+联赛：瑞典杯
+比赛：米亚尔比 vs 哈马比
+进行：第 2 分钟
+比分：2-1
+
+盘口：让球 主队 0/0.5
+皇冠：0.73 -> 0.76
+
+筛选：动水通过 / 合水通过
+时间：2026-05-14 16:04:10`,
+        createdAt: Date.now(),
+        acknowledged: false,
+      },
+    ]
+    mockApiState.executionResults = [
+      {
+        status: 'placed',
+        reason: 'crown_history_verified',
+        crownHistoryVerified: true,
+        crownBetReference: 'CROWN-STABLE-1901',
+        delayMs: 5500,
+      },
+    ]
+
+    render(<CrownBetting />)
+
+    await screen.findByText('自动化接入投注功能')
+    await waitFor(() => {
+      const executeCalls = vi.mocked(apiClient.post).mock.calls
+        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+      expect(executeCalls).toHaveLength(1)
+    }, { timeout: 7000 })
+    await screen.findByText(/CROWN-STABLE-1901/, {}, { timeout: 10000 })
+    await new Promise((resolve) => setTimeout(resolve, 5500))
+
+    expect(screen.getByText(/CROWN-STABLE-1901/)).toBeTruthy()
+    const alertCalls = vi.mocked(apiClient.post).mock.calls
+      .filter(([url]) => url === '/odds-monitor/alerts/list')
+    expect(alertCalls).toHaveLength(2)
+  }, 30000)
+
   it('retries the same alert after a failed crown execution', async () => {
     const originalNow = Date.now()
     let nowSpy: ReturnType<typeof vi.spyOn> | null = null
@@ -571,6 +723,29 @@ describe('CrownBetting auto betting execution interaction', () => {
         minimumBetOdds: 0.70,
         signalMaxAgeSeconds: 600,
       }))
+      mockApiState.alerts = [
+        {
+          id: 2001,
+          alertType: 'odds_change',
+          severity: 'info',
+          matchName: '2001',
+          title: '赔率变动：米亚尔比 vs 哈马比',
+          message: `滚球赔率变动
+
+联赛：瑞典杯
+比赛：米亚尔比 vs 哈马比
+进行：第 2 分钟
+比分：2-1
+
+盘口：让球 主队 0/0.5
+皇冠：0.73 -> 0.76
+
+筛选：动水通过 / 合水通过
+时间：2026-05-14 16:04:10`,
+          createdAt: Date.now(),
+          acknowledged: false,
+        },
+      ]
       writeAccounts([
         {
           id: 'account-a',
@@ -623,6 +798,109 @@ describe('CrownBetting auto betting execution interaction', () => {
     } finally {
       nowSpy?.mockRestore()
     }
+  }, 30000)
+
+  it('stops retrying the same crown signal when the market is locked', async () => {
+    const originalNow = Date.now()
+    let nowSpy: ReturnType<typeof vi.spyOn> | null = null
+    try {
+      window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
+        autoMode: 'live',
+        autoEnabled: true,
+        perAccountLimit: 50,
+        betLimit: 50,
+        minimumBetOdds: 0.70,
+        signalMaxAgeSeconds: 600,
+      }))
+      mockApiState.alerts = [
+        {
+          id: 2101,
+          alertType: 'odds_change',
+          severity: 'info',
+          matchName: '2101',
+          title: '赔率变动：米亚尔比 vs 哈马比',
+          message: `滚球赔率变动
+
+联赛：瑞典杯
+比赛：米亚尔比 vs 哈马比
+进行：第 2 分钟
+比分：2-1
+
+盘口：让球 主队 0/0.5
+皇冠：0.73 -> 0.76
+
+筛选：动水通过 / 合水通过
+时间：2026-05-14 16:04:10`,
+          createdAt: Date.now(),
+          acknowledged: false,
+        },
+      ]
+      writeAccounts([
+        {
+          id: 'account-a',
+          displayName: 'Enabled account',
+          loginName: 'demo_a',
+          loginUrl: 'https://m407.mos077.com/',
+          adsPowerProfileId: 'profile-a',
+          adsPowerStatus: 'opened',
+          bettingEnabled: true,
+          status: 'success',
+          balance: 900,
+          currency: 'CNY',
+          lastCheckedAt: Date.now(),
+        },
+      ])
+      mockApiState.executionResults = [
+        {
+          status: 'rejected',
+          reason: 'crown_market_locked',
+          crownHistoryVerified: false,
+          crownBetReference: null,
+        },
+        {
+          status: 'rejected',
+          reason: 'crown_market_locked',
+          crownHistoryVerified: false,
+          crownBetReference: null,
+        },
+      ]
+
+      render(<CrownBetting />)
+
+      await screen.findByText('自动化接入投注功能')
+      await waitFor(() => {
+        const executeCalls = vi.mocked(apiClient.post).mock.calls
+          .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+        expect(executeCalls).toHaveLength(1)
+      })
+
+      nowSpy = vi.spyOn(Date, 'now').mockReturnValue(originalNow + 6_000)
+      const amountInputs = screen.getAllByRole('spinbutton') as HTMLInputElement[]
+      fireEvent.change(amountInputs[3], { target: { value: '601' } })
+
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const executeCalls = vi.mocked(apiClient.post).mock.calls
+        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+      expect(executeCalls).toHaveLength(1)
+    } finally {
+      nowSpy?.mockRestore()
+    }
+  }, 30000)
+
+  it('uses the signal target water as the execution water floor', async () => {
+    render(<CrownBetting />)
+
+    await screen.findByText('自动化接入投注功能')
+    fireEvent.click(screen.getByText('滚球'))
+
+    await waitFor(() => {
+      const executeCalls = vi.mocked(apiClient.post).mock.calls
+        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+      expect(executeCalls).toHaveLength(2)
+    })
+    const executeCalls = vi.mocked(apiClient.post).mock.calls
+      .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 0.76)).toBe(true)
   }, 30000)
 
   it('syncs the betting page mode from the active monitor mode before consuming alerts', async () => {
@@ -768,7 +1046,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     ))).toBe(false)
   }, 30000)
 
-  it('does not execute when automatic betting switch is closed', async () => {
+  it('shows crown alert candidates but does not execute when automatic betting switch is closed', async () => {
     window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
       autoMode: 'live',
       autoEnabled: false,
@@ -780,10 +1058,14 @@ describe('CrownBetting auto betting execution interaction', () => {
     render(<CrownBetting />)
 
     await screen.findByText('自动投注已关闭')
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await waitFor(() => {
+      expect(screen.getAllByText('米亚尔比 vs 哈马比').length).toBeGreaterThan(0)
+    })
+    expect(screen.getByText('采集系统合格回传')).toBeTruthy()
+    expect(screen.getByText('#1')).toBeTruthy()
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
       url === '/odds-monitor/alerts/list'
-    ))).toBe(false)
+    ))).toBe(true)
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
       url === '/auto-betting/signals/odds-monitor'
     ))).toBe(false)
@@ -866,7 +1148,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     const executeCalls = vi.mocked(apiClient.post).mock.calls
       .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
     expect(executeCalls).toHaveLength(2)
-    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 1.01)).toBe(true)
+    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 1.08)).toBe(true)
     expect(executeCalls.every(([, , config]) => config?.timeout === 120000)).toBe(true)
   }, 30000)
 

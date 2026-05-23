@@ -156,6 +156,24 @@ object UpdateApplyScriptBuilder {
               }
               if (${'$'}items) { Start-Sleep -Seconds 3 }
             }
+            function Remove-StaleBackendJars([string[]]${'$'}KeepRelativePaths) {
+              ${'$'}backendLibDir = Join-Path ${'$'}appRoot 'backend\build\libs'
+              if (-not (Test-Path ${'$'}backendLibDir)) { return }
+              ${'$'}keepNames = @{}
+              foreach (${'$'}relative in ${'$'}KeepRelativePaths) {
+                if (${'$'}relative -like 'backend/build/libs/odds-monitor-backend-*.jar') {
+                  ${'$'}keepNames[[IO.Path]::GetFileName(${'$'}relative)] = ${'$'}true
+                }
+              }
+              Get-ChildItem -LiteralPath ${'$'}backendLibDir -Filter 'odds-monitor-backend-*.jar' -File -ErrorAction SilentlyContinue |
+                Where-Object { -not ${'$'}keepNames.ContainsKey(${'$'}_.Name) } |
+                ForEach-Object {
+                  ${'$'}backup = Join-Path ${'$'}backupRoot ('backend\build\libs\' + ${'$'}_.Name)
+                  New-Item -ItemType Directory -Path (Split-Path -Parent ${'$'}backup) -Force | Out-Null
+                  Copy-Item -LiteralPath ${'$'}_.FullName -Destination ${'$'}backup -Force
+                  Remove-Item -LiteralPath ${'$'}_.FullName -Force
+                }
+            }
             ${'$'}launcher = Join-Path ${'$'}appRoot 'launch-odds-monitor.ps1'
             try {
               Start-Sleep -Seconds 2
@@ -175,6 +193,7 @@ object UpdateApplyScriptBuilder {
                 }
               }
               Write-Status ${'$'}true 94 '复制新文件'
+              Remove-StaleBackendJars ${'$'}files
               foreach (${'$'}relative in ${'$'}files) {
                 ${'$'}src = Join-Path ${'$'}packageRoot ${'$'}relative
                 ${'$'}dst = Join-Path ${'$'}appRoot ${'$'}relative

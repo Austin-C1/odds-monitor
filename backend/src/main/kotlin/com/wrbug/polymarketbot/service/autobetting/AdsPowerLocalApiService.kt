@@ -1054,6 +1054,29 @@ class AdsPowerLocalApiService(
                       && (element.offsetWidth || element.offsetHeight || element.getClientRects().length);
                   })()
                 ));
+                const parseCrownOddsText = (value) => {
+                  const matches = String(value || '').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/g);
+                  if (!matches || matches.length === 0) return null;
+                  const numbers = matches.map(Number).filter((number) => Number.isFinite(number));
+                  return numbers.length > 0 ? numbers[numbers.length - 1] : null;
+                };
+                const readBetElementOdds = (element) => {
+                  const oddsNodes = Array.from(element.querySelectorAll('.text_odds, [data-ior], [ior], [data-odds], [odds]'));
+                  for (const node of oddsNodes) {
+                    if (!isVisible(node)) continue;
+                    for (const attr of ['data-ior', 'ior', 'data-odds', 'odds']) {
+                      const parsed = parseCrownOddsText(node.getAttribute(attr));
+                      if (parsed !== null) return parsed;
+                    }
+                    const parsed = parseCrownOddsText(node.innerText || node.textContent);
+                    if (parsed !== null) return parsed;
+                  }
+                  for (const attr of ['data-ior', 'ior', 'data-odds', 'odds']) {
+                    const parsed = parseCrownOddsText(element.getAttribute(attr));
+                    if (parsed !== null) return parsed;
+                  }
+                  return parseCrownOddsText(element.innerText || element.textContent);
+                };
                 const confirmBetIfPrompted = async () => {
                   const prompts = [
                     { container: 'alert_confirm', yes: 'yes_btn', checkbox: 'confirm_chk' },
@@ -1207,8 +1230,7 @@ class AdsPowerLocalApiService(
                   currentLine: lineText
                 });
               }
-              const oddsText = (betElement.querySelector('.text_odds')?.innerText || '').trim();
-              const currentOdds = Number(oddsText);
+              const currentOdds = readBetElementOdds(betElement);
                 if (!Number.isFinite(currentOdds)) {
                   return finish({ placed: false, historyVerified: false, message: 'crown_odds_missing' });
                 }

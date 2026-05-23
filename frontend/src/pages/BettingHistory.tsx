@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Card, Empty, Space, Statistic, Table, Tag, Typography, message } from 'antd'
 import { apiClient } from '../services/api'
+import { extractApiErrorMessage } from '../utils/apiError'
 
 const { Text, Title } = Typography
 
@@ -83,7 +84,7 @@ const BettingHistory = () => {
       }
       setRows(response.data.data)
     } catch (error: any) {
-      message.error(error.response?.data?.msg || error.message || '投注记录读取失败')
+      message.error(extractApiErrorMessage(error, '投注记录读取失败'))
     } finally {
       setLoading(false)
     }

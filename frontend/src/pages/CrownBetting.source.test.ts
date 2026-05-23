@@ -76,6 +76,8 @@ describe('crown betting pages source', () => {
     expect(source).toContain('/auto-betting/adspower/start-profile')
     expect(source).toContain('/auto-betting/adspower/crown-session')
     expect(source).toContain('/auto-betting/adspower/crown-session/match')
+    expect(source).toContain("import { extractApiErrorMessage } from '../utils/apiError'")
+    expect(source).toContain('extractApiErrorMessage(error,')
     expect(source).toContain('matchAdsPowerCrownSession')
     expect(source).toContain('/auto-betting/signals/odds-monitor')
     expect(source).toContain('execute-crown')
@@ -88,7 +90,10 @@ describe('crown betting pages source', () => {
     expect(source).toContain('executeLatestCrownSignal')
     expect(source).toContain('attemptedSignalAtRef')
     expect(source).toContain('候选信号盘口')
-    expect(source).toContain('只显示符合当前配置')
+    expect(source).toContain('采集系统合格回传')
+    expect(source).toContain('按投注顺序排队')
+    expect(source).toContain('正在投注盘口')
+    expect(source).toContain('队列 #')
     expect(source).toContain('水位变化')
     expect(source).toContain('bettingMode: row.bettingMode')
     expect(source).toContain('matchPhase: row.matchPhase')
@@ -114,14 +119,15 @@ describe('crown betting pages source', () => {
     expect(source).not.toContain('name="balance"')
   })
 
-  it('does not show running state during signal retry cooldown', () => {
+  it('selects the next runnable signal before showing running state', () => {
     const source = readFileSync(pagePath, 'utf8')
-    const cooldownGuardIndex = source.indexOf('Date.now() - lastAttemptAt < AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS')
+    const signalSelectionIndex = source.indexOf('selectNextCrownAlertSignal(qualifiedCandidates')
     const runningStateIndex = source.indexOf('setExecutionRunning(true)')
 
     expect(source).not.toContain('processedSignalKeysRef')
-    expect(cooldownGuardIndex).toBeGreaterThan(-1)
-    expect(runningStateIndex).toBeGreaterThan(cooldownGuardIndex)
+    expect(source).not.toContain('Date.now() - lastAttemptAt < AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS')
+    expect(signalSelectionIndex).toBeGreaterThan(-1)
+    expect(runningStateIndex).toBeGreaterThan(signalSelectionIndex)
   })
 
   it('does not seed hard-coded crown accounts into production storage', () => {
@@ -174,6 +180,8 @@ describe('crown betting pages source', () => {
     expect(source).toContain('bettingMode: string')
     expect(source).toContain('matchPhase: string')
     expect(source).toContain('phaseLabel')
+    expect(source).toContain("import { extractApiErrorMessage } from '../utils/apiError'")
+    expect(source).toContain('extractApiErrorMessage(error,')
     expect(source).not.toContain('/auto-betting/intents/recent')
     expect(source).not.toContain('待下注')
     expect(source).not.toContain('已通过')

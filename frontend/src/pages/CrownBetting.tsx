@@ -18,14 +18,20 @@ import {
 } from 'antd'
 import { ApiOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons'
 import { apiClient } from '../services/api'
+import { extractApiErrorMessage } from '../utils/apiError'
 import {
+  autoBettingSignalKey,
+  buildCrownAlertSignalQueue,
   buildAutoBettingExecutionPlan,
+  executionOddsFloor,
   extractCrownAlertSignalCandidates,
   filterFreshCrownAlertSignals,
   formatAutoBettingReason,
+  isNonRetriableAutoBettingReason,
+  selectNextCrownAlertSignal,
   type AutoBettingMode,
   type AutoBettingExecutionPlan,
-  type AutoBettingSignal,
+  type QueuedCrownAlertSignal,
   type OddsAlertRecord,
 } from './crownBettingExecutionPlan'
 import {
@@ -116,6 +122,8 @@ type AutoBettingDecisionResponse = {
   crownHistoryVerified?: boolean
   crownHistoryCheckedAt?: number | null
   crownBetReference?: string | null
+  queuePosition?: number | null
+  queueTotal?: number | null
 }
 type NotificationConfigResponse = {
   id?: number | null
@@ -211,7 +219,7 @@ const automationSignalStyle: CSSProperties = {
 
 const signalCandidateGridStyle: CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(180px, 1.15fr) 92px minmax(140px, 1fr) minmax(110px, 0.8fr) minmax(120px, 0.8fr) minmax(190px, 1.2fr)',
+  gridTemplateColumns: '64px minmax(180px, 1.15fr) 92px minmax(140px, 1fr) minmax(110px, 0.8fr) minmax(120px, 0.8fr) minmax(190px, 1.2fr)',
   gap: 10,
   alignItems: 'center',
 }
@@ -261,22 +269,6 @@ const formatDateTime = (value: number) =>
   })
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-const autoBettingSignalKey = (signal: AutoBettingSignal) => {
-  if (typeof signal.sourceAlertId === 'number') {
-    return `alert:${signal.sourceAlertId}`
-  }
-  return [
-    signal.matchPhase,
-    signal.matchTitle,
-    signal.marketType,
-    signal.lineValue,
-    signal.selectionName,
-    signal.referenceOdds,
-    signal.targetOdds,
-    signal.oddsChangeDirection || 'none',
-  ].join('|')
-}
 
 const normalizeNumberSetting = (
   value: unknown,
@@ -425,7 +417,7 @@ const CrownBetting = () => {
   const [modalOpen, setModalOpen] = useState(false)
   const [automationSettings, setAutomationSettings] = useState<AutomationSettings>(readStoredAutomationSettings)
   const [executionPlan, setExecutionPlan] = useState<AutoBettingExecutionPlan | null>(null)
-  const [signalCandidates, setSignalCandidates] = useState<AutoBettingSignal[]>([])
+  const [signalCandidates, setSignalCandidates] = useState<QueuedCrownAlertSignal[]>([])
   const [adsPowerStatus, setAdsPowerStatus] = useState<AdsPowerStatusResponse | null>(null)
   const [adsPowerChecking, setAdsPowerChecking] = useState(false)
   const {
@@ -554,16 +546,17 @@ const CrownBetting = () => {
         message.error(result.message || '账号检测失败')
       }
     } catch (error: any) {
+      const errorMessage = extractApiErrorMessage(error, '账号检测失败')
       updateAccount(account.id, {
         status: 'error',
         adsPowerStatus: 'error',
         balance: null,
-        adsPowerMessage: error.response?.data?.msg || error.message || '账号检测失败',
+        adsPowerMessage: errorMessage,
         adsPowerUpdatedAt: Date.now(),
         lastCheckedAt: Date.now(),
-        note: error.response?.data?.msg || error.message || '账号检测失败',
+        note: errorMessage,
       })
-      message.error('账号检测失败')
+      message.error(errorMessage)
     }
   }
 
@@ -600,14 +593,15 @@ const CrownBetting = () => {
       updateAccount(account.id, patch)
       return { ...account, ...patch }
     } catch (error: any) {
+      const errorMessage = extractApiErrorMessage(error, '账号检测失败')
       const patch: Partial<CrownAccount> = {
         status: 'error',
         adsPowerStatus: 'error',
         balance: null,
-        adsPowerMessage: error.response?.data?.msg || error.message || '账号检测失败',
+        adsPowerMessage: errorMessage,
         adsPowerUpdatedAt: Date.now(),
         lastCheckedAt: Date.now(),
-        note: error.response?.data?.msg || error.message || '账号检测失败',
+        note: errorMessage,
       }
       updateAccount(account.id, patch)
       return { ...account, ...patch }
@@ -633,13 +627,14 @@ const CrownBetting = () => {
       }
     } catch (error: any) {
       const checkedAt = Date.now()
+      const errorMessage = extractApiErrorMessage(error, 'AdsPower 检测失败')
       setAdsPowerStatus({
         available: false,
         baseUrl: '',
-        message: error.response?.data?.msg || error.message || 'AdsPower 检测失败',
+        message: errorMessage,
         checkedAt,
       })
-      message.error('AdsPower 检测失败')
+      message.error(errorMessage)
     } finally {
       setAdsPowerChecking(false)
     }
@@ -678,12 +673,13 @@ const CrownBetting = () => {
         message.warning(`AdsPower 环境打开失败：${result.message}`)
       }
     } catch (error: any) {
+      const errorMessage = extractApiErrorMessage(error, 'AdsPower 环境打开失败')
       updateAccount(account.id, {
         adsPowerStatus: 'error',
-        adsPowerMessage: error.response?.data?.msg || error.message || 'AdsPower 环境打开失败',
+        adsPowerMessage: errorMessage,
         adsPowerUpdatedAt: Date.now(),
       })
-      message.error('AdsPower 环境打开失败')
+      message.error(errorMessage)
     }
   }
 
@@ -732,7 +728,9 @@ const CrownBetting = () => {
 
   const executeLatestCrownSignal = useCallback(async () => {
     const currentAccounts = accountsRef.current
-    if (automationPollingRef.current || executionRunningRef.current || !autoEnabled) return
+    if (automationPollingRef.current || executionRunningRef.current) {
+      return
+    }
     automationPollingRef.current = true
     const lockOwner = `page-${Date.now()}-${Math.random()}`
     if (!acquireCrownBettingAutomationLock(lockOwner)) {
@@ -748,32 +746,41 @@ const CrownBetting = () => {
       if (alertResponse.data.code !== 0) {
         throw new Error(alertResponse.data.msg || '监控信号读取失败')
       }
+      const now = Date.now()
       const candidates = filterFreshCrownAlertSignals(
         extractCrownAlertSignalCandidates(alertResponse.data.data, autoMode),
-        Date.now(),
+        now,
         signalMaxAgeSeconds,
       )
       const qualifiedCandidates = candidates.filter((candidate) => (
         candidate.targetOdds >= minimumBetOdds
       ))
-      setSignalCandidates(qualifiedCandidates)
-      const signal = qualifiedCandidates[0] || null
-      const signalKey = signal ? autoBettingSignalKey(signal) : null
-      if (signalKey) {
-        if (completedSignalKeysRef.current.has(signalKey)) return
-        const lastAttemptAt = attemptedSignalAtRef.current.get(signalKey) || 0
-        if (Date.now() - lastAttemptAt < AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS) return
-        attemptedSignalAtRef.current.set(signalKey, Date.now())
+      const signalSelectionOptions = {
+        completedSignalKeys: completedSignalKeysRef.current,
+        attemptedSignalAt: attemptedSignalAtRef.current,
+        now,
+        retryCooldownMs: AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS,
       }
-      if (signal) {
+      const signalQueue = buildCrownAlertSignalQueue(qualifiedCandidates, signalSelectionOptions)
+      setSignalCandidates(signalQueue)
+      const signal = selectNextCrownAlertSignal(qualifiedCandidates, signalSelectionOptions)
+      const selectedQueueItem = signal
+        ? signalQueue.find((candidate) => autoBettingSignalKey(candidate) === autoBettingSignalKey(signal))
+        : null
+      const signalKey = signal ? autoBettingSignalKey(signal) : null
+      if (signalKey && autoEnabled) {
+        attemptedSignalAtRef.current.set(signalKey, now)
+      }
+      const shouldExecuteSignal = autoEnabled && Boolean(signal)
+      if (shouldExecuteSignal) {
         executionStarted = true
         executionRunningRef.current = true
         setExecutionRunning(true)
       }
-      const checkedAccounts = signal
+      const checkedAccounts = shouldExecuteSignal
         ? []
         : currentAccounts
-      if (signal) {
+      if (shouldExecuteSignal) {
         for (let index = 0; index < currentAccounts.length; index += 1) {
           const account = currentAccounts[index]
           checkedAccounts.push(await verifyAccountBeforeBetting(account))
@@ -800,7 +807,9 @@ const CrownBetting = () => {
           bettingEnabled: account.bettingEnabled === true,
         })),
       })
-      setExecutionPlan(nextPlan)
+      setExecutionPlan((currentPlan) => (
+        signal || !currentPlan?.signal ? nextPlan : currentPlan
+      ))
       if (!nextPlan.canExecute) {
         return
       }
@@ -836,6 +845,8 @@ const CrownBetting = () => {
               referenceOdds: row.referenceOdds,
               targetOdds: row.targetOdds,
               minimumTargetOdds: minimumBetOdds,
+              queuePosition: selectedQueueItem?.queuePosition,
+              queueTotal: signalQueue.length,
               oddsChangeDirection: row.oddsChangeDirection,
               stakeAmount: row.stakeAmount,
               capturedAt: row.capturedAt,
@@ -852,6 +863,7 @@ const CrownBetting = () => {
               status: 'skipped' as const,
               statusLabel: '跳过',
               stakeAmount: 0,
+              stopRetry: isNonRetriableAutoBettingReason(decision.reason),
               reason: formatAutoBettingReason(decision.reason),
             }
           }
@@ -860,7 +872,7 @@ const CrownBetting = () => {
             {
               profileId,
               loginUrl: checkedAccount?.loginUrl,
-              minimumTargetOdds: minimumBetOdds,
+              minimumTargetOdds: executionOddsFloor(row.targetOdds, minimumBetOdds),
             },
             { timeout: 120000 },
           )
@@ -874,6 +886,7 @@ const CrownBetting = () => {
             status: historyVerified ? 'passed' as const : 'skipped' as const,
             statusLabel: historyVerified ? '已下注' : '跳过',
             stakeAmount: historyVerified ? row.stakeAmount : 0,
+            stopRetry: isNonRetriableAutoBettingReason(executionDecision.reason),
             reason: executionDecision.crownBetReference
               ? `${formatAutoBettingReason(executionDecision.reason)} ${executionDecision.crownBetReference}`
               : formatAutoBettingReason(executionDecision.reason),
@@ -884,11 +897,12 @@ const CrownBetting = () => {
             status: 'skipped' as const,
             statusLabel: '跳过',
             stakeAmount: 0,
-            reason: error.response?.data?.msg || error.message || '皇冠实际下注失败',
+            reason: extractApiErrorMessage(error, '皇冠实际下注失败'),
           }
         }
       }))
       const placedRows = checkedRows.filter((row) => row.status === 'passed')
+      const shouldStopRetryingSignal = checkedRows.some((row) => row.stopRetry)
       const placedStake = placedRows.reduce((total, row) => total + row.stakeAmount, 0)
       setExecutionPlan({
         ...nextPlan,
@@ -901,11 +915,14 @@ const CrownBetting = () => {
       if (placedRows.length > 0) {
         if (signalKey) completedSignalKeysRef.current.add(signalKey)
         message.success('下注成功，已确认皇冠下注成功')
+      } else if (shouldStopRetryingSignal) {
+        if (signalKey) completedSignalKeysRef.current.add(signalKey)
+        message.warning('盘口不可投，已停止重复尝试该信号')
       } else {
         message.warning('没有确认成功的下注')
       }
     } catch (error: any) {
-      message.error(error.response?.data?.msg || error.message || '监控信号读取失败')
+      message.error(extractApiErrorMessage(error, '监控信号读取失败'))
     } finally {
       releaseCrownBettingAutomationLock(lockOwner)
       automationPollingRef.current = false
@@ -925,7 +942,6 @@ const CrownBetting = () => {
   ])
 
   useEffect(() => {
-    if (!autoEnabled) return undefined
     void executeLatestCrownSignal()
     const intervalId = window.setInterval(() => {
       void executeLatestCrownSignal()
@@ -934,6 +950,12 @@ const CrownBetting = () => {
   }, [autoEnabled, enabledBettingAccounts.length, executeLatestCrownSignal])
 
   const currentExecutionSignal = executionPlan?.signal
+  const currentExecutionSignalQueueItem = currentExecutionSignal
+    ? signalCandidates.find((candidate) => autoBettingSignalKey(candidate) === autoBettingSignalKey(currentExecutionSignal))
+    : null
+  const currentExecutionSignalLabel = executionRunning
+    ? '正在投注盘口'
+    : currentExecutionSignal ? '最近处理盘口' : '等待合格信号'
   const hasExecutionAttemptResult = executionPlan
     ? executionPlan.summary.startsWith('下注成功') || executionPlan.summary === '没有确认成功的下注'
     : false
@@ -1212,8 +1234,8 @@ const CrownBetting = () => {
             <Tag color={autoEnabled ? 'processing' : 'default'}>
               {autoEnabled ? '自动监听中' : '自动投注已关闭'}
             </Tag>
-            {executionRunning ? <Tag color="blue">正在处理信号</Tag> : null}
-            <Tag color="blue">信号来源：皇冠告警</Tag>
+            {executionRunning ? <Tag color="blue">正在投注盘口</Tag> : null}
+            <Tag color="blue">信号来源：采集系统合格回传</Tag>
             <Tag color={enabledBettingAccounts.length > 0 ? 'success' : 'error'}>
               启用账号 {enabledBettingAccounts.length} 个
             </Tag>
@@ -1223,8 +1245,15 @@ const CrownBetting = () => {
 
         <div style={automationSignalStyle}>
           <div>
-            <Text type="secondary">当前信号</Text>
-            <div><Text strong>{currentExecutionSignal?.matchTitle || '等待监控信号'}</Text></div>
+            <Text type="secondary">{currentExecutionSignalLabel}</Text>
+            <div>
+              <Space size={6} wrap>
+                <Text strong>{currentExecutionSignal?.matchTitle || '等待监控信号'}</Text>
+                {currentExecutionSignalQueueItem ? (
+                  <Tag color={executionRunning ? 'processing' : 'default'}>队列 #{currentExecutionSignalQueueItem.queuePosition}</Tag>
+                ) : null}
+              </Space>
+            </div>
           </div>
           <div>
             <Text type="secondary">模式</Text>
@@ -1255,11 +1284,13 @@ const CrownBetting = () => {
         <div style={{ marginBottom: 12 }}>
           <Space wrap style={{ marginBottom: 8 }}>
             <Text strong>候选信号盘口</Text>
-            <Tag color="blue">只显示符合当前配置</Tag>
+            <Tag color="blue">采集系统合格回传</Tag>
+            <Tag color="processing">按投注顺序排队</Tag>
           </Space>
           {signalCandidates.length > 0 ? (
             <div>
               <div style={{ ...signalCandidateGridStyle, paddingBottom: 8, borderBottom: '1px solid #f0f0f0' }}>
+                <Text strong>顺序</Text>
                 <Text strong>比赛</Text>
                 <Text strong>模式</Text>
                 <Text strong>盘口</Text>
@@ -1272,6 +1303,7 @@ const CrownBetting = () => {
                   key={`${candidate.sourceAlertId || candidate.matchTitle}-${candidate.marketTitle}-${candidate.selectionName}-${candidate.targetOdds}`}
                   style={{ ...signalCandidateGridStyle, ...signalCandidateRowStyle }}
                 >
+                  <Tag color={candidate.queueStatus === 'ready' ? 'processing' : 'default'}>#{candidate.queuePosition}</Tag>
                   <Text>{candidate.matchTitle}</Text>
                   <Tag color={candidate.matchPhase === 'prematch' ? 'blue' : 'orange'}>{candidate.modeLabel}</Tag>
                   <Space direction="vertical" size={0}>

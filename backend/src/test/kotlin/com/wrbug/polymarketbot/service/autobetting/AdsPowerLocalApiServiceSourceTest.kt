@@ -179,6 +179,17 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
+    fun `crown placement reads current odds from visible odds text and fallback attributes`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("const beforeWagerCount")
+
+        assertTrue(placementBlock.contains("readBetElementOdds"))
+        assertTrue(placementBlock.contains("data-ior"))
+        assertTrue(placementBlock.contains("text_odds"))
+        assertTrue(placementBlock.contains("parseCrownOddsText"))
+    }
+
+    @Test
     fun `crown placement cdp timeout covers receipt and history verification waits`() {
         val evaluationBlock = source.substringAfter("private fun evaluateCrownPageJson")
             .substringBefore("private fun executeCdpCommand")

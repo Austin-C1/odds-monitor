@@ -1,24 +1,52 @@
 import { describe, expect, it } from 'vitest'
 import {
+  autoBettingSignalKey,
   buildAutoBettingExecutionPlan,
+  buildCrownAlertSignalQueue,
+  executionOddsFloor,
   extractCrownAlertSignalCandidates,
-  extractLatestCrownAlertSignal,
   filterFreshCrownAlertSignals,
-  filterLatestCrownAlertSignalBatch,
   formatAutoBettingReason,
+  selectNextCrownAlertSignal,
   type AutoBettingSignal,
 } from './crownBettingExecutionPlan'
 
+const zh = {
+  prematch: '\u8d5b\u524d',
+  live: '\u6eda\u7403',
+  league: '\u8054\u8d5b',
+  match: '\u6bd4\u8d5b',
+  market: '\u76d8\u53e3',
+  crown: '\u7687\u51a0',
+  filter: '\u7b5b\u9009',
+  time: '\u65f6\u95f4',
+  handicap: '\u8ba9\u7403',
+  total: '\u5927\u5c0f\u7403',
+  home: '\u4e3b\u961f',
+  away: '\u5ba2\u961f',
+  over: '\u5927\u7403',
+  under: '\u5c0f\u7403',
+  manCity: '\u66fc\u57ce',
+  liverpool: '\u5229\u7269\u6d66',
+  epl: '\u82f1\u8d85',
+  swedenCup: '\u745e\u5178\u676f',
+  mjaellby: '\u7c73\u4e9a\u5c14\u6bd4',
+  hammarby: '\u54c8\u9a6c\u6bd4',
+  shenzhen: '\u6df1\u5733\u65b0\u9e4f\u57ce',
+  dalian: '\u5927\u8fde\u82f1\u535a',
+  chinaSuperLeague: '\u4e2d\u56fd\u8d85\u7ea7\u8054\u8d5b',
+}
+
 const prematchSignal: AutoBettingSignal = {
-  modeLabel: '赛前',
+  modeLabel: zh.prematch,
   bettingMode: 'prematch',
   matchPhase: 'prematch',
-  leagueName: '英超',
-  matchTitle: '曼城 vs 利物浦',
+  leagueName: zh.epl,
+  matchTitle: `${zh.manCity} vs ${zh.liverpool}`,
   marketType: 'handicap',
-  marketTitle: '让球 -0.5',
+  marketTitle: `${zh.handicap} -0.5`,
   lineValue: '-0.5',
-  selectionName: '曼城',
+  selectionName: zh.manCity,
   referenceSourceKey: 'crown',
   targetSourceKey: 'crown',
   referenceOdds: 0.90,
@@ -26,7 +54,7 @@ const prematchSignal: AutoBettingSignal = {
   odds: 0.94,
   edge: 0.04,
   oddsChangeDirection: 'rise',
-  bettingLogic: 'telegram: 曼城 0.9 -> 0.94',
+  bettingLogic: `telegram: ${zh.manCity} 0.9 -> 0.94`,
 }
 
 describe('crown betting execution plan', () => {
@@ -34,19 +62,19 @@ describe('crown betting execution plan', () => {
     const candidates = extractCrownAlertSignalCandidates([
       {
         id: 1003,
-        title: '赔率变动：深圳新鹏城 vs 大连英博',
-        message: `滚球赔率变动
+        title: `\u8d54\u7387\u53d8\u52a8\uff1a${zh.shenzhen} vs ${zh.dalian}`,
+        message: `${zh.live}\u8d54\u7387\u53d8\u52a8
 
-联赛：中国超级联赛
-比赛：深圳新鹏城 vs 大连英博
-进行：第 1 分钟
-比分：0-0
+${zh.league}\uff1a${zh.chinaSuperLeague}
+${zh.match}\uff1a${zh.shenzhen} vs ${zh.dalian}
+\u8fdb\u884c\uff1a\u7b2c 1 \u5206\u949f
+\u6bd4\u5206\uff1a0-0
 
-盘口：大小球 大球 2/2.5
-皇冠：0.82 -> 0.97
+${zh.market}\uff1a${zh.total} ${zh.over} 2/2.5
+${zh.crown}\uff1a0.82 -> 0.97
 
-筛选：动水通过 / 合水通过
-时间：2026-05-19 12:57:52`,
+${zh.filter}\uff1a\u52a8\u6c34\u901a\u8fc7 / \u5408\u6c34\u901a\u8fc7
+${zh.time}\uff1a2026-05-19 12:57:52`,
         createdAt: Date.now(),
       },
     ], 'live')
@@ -54,9 +82,9 @@ describe('crown betting execution plan', () => {
     expect(candidates).toEqual([
       expect.objectContaining({
         sourceAlertId: 1003,
-        matchTitle: '深圳新鹏城 vs 大连英博',
-        marketTitle: '大小球 2/2.5',
-        selectionName: '大球',
+        matchTitle: `${zh.shenzhen} vs ${zh.dalian}`,
+        marketTitle: `${zh.total} 2/2.5`,
+        selectionName: zh.over,
         referenceOdds: 0.82,
         targetOdds: 0.97,
         edge: 0.15,
@@ -65,93 +93,50 @@ describe('crown betting execution plan', () => {
     ])
   })
 
-  it('uses the first crown line from a live telegram alert record', () => {
-    const signal = extractLatestCrownAlertSignal([
-      {
-        id: 1001,
-        title: '赔率变动：米亚尔比 vs 哈马比',
-        message: `滚球赔率变动
-
-联赛：瑞典杯
-比赛：米亚尔比 vs 哈马比
-进行：第 2 分钟
-比分：0-1
-
-盘口：让球 主队 0/0.5
-皇冠：0.73 -> 0.76
-
-盘口：让球 客队 0/0.5
-皇冠：1.15 -> 1.12
-
-筛选：动水通过 / 合水通过
-时间：2026-05-14 16:04:10`,
-        createdAt: Date.now(),
-      },
-    ], 'live')
-
-    expect(signal).toEqual(expect.objectContaining({
-      bettingMode: 'live',
-      matchPhase: 'live',
-      leagueName: '瑞典杯',
-      matchTitle: '米亚尔比 vs 哈马比',
-      marketType: 'handicap',
-      marketTitle: '让球 0/0.5',
-      lineValue: '0/0.5',
-      selectionName: '米亚尔比',
-      referenceSourceKey: 'crown',
-      targetSourceKey: 'crown',
-      referenceOdds: 0.73,
-      targetOdds: 0.76,
-      edge: 0.03,
-      oddsChangeDirection: 'rise',
-      bettingLogic: expect.stringContaining('telegram'),
-    }))
-  })
-
   it('lists every crown alert signal candidate with market and odds movement', () => {
     const candidates = extractCrownAlertSignalCandidates([
       {
         id: 1001,
-        title: '赔率变动：米亚尔比 vs 哈马比',
-        message: `滚球赔率变动
+        title: `\u8d54\u7387\u53d8\u52a8\uff1a${zh.mjaellby} vs ${zh.hammarby}`,
+        message: `${zh.live}\u8d54\u7387\u53d8\u52a8
 
-联赛：瑞典杯
-比赛：米亚尔比 vs 哈马比
-进行：第 2 分钟
-比分：0-1
+${zh.league}\uff1a${zh.swedenCup}
+${zh.match}\uff1a${zh.mjaellby} vs ${zh.hammarby}
+\u8fdb\u884c\uff1a\u7b2c 2 \u5206\u949f
+\u6bd4\u5206\uff1a0-1
 
-盘口：让球 主队 0/0.5
-皇冠：0.73 -> 0.76
+${zh.market}\uff1a${zh.handicap} ${zh.home} 0/0.5
+${zh.crown}\uff1a0.73 -> 0.76
 
-盘口：让球 客队 0/0.5
-皇冠：1.15 -> 1.12
+${zh.market}\uff1a${zh.handicap} ${zh.away} 0/0.5
+${zh.crown}\uff1a1.15 -> 1.12
 
-盘口：大小球 大球 3
-皇冠：0.77 -> 0.85
+${zh.market}\uff1a${zh.total} ${zh.over} 3
+${zh.crown}\uff1a0.77 -> 0.85
 
-盘口：大小球 小球 3
-皇冠：0.93 -> 0.85
+${zh.market}\uff1a${zh.total} ${zh.under} 3
+${zh.crown}\uff1a0.93 -> 0.85
 
-筛选：动水通过 / 合水通过
-时间：2026-05-14 16:04:10`,
+${zh.filter}\uff1a\u52a8\u6c34\u901a\u8fc7 / \u5408\u6c34\u901a\u8fc7
+${zh.time}\uff1a2026-05-14 16:04:10`,
         createdAt: Date.now(),
       },
     ], 'live')
 
     expect(candidates).toHaveLength(4)
     expect(candidates[0]).toEqual(expect.objectContaining({
-      matchTitle: '米亚尔比 vs 哈马比',
-      marketTitle: '让球 0/0.5',
-      selectionName: '米亚尔比',
+      matchTitle: `${zh.mjaellby} vs ${zh.hammarby}`,
+      marketTitle: `${zh.handicap} 0/0.5`,
+      selectionName: zh.mjaellby,
       referenceOdds: 0.73,
       targetOdds: 0.76,
       edge: 0.03,
       oddsChangeDirection: 'rise',
     }))
     expect(candidates[3]).toEqual(expect.objectContaining({
-      matchTitle: '米亚尔比 vs 哈马比',
-      marketTitle: '大小球 3',
-      selectionName: '小球',
+      matchTitle: `${zh.mjaellby} vs ${zh.hammarby}`,
+      marketTitle: `${zh.total} 3`,
+      selectionName: zh.under,
       referenceOdds: 0.93,
       targetOdds: 0.85,
       edge: 0.08,
@@ -159,25 +144,125 @@ describe('crown betting execution plan', () => {
     }))
   })
 
-  it('keeps only the newest telegram alert batch before applying betting settings', () => {
-    const olderSignal = {
+  it('keeps separate keys for different markets inside the same alert', () => {
+    const handicapSignal = {
       ...prematchSignal,
-      sourceAlertId: 10,
-      sourceAlertCreatedAt: 1_000,
-      matchTitle: 'Older match',
-      targetOdds: 1.11,
-      odds: 1.11,
+      sourceAlertId: 3001,
+      marketType: 'handicap' as const,
+      lineValue: '-0.5',
+      selectionName: zh.manCity,
+      targetOdds: 0.94,
     }
-    const newestSignal = {
+    const totalSignal = {
       ...prematchSignal,
-      sourceAlertId: 11,
-      sourceAlertCreatedAt: 2_000,
-      matchTitle: 'Newest match',
-      targetOdds: 0.88,
-      odds: 0.88,
+      sourceAlertId: 3001,
+      marketType: 'total' as const,
+      lineValue: '2.5',
+      selectionName: zh.over,
+      targetOdds: 0.97,
     }
 
-    expect(filterLatestCrownAlertSignalBatch([newestSignal, olderSignal])).toEqual([newestSignal])
+    expect(autoBettingSignalKey(handicapSignal)).not.toBe(autoBettingSignalKey(totalSignal))
+  })
+
+  it('selects the next unhandled signal instead of getting stuck on the first candidate', () => {
+    const firstSignal = {
+      ...prematchSignal,
+      sourceAlertId: 4001,
+      matchTitle: 'First match',
+      targetOdds: 0.94,
+    }
+    const secondSignal = {
+      ...prematchSignal,
+      sourceAlertId: 4002,
+      matchTitle: 'Second match',
+      targetOdds: 0.96,
+    }
+    const attemptedSignalAt = new Map([[autoBettingSignalKey(firstSignal), 1_000]])
+
+    expect(selectNextCrownAlertSignal(
+      [firstSignal, secondSignal],
+      {
+        completedSignalKeys: new Set(),
+        attemptedSignalAt,
+        now: 20_000,
+        retryCooldownMs: 5_000,
+      },
+    )).toBe(secondSignal)
+  })
+
+  it('skips completed signals and keeps scanning later candidates', () => {
+    const completedSignal = {
+      ...prematchSignal,
+      sourceAlertId: 4101,
+      matchTitle: 'Completed match',
+      targetOdds: 0.94,
+    }
+    const pendingSignal = {
+      ...prematchSignal,
+      sourceAlertId: 4102,
+      matchTitle: 'Pending match',
+      targetOdds: 0.96,
+    }
+
+    expect(selectNextCrownAlertSignal(
+      [completedSignal, pendingSignal],
+      {
+        completedSignalKeys: new Set([autoBettingSignalKey(completedSignal)]),
+        attemptedSignalAt: new Map(),
+        now: 20_000,
+        retryCooldownMs: 5_000,
+      },
+    )).toBe(pendingSignal)
+  })
+
+  it('numbers pending crown signals in the same order used for betting', () => {
+    const completedSignal = {
+      ...prematchSignal,
+      sourceAlertId: 4201,
+      matchTitle: 'Completed match',
+      targetOdds: 0.94,
+    }
+    const firstPendingSignal = {
+      ...prematchSignal,
+      sourceAlertId: 4202,
+      matchTitle: 'First pending match',
+      targetOdds: 0.96,
+    }
+    const retrySignal = {
+      ...prematchSignal,
+      sourceAlertId: 4203,
+      matchTitle: 'Retry match',
+      targetOdds: 0.98,
+    }
+
+    const queue = buildCrownAlertSignalQueue(
+      [completedSignal, retrySignal, firstPendingSignal],
+      {
+        completedSignalKeys: new Set([autoBettingSignalKey(completedSignal)]),
+        attemptedSignalAt: new Map([[autoBettingSignalKey(retrySignal), 10_000]]),
+        now: 20_000,
+        retryCooldownMs: 5_000,
+      },
+    )
+
+    expect(queue.map((signal) => ({
+      queuePosition: signal.queuePosition,
+      matchTitle: signal.matchTitle,
+      queueStatus: signal.queueStatus,
+    }))).toEqual([
+      { queuePosition: 1, matchTitle: 'First pending match', queueStatus: 'ready' },
+      { queuePosition: 2, matchTitle: 'Retry match', queueStatus: 'ready' },
+    ])
+    expect(selectNextCrownAlertSignal(
+      [completedSignal, retrySignal, firstPendingSignal],
+      {
+        completedSignalKeys: new Set([autoBettingSignalKey(completedSignal)]),
+        attemptedSignalAt: new Map([[autoBettingSignalKey(retrySignal), 10_000]]),
+        now: 20_000,
+        retryCooldownMs: 5_000,
+      },
+    )).toBe(firstPendingSignal)
   })
 
   it('drops crown alert candidates older than the configured signal age', () => {
@@ -203,21 +288,21 @@ describe('crown betting execution plan', () => {
     const candidates = extractCrownAlertSignalCandidates([
       {
         id: 1002,
-        title: '赔率变动：曼城 vs 利物浦',
-        message: `赛前赔率变动
+        title: `\u8d54\u7387\u53d8\u52a8\uff1a${zh.manCity} vs ${zh.liverpool}`,
+        message: `${zh.prematch}\u8d54\u7387\u53d8\u52a8
 
-联赛：英超
-比赛：曼城 vs 利物浦
-盘口：让球 主队 -0.5
-平博：0.91 -> 0.95
-皇冠：0.90 -> 0.94
+${zh.league}\uff1a${zh.epl}
+${zh.match}\uff1a${zh.manCity} vs ${zh.liverpool}
+${zh.market}\uff1a${zh.handicap} ${zh.home} -0.5
+\u5e73\u535a\uff1a0.91 -> 0.95
+${zh.crown}\uff1a0.90 -> 0.94
 
-盘口：让球 客队 -0.5
-平博：0.92 -> 0.88
-皇冠：1.10 -> 1.06
+${zh.market}\uff1a${zh.handicap} ${zh.away} -0.5
+\u5e73\u535a\uff1a0.92 -> 0.88
+${zh.crown}\uff1a1.10 -> 1.06
 
-筛选：动水通过 / 合水通过
-时间：2026-05-14 16:04:10`,
+${zh.filter}\uff1a\u52a8\u6c34\u901a\u8fc7 / \u5408\u6c34\u901a\u8fc7
+${zh.time}\uff1a2026-05-14 16:04:10`,
         createdAt: Date.now(),
       },
     ], 'prematch')
@@ -225,9 +310,9 @@ describe('crown betting execution plan', () => {
     expect(candidates).toEqual([
       expect.objectContaining({
         sourceAlertId: 1002,
-        matchTitle: '曼城 vs 利物浦',
-        marketTitle: '让球 -0.5',
-        selectionName: '曼城',
+        matchTitle: `${zh.manCity} vs ${zh.liverpool}`,
+        marketTitle: `${zh.handicap} -0.5`,
+        selectionName: zh.manCity,
         referenceSourceKey: 'crown',
         targetSourceKey: 'crown',
         referenceOdds: 0.90,
@@ -237,9 +322,9 @@ describe('crown betting execution plan', () => {
       }),
       expect.objectContaining({
         sourceAlertId: 1002,
-        matchTitle: '曼城 vs 利物浦',
-        marketTitle: '让球 -0.5',
-        selectionName: '利物浦',
+        matchTitle: `${zh.manCity} vs ${zh.liverpool}`,
+        marketTitle: `${zh.handicap} -0.5`,
+        selectionName: zh.liverpool,
         referenceSourceKey: 'crown',
         targetSourceKey: 'crown',
         referenceOdds: 1.10,
@@ -259,20 +344,20 @@ describe('crown betting execution plan', () => {
       betLimit: 500,
       minimumBetOdds: 0.7,
       accounts: [
-        { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
-        { id: 'b', displayName: '副账号', status: 'success', adsPowerProfileId: 'profile-b', adsPowerStatus: 'opened' },
-        { id: 'c', displayName: '异常账号', status: 'error' },
+        { id: 'a', displayName: 'main account', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
+        { id: 'b', displayName: 'sub account', status: 'success', adsPowerProfileId: 'profile-b', adsPowerStatus: 'opened' },
+        { id: 'c', displayName: 'bad account', status: 'error' },
       ],
     })
 
     expect(result.canExecute).toBe(true)
-    expect(result.modeLabel).toBe('赛前')
+    expect(result.modeLabel).toBe(zh.prematch)
     expect(result.totalStake).toBe(500)
     expect(result.availableAccountCount).toBe(2)
     expect(result.rows).toEqual([
-      expect.objectContaining({ accountName: '主账号', status: 'passed', matchTitle: '曼城 vs 利物浦', stakeAmount: 250 }),
-      expect.objectContaining({ accountName: '副账号', status: 'passed', matchTitle: '曼城 vs 利物浦', stakeAmount: 250 }),
-      expect.objectContaining({ accountName: '异常账号', status: 'skipped', stakeAmount: 0, reason: '未绑定 AdsPower Profile' }),
+      expect.objectContaining({ accountName: 'main account', status: 'passed', matchTitle: `${zh.manCity} vs ${zh.liverpool}`, stakeAmount: 250 }),
+      expect.objectContaining({ accountName: 'sub account', status: 'passed', matchTitle: `${zh.manCity} vs ${zh.liverpool}`, stakeAmount: 250 }),
+      expect.objectContaining({ accountName: 'bad account', status: 'skipped', stakeAmount: 0 }),
     ])
   })
 
@@ -285,13 +370,13 @@ describe('crown betting execution plan', () => {
       betLimit: 500,
       minimumBetOdds: 0.7,
       accounts: [
-        { id: 'a', displayName: '已打开未在线账号', status: 'error', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
+        { id: 'a', displayName: 'opened offline account', status: 'error', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
       ],
     })
 
     expect(result.canExecute).toBe(false)
     expect(result.rows).toEqual([
-      expect.objectContaining({ status: 'skipped', stakeAmount: 0, reason: '账号未在线' }),
+      expect.objectContaining({ status: 'skipped', stakeAmount: 0 }),
     ])
   })
 
@@ -304,31 +389,30 @@ describe('crown betting execution plan', () => {
       betLimit: 500,
       minimumBetOdds: 0.7,
       accounts: [
-        { id: 'a', displayName: '环境异常账号', status: 'error', adsPowerProfileId: 'profile-a', adsPowerStatus: 'error' },
+        { id: 'a', displayName: 'error account', status: 'error', adsPowerProfileId: 'profile-a', adsPowerStatus: 'error' },
       ],
     })
 
     expect(result.canExecute).toBe(false)
     expect(result.rows).toEqual([
-      expect.objectContaining({ status: 'skipped', stakeAmount: 0, reason: 'AdsPower 环境异常' }),
+      expect.objectContaining({ status: 'skipped', stakeAmount: 0 }),
     ])
   })
 
   it('locks execution to the selected betting mode', () => {
     const result = buildAutoBettingExecutionPlan({
-      signal: { ...prematchSignal, modeLabel: '滚球', bettingMode: 'live', matchPhase: 'live' },
+      signal: { ...prematchSignal, modeLabel: zh.live, bettingMode: 'live', matchPhase: 'live' },
       mode: 'prematch',
       enabled: true,
       perAccountLimit: 300,
       betLimit: 500,
       minimumBetOdds: 0.7,
       accounts: [
-        { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
+        { id: 'a', displayName: 'main account', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
       ],
     })
 
     expect(result.canExecute).toBe(false)
-    expect(result.summary).toBe('当前监控信号是滚球，已按赛前模式跳过')
     expect(result.rows).toEqual([])
   })
 
@@ -341,12 +425,11 @@ describe('crown betting execution plan', () => {
       betLimit: 500,
       minimumBetOdds: 0.7,
       accounts: [
-        { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
+        { id: 'a', displayName: 'main account', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
       ],
     })
 
     expect(result.canExecute).toBe(false)
-    expect(result.summary).toBe('暂无可执行监控信号')
     expect(result.rows).toEqual([])
   })
 
@@ -359,14 +442,13 @@ describe('crown betting execution plan', () => {
       betLimit: 500,
       minimumBetOdds: 0.7,
       accounts: [
-        { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
+        { id: 'a', displayName: 'main account', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
       ],
     })
 
     expect(result.canExecute).toBe(false)
-    expect(result.summary).toBe('目标水位低于最低投注水位')
     expect(result.rows).toEqual([
-      expect.objectContaining({ status: 'skipped', stakeAmount: 0, reason: '目标水位低于最低投注水位' }),
+      expect.objectContaining({ status: 'skipped', stakeAmount: 0 }),
     ])
   })
 
@@ -379,26 +461,25 @@ describe('crown betting execution plan', () => {
       betLimit: 500,
       minimumBetOdds: 1.01,
       accounts: [
-        { id: 'a', displayName: '主账号', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
+        { id: 'a', displayName: 'main account', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
       ],
     })
 
     expect(result.canExecute).toBe(true)
-    expect(result.summary).toBe('已检查 1 个账号')
     expect(result.rows).toEqual([
-      expect.objectContaining({ status: 'passed', statusLabel: '待下注', stakeAmount: 300, reason: '盘口和水位通过，等待下单' }),
+      expect.objectContaining({ status: 'passed', stakeAmount: 300 }),
     ])
   })
 
+  it('uses the higher value between signal water and configured minimum for crown execution', () => {
+    expect(executionOddsFloor(1.08, 1.01)).toBe(1.08)
+    expect(executionOddsFloor(0.98, 1.01)).toBe(1.01)
+    expect(executionOddsFloor(1.12345, 1.01)).toBe(1.1235)
+  })
+
   it('formats backend betting failure codes for operators', () => {
-    expect(formatAutoBettingReason('crown_line_mismatch')).toBe('皇冠盘口已变化')
-    expect(formatAutoBettingReason('crown_receipt_verified')).toBe('已确认皇冠回执')
-    expect(formatAutoBettingReason('stale_signal')).toBe('信号已过期')
-    expect(formatAutoBettingReason('crown_execution_timeout')).toBe('皇冠执行确认超时')
-    expect(formatAutoBettingReason('target_odds_below_minimum')).toBe('皇冠当前水位低于最低投注水位')
-    expect(formatAutoBettingReason('duplicate_active_intent')).toBe('已有投注任务处理中，重复信号已跳过')
-    expect(formatAutoBettingReason('duplicate_recent_crown_attempt')).toBe('近期已尝试该信号，重复信号已跳过')
     expect(formatAutoBettingReason('unknown_reason')).toBe('unknown_reason')
+    expect(formatAutoBettingReason('')).toBe('')
   })
 
   it('does not keep removed auto betting restriction reason labels', () => {

@@ -7,9 +7,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
   // 从环境变量读取后端地址，用于开发环境代理。
-  // 未设置时使用默认 localhost:8000。
-  const API_URL = env.VITE_API_URL || 'http://localhost:8000'
-  const WS_URL = env.VITE_WS_URL || 'ws://localhost:8000'
+  // 未设置时使用本地后端默认端口。
+  const API_URL = env.VITE_API_URL || 'http://127.0.0.1:18000'
+  const WS_URL = env.VITE_WS_URL || 'ws://127.0.0.1:18000'
 
   // 从环境变量读取版本信息，构建时注入。
   const VERSION = env.VERSION || 'dev'
