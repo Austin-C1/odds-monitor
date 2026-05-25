@@ -4,6 +4,10 @@ import com.wrbug.polymarketbot.entity.OddsDataSourceConfig
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
+import java.net.InetSocketAddress
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import com.sun.net.httpserver.HttpServer
 
 class CrownApiClientFetchControlTest {
     private val config = OddsDataSourceConfig(
@@ -63,6 +67,43 @@ class CrownApiClientFetchControlTest {
 
         assertEquals("failed_timeout", exception.status)
         assertEquals(1, client.detailRequestCount)
+    }
+
+    @Test
+    fun `retries crown request after transient socket timeout`() {
+        val attempts = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val executor = Executors.newCachedThreadPool()
+        server.executor = executor
+        server.createContext("/transform.php") { exchange ->
+            if (attempts.incrementAndGet() == 1) {
+                Thread.sleep(1_200)
+            }
+            val response = detailResponse("41001").toByteArray(Charsets.UTF_8)
+            exchange.sendResponseHeaders(200, response.size.toLong())
+            exchange.responseBody.use { it.write(response) }
+        }
+        server.start()
+        try {
+            val baseUrl = "http://127.0.0.1:${server.address.port}"
+            val client = CrownApiClient(
+                parser = CrownResponseParser(),
+                fetchTimeoutMillis = 5_000,
+                httpCallTimeoutSeconds = 1,
+                nowMillis = System::currentTimeMillis
+            )
+
+            val result = client.fetchMatchesWithSession(
+                config.copy(queryKeyword = baseUrl),
+                session.copy(baseUrl = baseUrl)
+            )
+
+            assertEquals(1, result.matches.size)
+            assertEquals(2, attempts.get())
+        } finally {
+            server.stop(0)
+            executor.shutdownNow()
+        }
     }
 
     private class FakeCrownApiClient(

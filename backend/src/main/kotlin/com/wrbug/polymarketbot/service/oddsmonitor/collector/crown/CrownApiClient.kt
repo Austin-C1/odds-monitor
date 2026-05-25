@@ -8,6 +8,7 @@ import okhttp3.Response
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
+import java.io.IOException
 import java.nio.charset.Charset
 import java.math.BigDecimal
 import java.util.concurrent.TimeUnit
@@ -220,25 +221,47 @@ open class CrownApiClient @Autowired constructor(
         form: Map<String, String>,
         cookies: MutableMap<String, String>
     ): String {
-        val bodyBuilder = FormBody.Builder(Charsets.UTF_8)
-        form.forEach { (key, value) -> bodyBuilder.add(key, value) }
+        var attempt = 0
+        var lastFailure: IOException? = null
+        while (attempt < REQUEST_MAX_ATTEMPTS) {
+            try {
+                val bodyBuilder = FormBody.Builder(Charsets.UTF_8)
+                form.forEach { (key, value) -> bodyBuilder.add(key, value) }
 
-        val requestBuilder = Request.Builder()
-            .url(baseUrl.trimEnd('/') + path)
-            .post(bodyBuilder.build())
-            .header("Accept", "application/xml,text/xml,*/*")
-            .header("User-Agent", "Mozilla/5.0")
+                val requestBuilder = Request.Builder()
+                    .url(baseUrl.trimEnd('/') + path)
+                    .post(bodyBuilder.build())
+                    .header("Accept", "application/xml,text/xml,*/*")
+                    .header("User-Agent", "Mozilla/5.0")
 
-        if (cookies.isNotEmpty()) {
-            requestBuilder.header("Cookie", cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
-        }
+                if (cookies.isNotEmpty()) {
+                    requestBuilder.header("Cookie", cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
+                }
 
-        httpClient.newCall(requestBuilder.build()).execute().use { response ->
-            updateCookies(response, cookies)
-            if (!response.isSuccessful) {
-                throw CrownCollectionException("failed_http", "crown http ${response.code}")
+                httpClient.newCall(requestBuilder.build()).execute().use { response ->
+                    updateCookies(response, cookies)
+                    if (!response.isSuccessful) {
+                        throw CrownCollectionException("failed_http", "crown http ${response.code}")
+                    }
+                    return decodeResponseBody(response)
+                }
+            } catch (ex: IOException) {
+                lastFailure = ex
+                attempt += 1
+                if (attempt >= REQUEST_MAX_ATTEMPTS) {
+                    throw ex
+                }
+                sleepBeforeRetry()
             }
-            return decodeResponseBody(response)
+        }
+        throw lastFailure ?: CrownCollectionException("failed_network", "crown network request failed")
+    }
+
+    private fun sleepBeforeRetry() {
+        try {
+            Thread.sleep(REQUEST_RETRY_DELAY_MILLIS)
+        } catch (ex: InterruptedException) {
+            Thread.currentThread().interrupt()
         }
     }
 
@@ -291,6 +314,8 @@ open class CrownApiClient @Autowired constructor(
 
     companion object {
         const val DEFAULT_BASE_URL = "https://m407.mos077.com"
+        private const val REQUEST_MAX_ATTEMPTS = 2
+        private const val REQUEST_RETRY_DELAY_MILLIS = 250L
     }
 
     private data class CrownGameDetailKey(
