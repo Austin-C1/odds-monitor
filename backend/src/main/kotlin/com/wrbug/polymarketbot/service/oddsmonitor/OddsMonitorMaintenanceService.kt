@@ -1,5 +1,6 @@
 package com.wrbug.polymarketbot.service.oddsmonitor
 
+import com.wrbug.polymarketbot.repository.AutoBettingIntentRepository
 import com.wrbug.polymarketbot.repository.OddsAlertRecordRepository
 import com.wrbug.polymarketbot.repository.OddsCollectionLogRepository
 import com.wrbug.polymarketbot.repository.OddsSnapshotRepository
@@ -12,20 +13,25 @@ data class OddsMonitorCleanupResult(
     val deletedSnapshots: Int,
     val deletedCollectionLogs: Int,
     val deletedBrokenAlertRecords: Int,
-    val deletedAlertRecords: Int = 0
+    val deletedAlertRecords: Int = 0,
+    val deletedVerifiedPlacedIntents: Int = 0,
+    val deletedRejectedIntents: Int = 0
 ) {
     val hasDeletes: Boolean
         get() = deletedSnapshots > 0 ||
             deletedCollectionLogs > 0 ||
             deletedBrokenAlertRecords > 0 ||
-            deletedAlertRecords > 0
+            deletedAlertRecords > 0 ||
+            deletedVerifiedPlacedIntents > 0 ||
+            deletedRejectedIntents > 0
 }
 
 @Service
 class OddsMonitorMaintenanceService(
     private val snapshotRepository: OddsSnapshotRepository,
     private val collectionLogRepository: OddsCollectionLogRepository,
-    private val alertRecordRepository: OddsAlertRecordRepository
+    private val alertRecordRepository: OddsAlertRecordRepository,
+    private val autoBettingIntentRepository: AutoBettingIntentRepository
 ) {
     private val logger = LoggerFactory.getLogger(OddsMonitorMaintenanceService::class.java)
     private val running = AtomicBoolean(false)
@@ -43,11 +49,13 @@ class OddsMonitorMaintenanceService(
             val result = cleanup()
             if (result.hasDeletes) {
                 logger.info(
-                    "Odds monitor cleanup deleted snapshots={}, collectionLogs={}, brokenAlertRecords={}, alertRecords={}",
+                    "Odds monitor cleanup deleted snapshots={}, collectionLogs={}, brokenAlertRecords={}, alertRecords={}, verifiedPlacedIntents={}, rejectedIntents={}",
                     result.deletedSnapshots,
                     result.deletedCollectionLogs,
                     result.deletedBrokenAlertRecords,
-                    result.deletedAlertRecords
+                    result.deletedAlertRecords,
+                    result.deletedVerifiedPlacedIntents,
+                    result.deletedRejectedIntents
                 )
             }
         } catch (ex: Exception) {
@@ -92,12 +100,28 @@ class OddsMonitorMaintenanceService(
         } else {
             alertRecordRepository.deleteLegacyBrokenTemplateRecords()
         }
+        val deletedVerifiedPlacedIntents = if (includeVisibleHistory) {
+            deleteInBatches(safeMaxBatches, safeBatchSize) {
+                autoBettingIntentRepository.deleteBatchVerifiedPlacedIntents(safeBatchSize)
+            }
+        } else {
+            0
+        }
+        val deletedRejectedIntents = if (includeVisibleHistory) {
+            deleteInBatches(safeMaxBatches, safeBatchSize) {
+                autoBettingIntentRepository.deleteBatchRejectedIntents(safeBatchSize)
+            }
+        } else {
+            0
+        }
 
         return OddsMonitorCleanupResult(
             deletedSnapshots = deletedSnapshots,
             deletedCollectionLogs = deletedCollectionLogs,
             deletedBrokenAlertRecords = deletedBrokenAlertRecords,
-            deletedAlertRecords = deletedAlertRecords
+            deletedAlertRecords = deletedAlertRecords,
+            deletedVerifiedPlacedIntents = deletedVerifiedPlacedIntents,
+            deletedRejectedIntents = deletedRejectedIntents
         )
     }
 

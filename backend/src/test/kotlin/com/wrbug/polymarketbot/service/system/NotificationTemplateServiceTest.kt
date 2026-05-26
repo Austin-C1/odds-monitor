@@ -35,8 +35,8 @@ class NotificationTemplateServiceTest {
     fun `template type labels should be fully Chinese`() {
         val templateTypes = service.getTemplateTypes()
 
-        assertEquals(listOf("赛前赔率推送", "滚球赔率推送", "投注通知模板"), templateTypes.map { it.name })
-        assertTrue(templateTypes.all { it.description.contains("通知") || it.description.contains("模板") })
+        assertEquals(listOf("赛前赔率推送", "滚球赔率推送", "投注成功模板"), templateTypes.map { it.name })
+        assertTrue(templateTypes.all { it.description.isNotBlank() })
         assertFalse(templateTypes.any { it.name.contains("Push") || it.name.contains("Template") })
         assertFalse(templateTypes.any { it.description.contains("Notification") || it.description.contains("Reserved") })
     }
@@ -86,7 +86,7 @@ class NotificationTemplateServiceTest {
     }
 
     @Test
-    fun `betting template should be reserved as configurable placeholder`() {
+    fun `betting template should expose success notification variables`() {
         val response = service.getTemplateVariables("BETTING_TEMPLATE")!!
         val variables = response.variables.map { it.key }
         val categories = response.categories.map { it.key }
@@ -97,7 +97,7 @@ class NotificationTemplateServiceTest {
         assertTrue(variables.contains("odds"))
         assertTrue(variables.contains("amount"))
         assertTrue(categories.contains("betting"))
-        assertTrue(template.templateContent.contains("投注模板"))
+        assertTrue(template.templateContent.contains("投注成功"))
     }
 
     @Test

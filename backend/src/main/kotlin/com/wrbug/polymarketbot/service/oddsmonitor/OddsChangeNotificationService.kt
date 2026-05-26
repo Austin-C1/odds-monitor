@@ -91,13 +91,19 @@ class OddsChangeNotificationService(
         }
 
         val leagueMatched = shouldNotifyLeague(match, standardMatch)
-        if (!leagueMatched) {
+        val leagueEligibleConfigs = if (leagueMatched) {
+            phaseConfigs
+        } else {
+            phaseConfigs.filter { isTelegramTestModeEnabled(it) }
+        }
+        if (leagueEligibleConfigs.isEmpty()) {
             return
         }
-        val eligibleConfigs = configsQualifiedBySelectedLeagueRules(market, previousOdds, currentOdds, phaseConfigs)
+        val eligibleConfigs = configsQualifiedBySelectedLeagueRules(market, previousOdds, currentOdds, leagueEligibleConfigs)
         if (eligibleConfigs.isEmpty()) {
             return
         }
+        val hasTestModeEligibleConfig = eligibleConfigs.any { isTelegramTestModeEnabled(it) }
 
         enqueueMergedNotification(
             match = match,
@@ -109,7 +115,7 @@ class OddsChangeNotificationService(
             previousOdds = previousOdds ?: BigDecimal.ZERO,
             currentOdds = currentOdds,
             configs = eligibleConfigs,
-            applyOddsMoveFilter = leagueMatched,
+            applyOddsMoveFilter = leagueMatched && !hasTestModeEligibleConfig,
             matchPhase = matchPhase,
             liveContext = liveContextForNotification(matchPhase, match, standardMatch, now)
         )
@@ -220,7 +226,7 @@ class OddsChangeNotificationService(
             }
             val existingChange = pendingMarket.changes[market.sourceKey]
             val updatedChange = if (existingChange == null) {
-                OddsChangeNotificationItem(market.sourceKey, previousOdds, currentOdds)
+                OddsChangeNotificationItem(market.sourceKey, previousOdds, currentOdds, market.lineValue)
             } else {
                 existingChange.copy(currentOdds = currentOdds)
             }
@@ -250,12 +256,26 @@ class OddsChangeNotificationService(
         if (pending.markets.isEmpty()) {
             return
         }
-        val markets = pending.markets.values.map { market ->
+        val markets = pending.markets.mapNotNull { (marketKey, market) ->
+            val finalQualifiedChanges = market.changes.values.filter { change ->
+                isChangeQualifiedByFinalCombinedWater(
+                    matchId = pending.matchId,
+                    marketKey = marketKey,
+                    change = change,
+                    configs = pending.configs
+                )
+            }
+            if (finalQualifiedChanges.isEmpty()) {
+                return@mapNotNull null
+            }
             OddsChangeNotificationMarketItem(
                 marketType = market.marketType,
                 marketLabel = market.marketLabel,
-                changes = market.changes.values.toList()
+                changes = finalQualifiedChanges
             )
+        }
+        if (markets.isEmpty()) {
+            return
         }
         val expectedSources = expectedSourcesForNotification(pending)
         val timestampText = DateUtils.formatDateTime()
@@ -300,6 +320,46 @@ class OddsChangeNotificationService(
         }.onFailure { error ->
             logger.warn("Failed to send odds change Telegram notification: {}", error.message)
         }
+    }
+
+    private fun isChangeQualifiedByFinalCombinedWater(
+        matchId: Long,
+        marketKey: OddsChangeNotificationMarketKey,
+        change: OddsChangeNotificationItem,
+        configs: List<NotificationConfigDto>
+    ): Boolean {
+        val (testModeConfigs, normalConfigs) = configs.partition { isTelegramTestModeEnabled(it) }
+        if (normalConfigs.isEmpty()) {
+            return testModeConfigs.isNotEmpty()
+        }
+        if (activeCombinedWaterLimits(marketKey.marketType, normalConfigs).isEmpty()) {
+            return true
+        }
+        if (configsWithoutCombinedWaterLimit(marketKey.marketType, normalConfigs).isNotEmpty()) {
+            return true
+        }
+        val pairSelectionName = pairSelectionName(marketKey.marketType, marketKey.selectionName)
+            ?: return testModeConfigs.isNotEmpty()
+        val pairMarket = marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
+            matchId = matchId,
+            sourceKey = change.sourceKey,
+            marketType = marketKey.marketType,
+            lineValue = change.lineValue ?: marketKey.lineValue,
+            selectionName = pairSelectionName
+        ) ?: return testModeConfigs.isNotEmpty()
+        val pairMarketId = pairMarket.id ?: return testModeConfigs.isNotEmpty()
+        val pairOdds = snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(pairMarketId)?.oddsValue
+            ?: return testModeConfigs.isNotEmpty()
+
+        val normalQualified = normalConfigs.any { config ->
+            !shouldSuppressOddsChangeByCombinedWater(
+                marketType = marketKey.marketType,
+                currentOdds = asianWaterOdds(change.sourceKey, marketKey.marketType, change.currentOdds),
+                pairedOdds = asianWaterOdds(pairMarket.sourceKey, pairMarket.marketType, pairOdds),
+                configs = listOf(config)
+            )
+        }
+        return normalQualified || testModeConfigs.isNotEmpty()
     }
 
     private fun expectedSourcesForNotification(pending: PendingOddsChangeNotification): List<String> {
@@ -399,9 +459,10 @@ class OddsChangeNotificationService(
         currentOdds: BigDecimal,
         configs: List<NotificationConfigDto>
     ): List<NotificationConfigDto> {
-        return configs
+        val (testModeConfigs, normalConfigs) = configs.partition { isTelegramTestModeEnabled(it) }
+        return (testModeConfigs + normalConfigs
             .let { filterConfigsByOddsMove(market, previousOdds, currentOdds, it) }
-            .let { filterConfigsByCombinedWater(market, currentOdds, it) }
+            .let { filterConfigsByCombinedWater(market, currentOdds, it) })
             .distinctBy { config -> config.id?.toString() ?: config.name }
     }
 
@@ -544,7 +605,8 @@ class OddsChangeNotificationService(
 data class OddsChangeNotificationItem(
     val sourceKey: String,
     val previousOdds: BigDecimal,
-    val currentOdds: BigDecimal
+    val currentOdds: BigDecimal,
+    val lineValue: String? = null
 )
 
 data class OddsChangeNotificationMarketItem(
@@ -634,6 +696,10 @@ fun activeMonitorTelegramConfigs(configs: List<NotificationConfigDto>): List<Not
     return configs.filter { config ->
         config.enabled && (config.config as? NotificationConfigData.Telegram)?.data?.monitorModeEnabled == true
     }
+}
+
+private fun isTelegramTestModeEnabled(config: NotificationConfigDto): Boolean {
+    return config.enabled && (config.config as? NotificationConfigData.Telegram)?.data?.testModeEnabled == true
 }
 
 private fun mergeNotificationConfigs(

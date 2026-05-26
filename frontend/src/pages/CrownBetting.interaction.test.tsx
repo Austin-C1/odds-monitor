@@ -66,6 +66,12 @@ vi.mock('../services/api', () => ({
       if (url === '/system/notifications/configs/list') {
         return Promise.resolve({ data: { code: 0, data: mockApiState.notificationConfigs } })
       }
+      if (url === '/system/config/get') {
+        return Promise.resolve({ data: { code: 0, data: { autoBettingEnabled: true } } })
+      }
+      if (url === '/system/config/auto-betting-enabled/update') {
+        return Promise.resolve({ data: { code: 0, data: { autoBettingEnabled: data?.autoBettingEnabled === true } } })
+      }
       if (url === '/auto-betting/adspower/status') {
         return Promise.resolve({
           data: {

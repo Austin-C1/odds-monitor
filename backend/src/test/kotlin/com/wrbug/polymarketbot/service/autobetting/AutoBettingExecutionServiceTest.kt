@@ -21,11 +21,13 @@ class AutoBettingExecutionServiceTest {
     private val intentRepository = mock(AutoBettingIntentRepository::class.java)
     private val platformMatchRepository = mock(OddsPlatformMatchRepository::class.java)
     private val gateway = mock(CrownBetPlacementGateway::class.java)
+    private val bettingNotificationService = mock(AutoBettingNotificationService::class.java)
     private val service = AutoBettingExecutionService(
         intentRepository = intentRepository,
         platformMatchRepository = platformMatchRepository,
         objectMapper = jacksonObjectMapper(),
-        crownBetPlacementGateway = gateway
+        crownBetPlacementGateway = gateway,
+        bettingNotificationService = bettingNotificationService
     )
 
     @BeforeEach
@@ -104,6 +106,39 @@ class AutoBettingExecutionServiceTest {
         assertEquals("CROWN-10001", result.crownBetReference)
         assertEquals(listOf("placing", "placed"), captor.allValues.map { it.status })
         assertEquals("CROWN-10001", captor.allValues.last().crownBetReference)
+        verify(bettingNotificationService).sendPlacedIntent(captor.allValues.last(), 2_000_000)
+    }
+
+    @Test
+    fun `disabled backend auto betting rejects ready intent before crown placement`() {
+        val systemConfigService = mock(com.wrbug.polymarketbot.service.system.SystemConfigService::class.java)
+        val guardedService = AutoBettingExecutionService(
+            intentRepository = intentRepository,
+            platformMatchRepository = platformMatchRepository,
+            objectMapper = jacksonObjectMapper(),
+            crownBetPlacementGateway = gateway,
+            systemConfigService = systemConfigService,
+            bettingNotificationService = bettingNotificationService
+        )
+        val intent = liveHandicapIntent()
+        `when`(systemConfigService.isAutoBettingEnabled()).thenReturn(false)
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = guardedService.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+
+        assertEquals("rejected", result.status)
+        assertEquals("auto_betting_disabled", result.reason)
+        assertEquals("rejected", captor.value.status)
+        verifyNoInteractions(gateway)
     }
 
     @Test
@@ -752,6 +787,7 @@ class AutoBettingExecutionServiceTest {
         bettingMode = "live",
         matchPhase = "live",
         accountKey = "crown-seed-cuu07crbyfa",
+        accountDisplayName = "皇冠主号",
         leagueName = "沙特超级联赛",
         matchTitle = "阿尔菲斯 vs 纳加马安萘哉",
         marketType = "handicap",

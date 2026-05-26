@@ -20,15 +20,43 @@ class SystemConfigServiceTest {
     fun `system config dto should only expose current odds monitor settings`() {
         val fields = SystemConfigDto::class.java.declaredFields.map { it.name }.toSet()
 
-        assertEquals(setOf("liveObservationMinutes"), fields)
+        assertEquals(setOf("liveObservationMinutes", "autoBettingEnabled"), fields)
     }
 
     @Test
     fun `system config service should not keep old trading config keys`() {
         val currentKeys = SystemConfigService.configKeys()
 
-        assertEquals(setOf(SystemConfigService.CONFIG_KEY_LIVE_OBSERVATION_MINUTES), currentKeys)
+        assertEquals(
+            setOf(
+                SystemConfigService.CONFIG_KEY_LIVE_OBSERVATION_MINUTES,
+                SystemConfigService.CONFIG_KEY_AUTO_BETTING_ENABLED
+            ),
+            currentKeys
+        )
         assertFalse(currentKeys.any { it.contains("builder") || it.contains("auto_redeem") || it.contains("order_notification") })
+    }
+
+    @Test
+    fun `auto betting should be disabled when not configured`() {
+        `when`(systemConfigRepository.findByConfigKey(SystemConfigService.CONFIG_KEY_AUTO_BETTING_ENABLED))
+            .thenReturn(null)
+
+        assertEquals(false, service.isAutoBettingEnabled())
+        assertEquals(false, service.getSystemConfig().autoBettingEnabled)
+    }
+
+    @Test
+    fun `update auto betting enabled should persist boolean switch`() {
+        `when`(systemConfigRepository.findByConfigKey(SystemConfigService.CONFIG_KEY_AUTO_BETTING_ENABLED))
+            .thenReturn(null)
+        val captor = ArgumentCaptor.forClass(SystemConfig::class.java)
+
+        service.updateAutoBettingEnabled(true)
+
+        verify(systemConfigRepository).save(captor.capture())
+        assertEquals(SystemConfigService.CONFIG_KEY_AUTO_BETTING_ENABLED, captor.value.configKey)
+        assertEquals("true", captor.value.configValue)
     }
 
     @Test

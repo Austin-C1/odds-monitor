@@ -159,6 +159,9 @@ export const apiService = {
 
     updateLiveObservationMinutes: (data: { liveObservationMinutes?: number | null }) =>
       apiClient.post<ApiResponse<SystemConfig>>('/system/config/live-observation-minutes/update', data),
+
+    updateAutoBettingEnabled: (data: { autoBettingEnabled: boolean }) =>
+      apiClient.post<ApiResponse<SystemConfig>>('/system/config/auto-betting-enabled/update', data),
   },
 }
 

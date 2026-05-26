@@ -15,6 +15,7 @@ data class TelegramConfigData(
     val chatIds: List<String>,
     val monitorModeEnabled: Boolean = false,
     val liveOnlyModeEnabled: Boolean = false,
+    val testModeEnabled: Boolean = false,
     val prematchWindowMinutes: Int? = null,
     val handicapCombinedWaterMin: String? = null,
     val totalCombinedWaterMin: String? = null,

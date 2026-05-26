@@ -9,6 +9,7 @@ export interface TelegramNotificationConfig {
   chatIds?: string[] | string
   monitorModeEnabled?: boolean
   liveOnlyModeEnabled?: boolean
+  testModeEnabled?: boolean
   prematchWindowMinutes?: number | string | null
   handicapCombinedWaterMin?: number | string | null
   totalCombinedWaterMin?: number | string | null
@@ -45,6 +46,7 @@ export interface NotificationConfigUpdateRequest {
 
 export interface SystemConfig {
   liveObservationMinutes?: number | string | null
+  autoBettingEnabled?: boolean
 }
 
 export interface NotificationTemplate {

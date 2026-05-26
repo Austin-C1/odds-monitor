@@ -63,6 +63,10 @@ type NotificationConfigResponse = {
   }
 }
 
+type SystemConfigResponse = {
+  autoBettingEnabled?: boolean
+}
+
 type AutoBettingDecisionResponse = {
   id?: number
   status: string
@@ -177,6 +181,15 @@ const readMonitorMode = async (fallbackMode: AutoBettingMode): Promise<AutoBetti
   }
 }
 
+const readBackendAutoBettingEnabled = async (): Promise<boolean> => {
+  try {
+    const response = await apiClient.post<ApiResponse<SystemConfigResponse>>('/system/config/get', {})
+    return response.data.code === 0 && response.data.data?.autoBettingEnabled === true
+  } catch {
+    return false
+  }
+}
+
 const verifyAccountBeforeBetting = async (account: StoredCrownAccount): Promise<StoredCrownAccount> => {
   if (account.bettingEnabled !== true) {
     return account
@@ -248,6 +261,7 @@ const runAutomationForSignal = async (
         {
           signalSource: 'odds_monitor',
           accountKey: row.id,
+          accountDisplayName: row.accountName,
           bettingMode: row.bettingMode,
           matchPhase: row.matchPhase,
           leagueName: row.leagueName,
@@ -353,6 +367,11 @@ const CrownBettingBackgroundRunner = () => {
       if (disposed || runningRef.current) return
       const storedSettings = readStoredAutomationSettings()
       if (!storedSettings.autoEnabled) return
+      const backendAutoBettingEnabled = await readBackendAutoBettingEnabled()
+      if (!backendAutoBettingEnabled) {
+        writeStoredAutomationSettings({ ...storedSettings, autoEnabled: false })
+        return
+      }
 
       const owner = `background-${Date.now()}-${Math.random()}`
       if (!acquireCrownBettingAutomationLock(owner)) return

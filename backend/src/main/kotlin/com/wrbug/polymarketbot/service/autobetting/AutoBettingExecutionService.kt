@@ -8,6 +8,7 @@ import com.wrbug.polymarketbot.repository.AutoBettingIntentRepository
 import com.wrbug.polymarketbot.repository.OddsPlatformMatchRepository
 import com.wrbug.polymarketbot.service.oddsmonitor.OddsMatchCandidate
 import com.wrbug.polymarketbot.service.oddsmonitor.OddsMatchMatcher
+import com.wrbug.polymarketbot.service.system.SystemConfigService
 import com.wrbug.polymarketbot.util.TextEncodingUtils
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -87,6 +88,8 @@ class AutoBettingExecutionService(
     private val platformMatchRepository: OddsPlatformMatchRepository,
     private val objectMapper: ObjectMapper,
     private val crownBetPlacementGateway: CrownBetPlacementGateway,
+    private val systemConfigService: SystemConfigService? = null,
+    private val bettingNotificationService: AutoBettingNotificationService? = null,
     private val profileExecutionLock: CrownProfileExecutionLock = CrownProfileExecutionLock()
 ) {
     private val staleReadyTimeoutMillis = 180_000L
@@ -103,6 +106,13 @@ class AutoBettingExecutionService(
             ?: return missingIntent(intentId)
         if (intent.status == STATUS_PLACED && intent.crownHistoryVerified) {
             return intent.toDecision("crown_history_verified")
+        }
+        if (!isAutoBettingEnabled()) {
+            return if (intent.status == STATUS_READY || intent.status == STATUS_PLACING) {
+                reject(intent, "auto_betting_disabled", now)
+            } else {
+                intent.toDecision("auto_betting_disabled")
+            }
         }
         if (intent.status == STATUS_PLACED_UNVERIFIED) {
             return recheckUnverifiedCrownIntent(intent, request, now)
@@ -151,6 +161,7 @@ class AutoBettingExecutionService(
                     updatedAt = now
                 )
             )
+            bettingNotificationService?.sendPlacedIntent(placed, now)
             return placed.toDecision(reason)
         }
 
@@ -229,6 +240,7 @@ class AutoBettingExecutionService(
                     updatedAt = now
                 )
             )
+            bettingNotificationService?.sendPlacedIntent(placed, now)
             return placed.toDecision(reason)
         }
 
@@ -454,6 +466,7 @@ class AutoBettingExecutionService(
         bettingMode = "",
         matchPhase = "",
         accountKey = "",
+        accountDisplayName = null,
         leagueName = "",
         matchTitle = "",
         marketType = "",
@@ -480,6 +493,7 @@ class AutoBettingExecutionService(
             bettingMode = bettingMode,
             matchPhase = matchPhase,
             accountKey = accountKey,
+            accountDisplayName = accountDisplayName,
             leagueName = leagueName,
             matchTitle = matchTitle,
             marketType = marketType,
@@ -515,6 +529,10 @@ class AutoBettingExecutionService(
             rejectReason = "crown_execution_timeout",
             updatedAt = now
         )
+    }
+
+    private fun isAutoBettingEnabled(): Boolean {
+        return systemConfigService?.isAutoBettingEnabled() ?: true
     }
 
     private fun com.fasterxml.jackson.databind.JsonNode.textOrNull(): String? {

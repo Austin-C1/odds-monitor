@@ -117,12 +117,12 @@ const zhCN = {
     templateTypes: {
       ODDS_PREMATCH_PUSH: '赛前模板',
       ODDS_LIVE_PUSH: '滚球模板',
-      BETTING_TEMPLATE: '投注模板',
+      BETTING_TEMPLATE: '投注成功模板',
     },
     templateTypeDescriptions: {
       ODDS_PREMATCH_PUSH: '赛前赔率变化推送格式',
       ODDS_LIVE_PUSH: '滚球赔率变化推送格式',
-      BETTING_TEMPLATE: '预留给后续投注功能的模板位置',
+      BETTING_TEMPLATE: '投注成功后自动推送的消息格式',
     },
     templates: {
       templateContent: '模板内容',
@@ -148,6 +148,8 @@ const zhCN = {
       bettingVariables: '投注变量',
       variableLabels: {
         time: '时间',
+        account_name: '投注账号',
+        account_key: '账号ID',
         match_title: '比赛名称',
         league_name: '联赛名称',
         market_lines: '盘口内容',
@@ -161,6 +163,8 @@ const zhCN = {
       },
       variableDescriptions: {
         time: '消息生成时间',
+        account_name: '完成投注的账号名称',
+        account_key: '完成投注的账号ID',
         match_title: '当前比赛名称',
         league_name: '当前联赛名称',
         market_lines: '需要推送的盘口和赔率内容',

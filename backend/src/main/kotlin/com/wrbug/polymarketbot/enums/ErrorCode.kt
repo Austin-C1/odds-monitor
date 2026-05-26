@@ -46,10 +46,5 @@ enum class ErrorCode(
         fun fromCode(code: Int): ErrorCode? {
             return entries.find { it.code == code }
         }
-
-        @Deprecated("使用 messageKey + MessageSource 获取多语言消息", ReplaceWith("ErrorCode.messageKey"))
-        fun getMessage(code: Int): String {
-            return fromCode(code)?.message ?: "未知错误"
-        }
     }
 }

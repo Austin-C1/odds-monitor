@@ -28,6 +28,7 @@ describe('frontend API surface', () => {
       '/auth/reset-password',
       '/system/notifications/',
       '/system/config/live-observation-minutes/update',
+      '/system/config/auto-betting-enabled/update',
     ].forEach((currentEndpoint) => {
       expect(source).toContain(currentEndpoint)
     })

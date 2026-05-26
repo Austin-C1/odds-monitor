@@ -291,6 +291,71 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
+    fun `merged alert is suppressed when final two side combined water falls below configured limit`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository
+        )
+        val homeMarket = oddsMarket(selectionName = "home").copy(id = 20)
+        val awayMarket = oddsMarket(selectionName = "away").copy(id = 21)
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(telegramMonitorConfig(handicapCombinedWaterMin = "1.86", handicapOddsMoveMin = "0.03"))
+            )
+        }
+        `when`(
+            marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
+                100,
+                "crown",
+                "handicap",
+                "0",
+                "away"
+            )
+        ).thenReturn(awayMarket)
+        `when`(
+            marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
+                100,
+                "crown",
+                "handicap",
+                "0",
+                "home"
+            )
+        ).thenReturn(homeMarket)
+        `when`(snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(21)).thenReturn(
+            OddsSnapshot(marketId = 21, sourceKey = "crown", oddsValue = BigDecimal("0.94")),
+            OddsSnapshot(marketId = 21, sourceKey = "crown", oddsValue = BigDecimal("0.89"))
+        )
+        `when`(snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(20)).thenReturn(
+            OddsSnapshot(marketId = 20, sourceKey = "crown", oddsValue = BigDecimal("0.93"))
+        )
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown"),
+            homeMarket,
+            BigDecimal("0.88"),
+            BigDecimal("0.93")
+        )
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown"),
+            awayMarket,
+            BigDecimal("0.94"),
+            BigDecimal("0.89")
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
     fun `live only monitor suppresses prematch odds changes`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
@@ -537,6 +602,46 @@ class OddsChangeNotificationServiceTest {
         Thread.sleep(1_800)
 
         verify(alertRepository, never()).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
+    fun `test mode bypasses prematch window filter but keeps prematch mode`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val matchRepository = mock(OddsMatchRepository::class.java)
+        val now = System.currentTimeMillis()
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            matchRepository
+        )
+
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(
+                    telegramMonitorConfig(
+                        liveOnlyModeEnabled = false,
+                        testModeEnabled = true,
+                        prematchWindowMinutes = 30,
+                        handicapOddsMoveMin = "0.08"
+                    )
+                )
+            )
+        }
+        `when`(matchRepository.findById(100)).thenReturn(
+            Optional.of(OddsMatch(id = 100, startTime = now + 45 * 60_000, status = "scheduled"))
+        )
+
+        service.notifyIfChanged(platformMatch(startTime = now + 45 * 60_000), oddsMarket(), BigDecimal("0.88"), BigDecimal("0.98"))
+        Thread.sleep(1_800)
+
+        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
     }
 
     @Test
@@ -1048,6 +1153,67 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
+    fun `test mode bypasses telegram league water and movement filters`() {
+        val alertRepository = mock(OddsAlertRecordRepository::class.java)
+        val telegramNotificationService = mock(TelegramNotificationService::class.java)
+        val notificationConfigService = mock(NotificationConfigService::class.java)
+        val marketRepository = mock(OddsMarketRepository::class.java)
+        val snapshotRepository = mock(OddsSnapshotRepository::class.java)
+        val leagueConfigRepository = mock(SystemConfigRepository::class.java)
+        val leagueFilterService = OddsLeagueFilterService(leagueConfigRepository)
+        val service = OddsChangeNotificationService(
+            alertRepository,
+            telegramNotificationService,
+            notificationConfigService,
+            marketRepository,
+            snapshotRepository,
+            leagueFilterService = leagueFilterService
+        )
+        val market = oddsMarket(sourceKey = "crown", matchId = 100).copy(id = 20, selectionName = "home")
+        val pairMarket = oddsMarket(sourceKey = "crown", matchId = 100).copy(id = 21, selectionName = "away")
+
+        `when`(leagueConfigRepository.findByConfigKey(OddsLeagueFilterService.CONFIG_KEY)).thenReturn(
+            com.wrbug.polymarketbot.entity.SystemConfig(
+                configKey = OddsLeagueFilterService.CONFIG_KEY,
+                configValue = """["鏃ユ湰J1鐧惧勾鏋勬兂鑱旇禌"]"""
+            )
+        )
+        runBlocking {
+            `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
+                listOf(
+                    telegramMonitorConfig(
+                        testModeEnabled = true,
+                        handicapCombinedWaterMin = "1.88",
+                        handicapOddsMoveMin = "0.08"
+                    )
+                )
+            )
+        }
+        `when`(
+            marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
+                100,
+                "crown",
+                "handicap",
+                "0",
+                "away"
+            )
+        ).thenReturn(pairMarket)
+        `when`(snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(21)).thenReturn(
+            OddsSnapshot(marketId = 21, sourceKey = "crown", oddsValue = BigDecimal("0.94"))
+        )
+
+        service.notifyIfChanged(
+            platformMatch(sourceKey = "crown", rawLeagueName = "鑻辨牸鍏?- 鍖楅儴瓒呯骇鑱旇禌"),
+            market,
+            BigDecimal("0.90"),
+            BigDecimal("0.93")
+        )
+        Thread.sleep(1_800)
+
+        verify(alertRepository, times(1)).save(org.mockito.ArgumentMatchers.any())
+    }
+
+    @Test
     fun `playoff and special betting leagues never bypass telegram filter by combined water`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
@@ -1446,6 +1612,7 @@ class OddsChangeNotificationServiceTest {
     private fun telegramMonitorConfig(
         monitorModeEnabled: Boolean = true,
         liveOnlyModeEnabled: Boolean = false,
+        testModeEnabled: Boolean = false,
         prematchWindowMinutes: Int? = null,
         handicapCombinedWaterMin: String? = null,
         totalCombinedWaterMin: String? = null,
@@ -1463,6 +1630,7 @@ class OddsChangeNotificationServiceTest {
                 chatIds = listOf("chat"),
                 monitorModeEnabled = monitorModeEnabled,
                 liveOnlyModeEnabled = liveOnlyModeEnabled,
+                testModeEnabled = testModeEnabled,
                 prematchWindowMinutes = prematchWindowMinutes,
                 handicapCombinedWaterMin = handicapCombinedWaterMin,
                 totalCombinedWaterMin = totalCombinedWaterMin,

@@ -142,6 +142,9 @@ type NotificationConfigResponse = {
     liveOnlyModeEnabled?: boolean
   }
 }
+type SystemConfigResponse = {
+  autoBettingEnabled?: boolean
+}
 
 const STORAGE_KEY = 'crown-betting-accounts'
 const AUTOMATION_SETTINGS_STORAGE_KEY = 'crown-betting-automation-settings'
@@ -331,6 +334,17 @@ const readStoredAutomationSettings = (): AutomationSettings => {
   }
 }
 
+const persistAutomationSettings = (settings: AutomationSettings) => {
+  localStorage.setItem(AUTOMATION_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+}
+
+const updateAutoBettingEnabled = (autoBettingEnabled: boolean) => (
+  apiClient.post<ApiResponse<SystemConfigResponse>>(
+    '/system/config/auto-betting-enabled/update',
+    { autoBettingEnabled },
+  )
+)
+
 const monitorModeFromNotificationConfigs = (configs: NotificationConfigResponse[]): AutoBettingMode | null => {
   const monitorConfig = configs.find((config) => {
     if (config.enabled === false) return false
@@ -470,14 +484,35 @@ const CrownBetting = () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextAccounts))
   }
 
+  const syncAutoBettingEnabled = async (enabled: boolean) => {
+    try {
+      const response = await updateAutoBettingEnabled(enabled)
+      if (response.data.code !== 0) {
+        throw new Error(response.data.msg || '自动投注后端开关同步失败')
+      }
+    } catch (error: any) {
+      if (enabled) {
+        const disabledSettings = { ...readStoredAutomationSettings(), autoEnabled: false }
+        persistAutomationSettings(disabledSettings)
+        setAutomationSettings(disabledSettings)
+      }
+      message.error(extractApiErrorMessage(error, enabled ? '自动投注开启失败' : '自动投注关闭失败'))
+    }
+  }
+
   const updateAutomationSetting = <Key extends keyof AutomationSettings>(
     key: Key,
     value: AutomationSettings[Key],
   ) => {
-    setAutomationSettings((currentSettings) => ({
-      ...currentSettings,
+    const nextSettings = {
+      ...automationSettings,
       [key]: value,
-    }))
+    }
+    setAutomationSettings(nextSettings)
+    persistAutomationSettings(nextSettings)
+    if (key === 'autoEnabled') {
+      void syncAutoBettingEnabled(Boolean(value))
+    }
   }
 
   useEffect(() => {
@@ -507,8 +542,12 @@ const CrownBetting = () => {
     }
   }, [])
 
+  useEffect(() => {
+    void updateAutoBettingEnabled(readStoredAutomationSettings().autoEnabled).catch(() => undefined)
+  }, [])
+
   const saveAutomationSettings = () => {
-    localStorage.setItem(AUTOMATION_SETTINGS_STORAGE_KEY, JSON.stringify(automationSettings))
+    persistAutomationSettings(automationSettings)
     message.success('投注设置已保存')
   }
 
@@ -880,11 +919,22 @@ const CrownBetting = () => {
               reason: '未绑定 AdsPower 档案',
             }
           }
+          if (!readStoredAutomationSettings().autoEnabled) {
+            return {
+              ...row,
+              status: 'skipped' as const,
+              statusLabel: '跳过',
+              stakeAmount: 0,
+              stopRetry: true,
+              reason: formatAutoBettingReason('auto_betting_disabled'),
+            }
+          }
           const signalResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
             '/auto-betting/signals/odds-monitor',
             {
               signalSource: 'odds_monitor',
               accountKey: row.id,
+              accountDisplayName: row.accountName,
               bettingMode: row.bettingMode,
               matchPhase: row.matchPhase,
               leagueName: row.leagueName,
@@ -936,6 +986,16 @@ const CrownBetting = () => {
             signalTitle: row.matchTitle,
             queueLabel: selectedQueueItem ? `#${selectedQueueItem.queuePosition}/${signalQueue.length}` : '-',
           })
+          if (!readStoredAutomationSettings().autoEnabled) {
+            return {
+              ...row,
+              status: 'skipped' as const,
+              statusLabel: '跳过',
+              stakeAmount: 0,
+              stopRetry: true,
+              reason: formatAutoBettingReason('auto_betting_disabled'),
+            }
+          }
           const executionResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
             `/auto-betting/intents/${decision.id}/execute-crown`,
             {

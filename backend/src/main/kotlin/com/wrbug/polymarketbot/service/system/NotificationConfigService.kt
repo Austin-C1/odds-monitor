@@ -13,6 +13,13 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
+const val BETTING_SUCCESS_TELEGRAM_TYPE = "telegram_betting_success"
+
+fun isTelegramNotificationConfigType(type: String): Boolean {
+    return type.equals("telegram", ignoreCase = true) ||
+        type.equals(BETTING_SUCCESS_TELEGRAM_TYPE, ignoreCase = true)
+}
+
 @Service
 class NotificationConfigService(
     private val notificationConfigRepository: NotificationConfigRepository,
@@ -171,8 +178,8 @@ class NotificationConfigService(
     }
 
     private fun validateConfig(type: String, config: Map<String, Any>) {
-        when (type.lowercase()) {
-            "telegram" -> validateTelegramConfig(config)
+        when {
+            isTelegramNotificationConfigType(type) -> validateTelegramConfig(config)
         }
     }
 
@@ -198,6 +205,10 @@ class NotificationConfigService(
         val liveOnlyModeEnabled = config["liveOnlyModeEnabled"]
         require(liveOnlyModeEnabled == null || liveOnlyModeEnabled is Boolean) {
             "liveOnlyModeEnabled must be a boolean"
+        }
+        val testModeEnabled = config["testModeEnabled"]
+        require(testModeEnabled == null || testModeEnabled is Boolean) {
+            "testModeEnabled must be a boolean"
         }
         requireOptionalPrematchWindow(config["prematchWindowMinutes"], "prematchWindowMinutes")
         requireOptionalWaterLimit(config["handicapCombinedWaterMin"], "handicapCombinedWaterMin")
@@ -240,8 +251,8 @@ class NotificationConfigService(
             emptyMap()
         }
 
-        val configData = when (entity.type.lowercase()) {
-            "telegram" -> {
+        val configData = when {
+            isTelegramNotificationConfigType(entity.type) -> {
                 val botToken = configMap["botToken"]?.toString() ?: ""
                 val chatIds = when (val ids = configMap["chatIds"]) {
                     is List<*> -> ids.mapNotNull { it?.toString() }
@@ -258,6 +269,11 @@ class NotificationConfigService(
                     is String -> raw.equals("true", ignoreCase = true)
                     else -> false
                 }
+                val testModeEnabled = when (val raw = configMap["testModeEnabled"]) {
+                    is Boolean -> raw
+                    is String -> raw.equals("true", ignoreCase = true)
+                    else -> false
+                }
                 val prematchWindowMinutes = normalizePrematchWindow(configMap["prematchWindowMinutes"])
                 val handicapCombinedWaterMin = normalizeWaterLimit(configMap["handicapCombinedWaterMin"])
                 val totalCombinedWaterMin = normalizeWaterLimit(configMap["totalCombinedWaterMin"])
@@ -270,6 +286,7 @@ class NotificationConfigService(
                         chatIds = chatIds,
                         monitorModeEnabled = monitorModeEnabled,
                         liveOnlyModeEnabled = liveOnlyModeEnabled,
+                        testModeEnabled = testModeEnabled,
                         prematchWindowMinutes = prematchWindowMinutes,
                         handicapCombinedWaterMin = handicapCombinedWaterMin,
                         totalCombinedWaterMin = totalCombinedWaterMin,

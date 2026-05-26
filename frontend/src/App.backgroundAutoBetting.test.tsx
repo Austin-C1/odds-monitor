@@ -33,6 +33,9 @@ vi.mock('./services/api', () => ({
           },
         })
       }
+      if (url === '/system/config/get') {
+        return Promise.resolve({ data: { code: 0, data: { autoBettingEnabled: true } } })
+      }
       if (url === '/odds-monitor/alerts/list') {
         return Promise.resolve({ data: { code: 0, data: mockApiState.alerts } })
       }

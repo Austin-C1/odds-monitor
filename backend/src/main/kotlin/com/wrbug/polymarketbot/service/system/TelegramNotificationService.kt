@@ -181,7 +181,7 @@ class TelegramNotificationService(
 
         return try {
             val config = notificationConfigService.getConfigById(configId) ?: return false
-            if (!config.enabled || !config.type.equals("telegram", ignoreCase = true)) {
+            if (!config.enabled || !isTelegramNotificationConfigType(config.type)) {
                 return false
             }
             when (val configData = config.config) {
@@ -231,6 +231,19 @@ class TelegramNotificationService(
 
     suspend fun sendMessage(message: String) {
         sendMessage(message, TelegramNotificationAudience.ALL)
+    }
+
+    suspend fun sendBettingSuccessMessage(message: String) {
+        try {
+            val configs = notificationConfigService.getEnabledConfigsByType(BETTING_SUCCESS_TELEGRAM_TYPE)
+            if (configs.isEmpty()) {
+                logger.debug("No betting success Telegram configs enabled, skipping message")
+                return
+            }
+            sendMessageToConfigs(message, configs)
+        } catch (e: Exception) {
+            logger.error("Failed to send betting success Telegram message: ${e.message}", e)
+        }
     }
 
     suspend fun sendMonitorMessage(message: String) {

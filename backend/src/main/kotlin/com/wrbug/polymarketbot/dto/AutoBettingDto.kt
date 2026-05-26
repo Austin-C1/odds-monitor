@@ -5,6 +5,7 @@ import java.math.BigDecimal
 data class AutoBettingSignalRequest(
     val signalSource: String = "odds_monitor",
     val accountKey: String? = null,
+    val accountDisplayName: String? = null,
     val bettingMode: String,
     val matchPhase: String,
     val leagueName: String,
@@ -34,6 +35,7 @@ data class AutoBettingDecisionDto(
     val bettingMode: String,
     val matchPhase: String,
     val accountKey: String,
+    val accountDisplayName: String? = null,
     val leagueName: String,
     val matchTitle: String,
     val marketType: String,

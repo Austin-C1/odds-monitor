@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.service.autobetting
 import com.wrbug.polymarketbot.dto.AutoBettingSignalRequest
 import com.wrbug.polymarketbot.entity.AutoBettingIntent
 import com.wrbug.polymarketbot.repository.AutoBettingIntentRepository
+import com.wrbug.polymarketbot.service.system.SystemConfigService
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -91,6 +92,26 @@ class AutoBettingDecisionServiceTest {
         assertEquals("ready", decision.status)
         assertEquals(2, decision.queuePosition)
         assertEquals(6, decision.queueTotal)
+    }
+
+    @Test
+    fun `disabled backend auto betting records rejected signal intent`() {
+        val systemConfigService = mock(SystemConfigService::class.java)
+        val guardedService = AutoBettingDecisionService(repository, systemConfigService)
+        `when`(systemConfigService.isAutoBettingEnabled()).thenReturn(false)
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = guardedService.createIntent(
+            baseRequest(accountKey = "crown-account-1", accountDisplayName = "皇冠一号"),
+            now = 1_000_000
+        )
+
+        assertEquals("rejected", decision.status)
+        assertEquals("auto_betting_disabled", decision.reason)
+        assertEquals("皇冠一号", decision.accountDisplayName)
+        assertEquals("rejected", captor.value.status)
+        assertEquals("auto_betting_disabled", captor.value.rejectReason)
     }
 
     @Test
@@ -538,6 +559,7 @@ class AutoBettingDecisionServiceTest {
 
     private fun baseRequest(
         accountKey: String? = null,
+        accountDisplayName: String? = null,
         bettingMode: String = "prematch",
         matchPhase: String = "prematch",
         leagueName: String = "Premier League",
@@ -558,6 +580,7 @@ class AutoBettingDecisionServiceTest {
     ) = AutoBettingSignalRequest(
         signalSource = "odds_monitor",
         accountKey = accountKey,
+        accountDisplayName = accountDisplayName,
         bettingMode = bettingMode,
         matchPhase = matchPhase,
         leagueName = leagueName,

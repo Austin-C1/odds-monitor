@@ -29,6 +29,8 @@ module.exports = {
       },
     ],
     'react-hooks/exhaustive-deps': 'off',
+    'react-hooks/set-state-in-effect': 'off',
+    'react-hooks/immutability': 'off',
     'react-refresh/only-export-components': 'off',
   },
 }

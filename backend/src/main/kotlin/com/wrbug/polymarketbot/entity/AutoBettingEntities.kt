@@ -26,6 +26,8 @@ data class AutoBettingIntent(
     val matchPhase: String = "",
     @Column(name = "account_key", nullable = false, length = 64)
     val accountKey: String = "",
+    @Column(name = "account_display_name", length = 128)
+    val accountDisplayName: String? = null,
     @Column(name = "league_name", nullable = false, length = 128)
     val leagueName: String = "",
     @Column(name = "match_title", nullable = false, length = 255)

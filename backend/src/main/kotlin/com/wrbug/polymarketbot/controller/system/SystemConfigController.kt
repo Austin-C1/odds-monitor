@@ -1,6 +1,7 @@
 package com.wrbug.polymarketbot.controller.system
 
 import com.wrbug.polymarketbot.dto.ApiResponse
+import com.wrbug.polymarketbot.dto.AutoBettingEnabledUpdateRequest
 import com.wrbug.polymarketbot.dto.LiveObservationMinutesUpdateRequest
 import com.wrbug.polymarketbot.dto.SystemConfigDto
 import com.wrbug.polymarketbot.enums.ErrorCode
@@ -53,6 +54,31 @@ class SystemConfigController(
         } catch (ex: Exception) {
             logger.error("Failed to update live observation minutes: {}", ex.message, ex)
             ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, "Failed to update live observation minutes", messageSource))
+        }
+    }
+
+    @PostMapping("/auto-betting-enabled/update")
+    fun updateAutoBettingEnabled(
+        @RequestBody request: AutoBettingEnabledUpdateRequest
+    ): ResponseEntity<ApiResponse<SystemConfigDto>> {
+        return try {
+            val result = systemConfigService.updateAutoBettingEnabled(request.autoBettingEnabled)
+            result.fold(
+                onSuccess = { config -> ResponseEntity.ok(ApiResponse.success(config)) },
+                onFailure = { ex ->
+                    logger.error("Failed to update auto betting enabled: {}", ex.message, ex)
+                    ResponseEntity.ok(
+                        ApiResponse.error(
+                            ErrorCode.SERVER_ERROR,
+                            "Failed to update auto betting enabled: ${ex.message}",
+                            messageSource
+                        )
+                    )
+                }
+            )
+        } catch (ex: Exception) {
+            logger.error("Failed to update auto betting enabled: {}", ex.message, ex)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, "Failed to update auto betting enabled", messageSource))
         }
     }
 }

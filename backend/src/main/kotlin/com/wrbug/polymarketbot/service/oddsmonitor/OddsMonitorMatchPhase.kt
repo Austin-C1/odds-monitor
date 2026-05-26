@@ -62,6 +62,9 @@ fun telegramConfigMatchesOddsMonitorPhase(
             if (!telegram.data.liveOnlyModeEnabled) {
                 return false
             }
+            if (telegram.data.testModeEnabled) {
+                return true
+            }
             val limitMinutes = liveObservationMinutes?.takeIf { it > 0 } ?: return true
             val kickoffTime = startTime ?: return false
             val elapsedMillis = now - kickoffTime
@@ -70,6 +73,9 @@ fun telegramConfigMatchesOddsMonitorPhase(
         OddsMonitorMatchPhase.PREMATCH -> {
             if (telegram.data.liveOnlyModeEnabled) {
                 return false
+            }
+            if (telegram.data.testModeEnabled) {
+                return true
             }
             val windowMinutes = telegram.data.prematchWindowMinutes?.takeIf { it > 0 } ?: return true
             val kickoffTime = startTime ?: return false

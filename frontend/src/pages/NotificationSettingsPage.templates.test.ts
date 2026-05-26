@@ -40,8 +40,8 @@ describe('NotificationSettingsPage template configuration', () => {
       },
       {
         type: 'BETTING_TEMPLATE',
-        name: '投注通知模板',
-        description: '预留给后续投注通知使用',
+        name: '投注成功模板',
+        description: '投注成功后自动推送的消息格式',
       },
     ])
   })

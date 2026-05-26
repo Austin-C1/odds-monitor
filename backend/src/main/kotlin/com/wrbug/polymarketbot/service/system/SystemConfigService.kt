@@ -15,13 +15,20 @@ class SystemConfigService(
 
     companion object {
         const val CONFIG_KEY_LIVE_OBSERVATION_MINUTES = "odds_monitor.live_observation_minutes"
+        const val CONFIG_KEY_AUTO_BETTING_ENABLED = "auto_betting.enabled"
         private const val MAX_LIVE_OBSERVATION_MINUTES = 180
 
-        fun configKeys(): Set<String> = setOf(CONFIG_KEY_LIVE_OBSERVATION_MINUTES)
+        fun configKeys(): Set<String> = setOf(
+            CONFIG_KEY_LIVE_OBSERVATION_MINUTES,
+            CONFIG_KEY_AUTO_BETTING_ENABLED
+        )
     }
 
     fun getSystemConfig(): SystemConfigDto {
-        return SystemConfigDto(liveObservationMinutes = getLiveObservationMinutes())
+        return SystemConfigDto(
+            liveObservationMinutes = getLiveObservationMinutes(),
+            autoBettingEnabled = isAutoBettingEnabled()
+        )
     }
 
     fun getLiveObservationMinutes(): Int? {
@@ -30,6 +37,12 @@ class SystemConfigService(
             ?.takeIf { it.isNotEmpty() }
             ?.toIntOrNull()
             ?.takeIf { it > 0 && it <= MAX_LIVE_OBSERVATION_MINUTES }
+    }
+
+    fun isAutoBettingEnabled(): Boolean {
+        return getConfigValue(CONFIG_KEY_AUTO_BETTING_ENABLED)
+            ?.trim()
+            ?.equals("true", ignoreCase = true) == true
     }
 
     @Transactional
@@ -43,6 +56,17 @@ class SystemConfigService(
             Result.success(getSystemConfig())
         } catch (e: Exception) {
             logger.error("Failed to update odds monitor live observation minutes", e)
+            Result.failure(e)
+        }
+    }
+
+    @Transactional
+    fun updateAutoBettingEnabled(enabled: Boolean): Result<SystemConfigDto> {
+        return try {
+            updateConfigValue(CONFIG_KEY_AUTO_BETTING_ENABLED, enabled.toString())
+            Result.success(getSystemConfig())
+        } catch (e: Exception) {
+            logger.error("Failed to update auto betting enabled flag", e)
             Result.failure(e)
         }
     }
@@ -69,6 +93,7 @@ class SystemConfigService(
                 configValue = configValue,
                 description = when (configKey) {
                     CONFIG_KEY_LIVE_OBSERVATION_MINUTES -> "赔率监控滚球观察分钟限制；空值表示不限制"
+                    CONFIG_KEY_AUTO_BETTING_ENABLED -> "投注自动化后端总开关；关闭时拒绝创建和执行投注任务"
                     else -> null
                 }
             )

@@ -101,4 +101,29 @@ interface AutoBettingIntentRepository : JpaRepository<AutoBettingIntent, Long> {
         @Param("rejectReason") rejectReason: String,
         @Param("updatedAt") updatedAt: Long
     ): Int
+
+    @Modifying
+    @Transactional
+    @Query(
+        value = """
+        DELETE FROM auto_betting_intents
+        WHERE status = 'placed'
+          AND crown_history_verified = 1
+        LIMIT :limit
+        """,
+        nativeQuery = true
+    )
+    fun deleteBatchVerifiedPlacedIntents(@Param("limit") limit: Int): Int
+
+    @Modifying
+    @Transactional
+    @Query(
+        value = """
+        DELETE FROM auto_betting_intents
+        WHERE status = 'rejected'
+        LIMIT :limit
+        """,
+        nativeQuery = true
+    )
+    fun deleteBatchRejectedIntents(@Param("limit") limit: Int): Int
 }

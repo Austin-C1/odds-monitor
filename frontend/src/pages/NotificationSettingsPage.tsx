@@ -128,6 +128,7 @@ const TEST_NOTIFICATION_MESSAGE = '这是一条测试消息'
 type RobotConfigOverrides = {
   monitorModeEnabled?: boolean
   liveOnlyModeEnabled?: boolean
+  testModeEnabled?: boolean
   prematchWindowMinutes?: number | null
   handicapCombinedWaterMin?: number | null
   totalCombinedWaterMin?: number | null
@@ -240,6 +241,10 @@ const NotificationSettingsPage: React.FC = () => {
 
   const getLiveOnlyModeEnabled = useCallback((config: NotificationConfig) => {
     return Boolean(extractTelegramConfig(config).liveOnlyModeEnabled)
+  }, [])
+
+  const getTestModeEnabled = useCallback((config: NotificationConfig) => {
+    return Boolean(extractTelegramConfig(config).testModeEnabled)
   }, [])
 
   const isConfigReadyForTest = useCallback((config: NotificationConfig) => isTelegramConfigReadyForTest(config), [])
@@ -365,6 +370,7 @@ const NotificationSettingsPage: React.FC = () => {
         chatIds: '',
         monitorModeEnabled: false,
         liveOnlyModeEnabled: false,
+        testModeEnabled: false,
         prematchWindowMinutes: null,
         handicapCombinedWaterMin: null,
         totalCombinedWaterMin: null,
@@ -390,6 +396,7 @@ const NotificationSettingsPage: React.FC = () => {
         chatIds,
         monitorModeEnabled: Boolean(telegramConfig.monitorModeEnabled),
         liveOnlyModeEnabled: Boolean(telegramConfig.liveOnlyModeEnabled),
+        testModeEnabled: Boolean(telegramConfig.testModeEnabled),
         prematchWindowMinutes: normalizePrematchWindow(telegramConfig.prematchWindowMinutes),
         handicapCombinedWaterMin: normalizeWaterLimit(telegramConfig.handicapCombinedWaterMin),
         totalCombinedWaterMin: normalizeWaterLimit(telegramConfig.totalCombinedWaterMin),
@@ -417,6 +424,7 @@ const NotificationSettingsPage: React.FC = () => {
         chatIds: normalizeChatIds(telegramConfig.chatIds),
         monitorModeEnabled: overrides.monitorModeEnabled ?? Boolean(telegramConfig.monitorModeEnabled),
         liveOnlyModeEnabled: overrides.liveOnlyModeEnabled ?? Boolean(telegramConfig.liveOnlyModeEnabled),
+        testModeEnabled: overrides.testModeEnabled ?? Boolean(telegramConfig.testModeEnabled),
         prematchWindowMinutes: overrides.prematchWindowMinutes ?? normalizePrematchWindow(telegramConfig.prematchWindowMinutes),
         handicapCombinedWaterMin: overrides.handicapCombinedWaterMin ?? normalizeWaterLimit(telegramConfig.handicapCombinedWaterMin),
         totalCombinedWaterMin: overrides.totalCombinedWaterMin ?? normalizeWaterLimit(telegramConfig.totalCombinedWaterMin),
@@ -478,6 +486,20 @@ const NotificationSettingsPage: React.FC = () => {
       const response = await apiService.notifications.update(buildConfigPayload(config, { liveOnlyModeEnabled }))
       if (response.data.code === 0) {
         message.success(liveOnlyModeEnabled ? '已切换为滚球模式' : '已切换为赛前模式')
+        fetchConfigs()
+      } else {
+        message.error(response.data.msg || t('notificationSettings.updateFailed'))
+      }
+    } catch (error) {
+      showApiError(error, t('notificationSettings.updateFailed'))
+    }
+  }
+
+  const handleToggleTestMode = async (config: NotificationConfig, testModeEnabled: boolean) => {
+    try {
+      const response = await apiService.notifications.update(buildConfigPayload(config, { testModeEnabled }))
+      if (response.data.code === 0) {
+        message.success(testModeEnabled ? '测试模式已开启' : '测试模式已关闭')
         fetchConfigs()
       } else {
         message.error(response.data.msg || t('notificationSettings.updateFailed'))
@@ -645,6 +667,7 @@ const NotificationSettingsPage: React.FC = () => {
           chatIds: normalizeChatIds(values.config.chatIds),
           monitorModeEnabled: Boolean(values.config.monitorModeEnabled),
           liveOnlyModeEnabled: Boolean(values.config.liveOnlyModeEnabled),
+          testModeEnabled: Boolean(values.config.testModeEnabled),
           prematchWindowMinutes: normalizePrematchWindow(values.config.prematchWindowMinutes),
           handicapCombinedWaterMin: normalizeWaterLimit(values.config.handicapCombinedWaterMin),
           totalCombinedWaterMin: normalizeWaterLimit(values.config.totalCombinedWaterMin),
@@ -1072,6 +1095,17 @@ const NotificationSettingsPage: React.FC = () => {
               {getLiveOnlyModeEnabled(record) ? '滚球模式' : '赛前模式'}
             </Text>
           </Space>
+          <Space size={8} wrap>
+            <Switch
+              checked={getTestModeEnabled(record)}
+              size="small"
+              disabled={!getMonitorModeEnabled(record)}
+              onChange={(checked) => handleToggleTestMode(record, checked)}
+            />
+            <Text type={getTestModeEnabled(record) ? 'warning' : 'secondary'} style={{ fontSize: 12 }}>
+              测试模式{getTestModeEnabled(record) ? '：推送不筛选' : ''}
+            </Text>
+          </Space>
         </Space>
       </div>
       {renderFilterButton('合水筛选', formatWaterLimitSummary(record), () => openWaterLimitModal(record))}
@@ -1315,6 +1349,9 @@ const NotificationSettingsPage: React.FC = () => {
             <Input />
           </Form.Item>
           <Form.Item name={['config', 'liveOnlyModeEnabled']} hidden>
+            <Input />
+          </Form.Item>
+          <Form.Item name={['config', 'testModeEnabled']} hidden>
             <Input />
           </Form.Item>
           <Form.Item name={['config', 'prematchWindowMinutes']} hidden>

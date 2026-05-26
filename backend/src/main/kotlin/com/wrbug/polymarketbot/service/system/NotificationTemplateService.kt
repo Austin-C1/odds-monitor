@@ -33,8 +33,8 @@ class NotificationTemplateService(
             ),
             "BETTING_TEMPLATE" to TemplateTypeInfoDto(
                 type = "BETTING_TEMPLATE",
-                name = "投注通知模板",
-                description = "预留给投注通知使用的模板"
+                name = "投注成功模板",
+                description = "投注成功后自动推送的消息格式"
             )
         )
 
@@ -62,6 +62,8 @@ class NotificationTemplateService(
                 TemplateVariableDto("time", "common", 1)
             ),
             "BETTING_TEMPLATE" to listOf(
+                TemplateVariableDto("account_name", "betting", 8),
+                TemplateVariableDto("account_key", "betting", 9),
                 TemplateVariableDto("match_title", "betting", 10),
                 TemplateVariableDto("league_name", "betting", 11),
                 TemplateVariableDto("market_title", "betting", 12),
@@ -98,8 +100,9 @@ class NotificationTemplateService(
 时间：<code>{{time}}</code>
             """.trimIndent(),
             "BETTING_TEMPLATE" to """
-<b>投注模板</b>
+<b>投注成功</b>
 
+账号：{{account_name}}
 联赛：{{league_name}}
 比赛：{{match_title}}
 盘口：{{market_title}}
@@ -278,6 +281,8 @@ class NotificationTemplateService(
 
     private fun generateTestVariables(): Map<String, String> {
         return mapOf(
+            "account_name" to "皇冠主号",
+            "account_key" to "crown-account-1",
             "match_title" to "Arsenal vs Chelsea",
             "league_name" to "英格兰超级联赛",
             "market_lines" to "盘口：让球 主队 -0.5\n平博：0.91 -> 0.86\n皇冠：0.94 -> 0.90",

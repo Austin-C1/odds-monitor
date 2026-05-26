@@ -203,6 +203,7 @@ export const executionOddsFloor = (signalOdds: number, configuredMinimumOdds: nu
 
 const autoBettingReasonLabels: Record<string, string> = {
   accepted: '已接收',
+  auto_betting_disabled: '自动投注已关闭',
   crown_history_verified: '已确认下注',
   crown_receipt_verified: '已确认皇冠回执',
   crown_line_mismatch: '皇冠盘口已变化',

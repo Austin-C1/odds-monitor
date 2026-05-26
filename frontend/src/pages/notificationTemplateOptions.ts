@@ -15,8 +15,8 @@ export const FOCUSED_NOTIFICATION_TEMPLATE_TYPES: TemplateTypeInfo[] = [
   },
   {
     type: 'BETTING_TEMPLATE',
-    name: '投注通知模板',
-    description: '预留给后续投注通知使用',
+    name: '投注成功模板',
+    description: '投注成功后自动推送的消息格式',
   },
 ]
 
@@ -83,6 +83,8 @@ const DEFAULT_NOTIFICATION_TEMPLATE_VARIABLES: Record<string, TemplateVariablesR
     { key: 'time', category: 'common', sortOrder: 1 },
   ],
   BETTING_TEMPLATE: [
+    { key: 'account_name', category: 'betting', sortOrder: 8 },
+    { key: 'account_key', category: 'betting', sortOrder: 9 },
     { key: 'match_title', category: 'betting', sortOrder: 10 },
     { key: 'league_name', category: 'betting', sortOrder: 11 },
     { key: 'market_title', category: 'betting', sortOrder: 12 },
@@ -114,8 +116,9 @@ const DEFAULT_NOTIFICATION_TEMPLATE_CONTENT: Record<string, string> = {
 
 筛选：{{filter_summary}}
 时间：<code>{{time}}</code>`,
-  BETTING_TEMPLATE: `<b>投注模板</b>
+  BETTING_TEMPLATE: `<b>投注成功</b>
 
+账号：{{account_name}}
 联赛：{{league_name}}
 比赛：{{match_title}}
 盘口：{{market_title}}

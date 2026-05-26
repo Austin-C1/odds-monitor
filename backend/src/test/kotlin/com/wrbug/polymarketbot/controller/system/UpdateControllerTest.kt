@@ -19,7 +19,9 @@ class UpdateControllerTest {
                 deletedSnapshots = 123,
                 deletedCollectionLogs = 4,
                 deletedBrokenAlertRecords = 5,
-                deletedAlertRecords = 6
+                deletedAlertRecords = 6,
+                deletedVerifiedPlacedIntents = 7,
+                deletedRejectedIntents = 8
             )
         )
         val controller = UpdateController(updateService, maintenanceService)
@@ -31,6 +33,8 @@ class UpdateControllerTest {
         assertEquals(4, response.body?.data?.deletedCollectionLogs)
         assertEquals(5, response.body?.data?.deletedBrokenAlertRecords)
         assertEquals(6, response.body?.data?.deletedAlertRecords)
+        assertEquals(7, response.body?.data?.deletedVerifiedPlacedIntents)
+        assertEquals(8, response.body?.data?.deletedRejectedIntents)
         verify(maintenanceService).manualCleanup()
     }
 }

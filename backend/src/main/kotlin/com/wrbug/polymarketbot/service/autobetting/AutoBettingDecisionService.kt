@@ -4,6 +4,7 @@ import com.wrbug.polymarketbot.dto.AutoBettingDecisionDto
 import com.wrbug.polymarketbot.dto.AutoBettingSignalRequest
 import com.wrbug.polymarketbot.entity.AutoBettingIntent
 import com.wrbug.polymarketbot.repository.AutoBettingIntentRepository
+import com.wrbug.polymarketbot.service.system.SystemConfigService
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -11,7 +12,8 @@ import java.util.Locale
 
 @Service
 class AutoBettingDecisionService(
-    private val intentRepository: AutoBettingIntentRepository
+    private val intentRepository: AutoBettingIntentRepository,
+    private val systemConfigService: SystemConfigService? = null
 ) {
     private val lockedStatuses = listOf("ready", "placing", "placed", "placed_unverified")
     private val supportedPhases = setOf("prematch", "live")
@@ -39,6 +41,7 @@ class AutoBettingDecisionService(
                 bettingMode = normalized.bettingMode,
                 matchPhase = normalized.matchPhase,
                 accountKey = normalized.accountKey ?: DEFAULT_ACCOUNT_KEY,
+                accountDisplayName = normalized.accountDisplayName,
                 leagueName = normalized.leagueName,
                 matchTitle = normalized.matchTitle,
                 marketType = normalized.marketType,
@@ -83,6 +86,9 @@ class AutoBettingDecisionService(
         dedupeKey: String,
         now: Long
     ): Decision {
+        if (!isAutoBettingEnabled()) {
+            return Decision(STATUS_REJECTED, "auto_betting_disabled")
+        }
         if (request.signalSource != "odds_monitor") {
             return Decision(STATUS_REJECTED, "unsupported_signal_source")
         }
@@ -136,10 +142,15 @@ class AutoBettingDecisionService(
         return Decision(STATUS_READY, "accepted")
     }
 
+    private fun isAutoBettingEnabled(): Boolean {
+        return systemConfigService?.isAutoBettingEnabled() ?: true
+    }
+
     private fun normalize(request: AutoBettingSignalRequest): AutoBettingSignalRequest {
         return request.copy(
             signalSource = request.signalSource.trim().lowercase(Locale.ROOT),
             accountKey = request.accountKey?.trim()?.takeIf { it.isNotBlank() },
+            accountDisplayName = request.accountDisplayName?.trim()?.takeIf { it.isNotBlank() },
             bettingMode = request.bettingMode.trim().lowercase(Locale.ROOT),
             matchPhase = request.matchPhase.trim().lowercase(Locale.ROOT),
             leagueName = request.leagueName.trim(),
@@ -252,6 +263,7 @@ class AutoBettingDecisionService(
             bettingMode = bettingMode,
             matchPhase = matchPhase,
             accountKey = accountKey,
+            accountDisplayName = accountDisplayName,
             leagueName = leagueName,
             matchTitle = matchTitle,
             marketType = marketType,
