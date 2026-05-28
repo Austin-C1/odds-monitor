@@ -218,6 +218,46 @@ function Stop-OddsMonitorBackendServer {
     }
 }
 
+function Test-CommandLineContainsPath {
+    param(
+        [string]$CommandLine,
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+
+    $normalizedPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    return $CommandLine.IndexOf($normalizedPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Test-FrontendRuntimeCurrent {
+    $processes = Get-CimInstance Win32_Process |
+        Where-Object {
+            $_.CommandLine -like '*serve-odds-frontend.ps1*' `
+                -and $_.CommandLine -like "*-Port $frontendPort*"
+        }
+
+    if (-not $processes) {
+        return $false
+    }
+
+    foreach ($process in $processes) {
+        if (-not (Test-CommandLineContainsPath -CommandLine $process.CommandLine -Path $frontendDistDir)) {
+            return $false
+        }
+        if (-not (Test-CommandLineContainsPath -CommandLine $process.CommandLine -Path $frontendStaticServerScript)) {
+            return $false
+        }
+        if ($process.CommandLine -notlike "*-BackendUrl $backendUrl*") {
+            return $false
+        }
+    }
+
+    return $true
+}
+
 function Get-NewestWriteTime {
     param([string[]]$Paths)
 
@@ -515,6 +555,14 @@ Invoke-LaunchStep 'Checking backend service' {
 }
 
 Invoke-LaunchStep 'Checking frontend service' {
+    if (($frontendMode -eq 'static') -and (Test-PortListening -Port $frontendPort) -and -not (Test-FrontendRuntimeCurrent)) {
+        Write-Status 'Frontend service belongs to a different install or stale dist; restarting frontend'
+        Stop-OddsMonitorFrontendServer
+        if (-not (Wait-PortFree -Port $frontendPort -TimeoutSeconds 20)) {
+            throw "Frontend port $frontendPort is still occupied."
+        }
+    }
+
     if ((Test-PortListening -Port $frontendPort) -and -not (Test-PostReady -Url $frontendApiReadyUrl)) {
         Write-Status 'Frontend service is outdated or API proxy is unhealthy; restarting frontend'
         Stop-OddsMonitorFrontendServer

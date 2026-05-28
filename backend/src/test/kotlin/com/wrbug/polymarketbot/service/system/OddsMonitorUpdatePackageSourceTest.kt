@@ -25,6 +25,13 @@ class OddsMonitorUpdatePackageSourceTest {
         assertTrue(packageScript.contains("scripts\\serve-odds-frontend.ps1"))
         assertTrue(packageScript.contains("frontend') -Force"))
         assertTrue(
+            packageScript.contains("assertPackagedAssetContains"),
+            "update package must verify packaged frontend assets include current visible features"
+        )
+        assertTrue(packageScript.contains("5rWL6K+V5qih5byP"))
+        assertTrue(packageScript.contains("5oqV5rOo5oiQ5Yqf5py65Zmo5Lq6"))
+        assertTrue(packageScript.contains("AdsPower"))
+        assertTrue(
             packageScript.contains("'config', 'data', 'logs', 'backups', 'updates', 'accounts', 'telegram settings'"),
             "update package manifest must document old-user local data preservation"
         )
@@ -36,6 +43,14 @@ class OddsMonitorUpdatePackageSourceTest {
         assertTrue(
             launchScript.contains("\$databaseVolumeName = 'odds-monitor-mysql-data'"),
             "launcher must reuse the old MySQL volume instead of creating a new empty database"
+        )
+        assertTrue(
+            launchScript.contains("Test-FrontendRuntimeCurrent"),
+            "launcher must restart a stale frontend server from another extracted package directory"
+        )
+        assertTrue(
+            launchScript.contains("Frontend service belongs to a different install or stale dist; restarting frontend"),
+            "launcher must explain why it restarts a stale frontend server"
         )
         assertTrue(
             startScript.contains("\$env:ODDS_MONITOR_PACKAGE_DEFAULT_ADMIN_ENABLED"),

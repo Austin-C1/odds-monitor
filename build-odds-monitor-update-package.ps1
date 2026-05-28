@@ -57,6 +57,32 @@ function Write-Utf8File {
     [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
 }
 
+function Get-Utf8StringFromBase64 {
+    param([string]$Value)
+
+    return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+}
+
+function assertPackagedAssetContains {
+    param(
+        [string]$Needle,
+        [string]$Description
+    )
+
+    $distDir = Join-Path $packageDir 'frontend\dist'
+    $assetFiles = Get-ChildItem -LiteralPath $distDir -Recurse -File -Force |
+        Where-Object { $_.Extension -in @('.html', '.js', '.css') }
+
+    foreach ($file in $assetFiles) {
+        $content = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
+        if ($content.Contains($Needle)) {
+            return
+        }
+    }
+
+    throw "Packaged frontend asset missing $Description ($Needle)."
+}
+
 $version = Get-VersionFromBuildFiles
 $packageDirName = "odds-monitor-update-v$version"
 $packageDir = Join-Path $desktopDir $packageDirName
@@ -115,6 +141,10 @@ Copy-RequiredFile -Source (Join-Path $rootDir 'scripts\serve-odds-frontend.ps1')
 
 New-Item -ItemType Directory -Path (Join-Path $packageDir 'frontend') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $frontendDir 'dist') -Destination (Join-Path $packageDir 'frontend') -Recurse -Force
+
+assertPackagedAssetContains -Needle (Get-Utf8StringFromBase64 '5rWL6K+V5qih5byP') -Description 'notification test mode'
+assertPackagedAssetContains -Needle (Get-Utf8StringFromBase64 '5oqV5rOo5oiQ5Yqf5py65Zmo5Lq6') -Description 'betting success bot'
+assertPackagedAssetContains -Needle 'AdsPower' -Description 'AdsPower betting integration'
 
 $files = Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force |
     ForEach-Object { $_.FullName.Substring($packageDir.Length + 1).Replace('\', '/') } |
