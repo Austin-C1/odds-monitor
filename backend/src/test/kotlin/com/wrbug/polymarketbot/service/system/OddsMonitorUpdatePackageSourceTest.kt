@@ -43,6 +43,31 @@ class OddsMonitorUpdatePackageSourceTest {
         )
     }
 
+    @Test
+    fun `full package includes runtime and visible current features`() {
+        val packageScript = readRootFile("build-odds-monitor-full-package.ps1")
+
+        assertTrue(
+            packageScript.contains("odds-monitor-full-v${'$'}version"),
+            "full package name must be separate from update packages"
+        )
+        assertTrue(
+            packageScript.contains("Copy-Item -LiteralPath ${'$'}javaHome"),
+            "full package must include the bundled Java runtime for fresh installs"
+        )
+        assertTrue(
+            packageScript.contains("ODDS_MONITOR_PACKAGE_DEFAULT_ADMIN_ENABLED"),
+            "full package must keep the packaged default login available"
+        )
+        assertTrue(
+            packageScript.contains("assertPackagedAssetContains"),
+            "full package must verify packaged frontend assets include current visible features"
+        )
+        assertTrue(packageScript.contains("5rWL6K+V5qih5byP"))
+        assertTrue(packageScript.contains("5oqV5rOo5oiQ5Yqf5py65Zmo5Lq6"))
+        assertTrue(packageScript.contains("AdsPower"))
+    }
+
     private fun readRootFile(relativePath: String): String {
         return Files.readString(Path.of("..", relativePath))
     }

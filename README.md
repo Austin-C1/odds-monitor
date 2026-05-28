@@ -37,15 +37,17 @@ http://127.0.0.1:18881/login
 }
 ```
 
-2. 构建更新包：
+2. 构建更新包和完整安装包：
 
 ```powershell
 .\build-odds-monitor-update-package.ps1
+.\build-odds-monitor-full-package.ps1
 ```
 
-3. 将生成的 `odds-monitor-update-v版本号.zip` 上传到 GitHub Release。
+3. 将生成的 `odds-monitor-update-v版本号.zip` 和 `odds-monitor-full-v版本号.zip` 上传到 GitHub Release。
 
 更新包只覆盖程序文件，不覆盖本地配置、账号数据、数据库、日志、备份和更新缓存。
+完整安装包包含本地 Java 运行环境，适合新电脑或缺少运行环境的用户。
 
 ## 上传前检查
 
