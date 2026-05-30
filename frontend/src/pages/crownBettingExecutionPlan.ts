@@ -127,13 +127,13 @@ export const buildCrownAlertSignalQueue = (
   const pendingCandidates = candidates.filter((candidate) => (
     !options.completedSignalKeys.has(autoBettingSignalKey(candidate))
   ))
-  const neverAttempted = pendingCandidates.filter((candidate) => (
-    !options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
-  ))
 
   const retryCooldownMs = Math.max(0, options.retryCooldownMs)
   const attempted = pendingCandidates.filter((candidate) => (
     options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
+  ))
+  const neverAttempted = pendingCandidates.filter((candidate) => (
+    !options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
   ))
   const retryReady = attempted.filter((candidate) => {
     const lastAttemptAt = options.attemptedSignalAt.get(autoBettingSignalKey(candidate)) || 0
@@ -144,7 +144,7 @@ export const buildCrownAlertSignalQueue = (
     return options.now - lastAttemptAt < retryCooldownMs
   })
 
-  return [...neverAttempted, ...retryReady, ...coolingDown].map((candidate, index) => ({
+  return [...retryReady, ...coolingDown, ...neverAttempted].map((candidate, index) => ({
     ...candidate,
     queuePosition: index + 1,
     queueStatus: coolingDown.includes(candidate) ? 'cooldown' : 'ready',
@@ -155,8 +155,14 @@ export const selectNextCrownAlertSignal = (
   candidates: AutoBettingSignal[],
   options: CrownAlertSignalSelectionOptions,
 ): AutoBettingSignal | null => {
-  const selected = buildCrownAlertSignalQueue(candidates, options)
-    .find((candidate) => candidate.queueStatus === 'ready')
+  const queue = buildCrownAlertSignalQueue(candidates, options)
+  const hasUnfinishedAttemptedSignal = queue.some((candidate) => (
+    options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
+  ))
+  const selected = queue.find((candidate) => (
+    candidate.queueStatus === 'ready' &&
+    (!hasUnfinishedAttemptedSignal || options.attemptedSignalAt.has(autoBettingSignalKey(candidate)))
+  ))
   return selected
     ? candidates.find((candidate) => autoBettingSignalKey(candidate) === autoBettingSignalKey(selected)) || selected
     : null
