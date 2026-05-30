@@ -507,6 +507,8 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     expect(formatAutoBettingReason('crown_phase_mismatch')).toBe('皇冠比赛阶段与信号不一致')
     expect(formatAutoBettingReason('crown_stake_input_not_applied')).toBe('皇冠金额未成功输入')
     expect(formatAutoBettingReason('crown_betslip_stake_input_not_applied')).toBe('皇冠注单金额未成功输入')
+    expect(formatAutoBettingReason('crown_betslip_not_cleared')).toBe('皇冠旧注单未清空')
+    expect(formatAutoBettingReason('crown_betslip_full')).toBe('皇冠注单已达到10个选项上限')
     expect(formatAutoBettingReason('duplicate_placed_intent')).toBe('已成功投注，重复信号已跳过')
     expect(formatAutoBettingReason('account_stake_limit_reached')).toBe('单账号投注上限已达到')
   })

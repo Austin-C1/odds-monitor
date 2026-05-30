@@ -277,6 +277,34 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
+    fun `crown placement opens and clears stale bet slip selections before selecting a market`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("const betElement = await openTargetSoccerPage()")
+
+        assertTrue(placementBlock.contains("const openBetSlipPanel"))
+        assertTrue(placementBlock.contains("const visibleBetSlipDeleteButtons"))
+        assertTrue(placementBlock.contains("const slipCleared = await clearExistingSlip();"))
+        assertTrue(placementBlock.contains("message: 'crown_betslip_not_cleared'"))
+        assertTrue(
+            placementBlock.indexOf("const slipCleared = await clearExistingSlip();") <
+                source.indexOf("clickElement(betElement);")
+        )
+    }
+
+    @Test
+    fun `crown placement reports the crown ten-selection limit instead of timing out`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("const stakeInput = await waitFor")
+
+        assertTrue(placementBlock.contains("const betSlipLimitReached"))
+        assertTrue(placementBlock.contains("message: 'crown_betslip_full'"))
+        assertTrue(
+            placementBlock.indexOf("message: 'crown_betslip_full'") >
+                placementBlock.indexOf("clickElement(betElement);")
+        )
+    }
+
+    @Test
     fun `crown placement cdp timeout limits one account to thirty seconds`() {
         val evaluationBlock = source.substringAfter("private fun evaluateCrownPageJson")
             .substringBefore("private fun executeCdpCommand")
