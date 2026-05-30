@@ -169,6 +169,7 @@ const nonRetriableAutoBettingReasons = new Set([
   'crown_line_mismatch',
   'crown_phase_unknown',
   'crown_phase_mismatch',
+  'account_stake_limit_reached',
   'target_odds_below_minimum',
 ])
 
@@ -229,6 +230,7 @@ const autoBettingReasonLabels: Record<string, string> = {
   duplicate_active_intent: '已有投注任务处理中，重复信号已跳过',
   duplicate_recent_crown_attempt: '近期已尝试该信号，重复信号已跳过',
   duplicate_placed_intent: '已成功投注，重复信号已跳过',
+  account_stake_limit_reached: '单账号投注上限已达到',
   target_odds_below_minimum: '皇冠当前水位低于最低投注水位',
 }
 
@@ -394,10 +396,9 @@ export const buildAutoBettingExecutionPlan = (
     }
   }
 
-  const singleAccountLimit = Math.min(Math.max(0, options.perAccountLimit), BACKEND_SINGLE_ACCOUNT_LIMIT)
-  const maxByAccounts = singleAccountLimit * availableAccounts.length
-  const totalStake = Math.max(0, Math.min(options.betLimit, maxByAccounts))
-  if (totalStake <= 0) {
+  const stakeAmountPerAccount = Math.floor(Math.min(Math.max(0, options.perAccountLimit), BACKEND_SINGLE_ACCOUNT_LIMIT))
+  const accountTotalLimit = Math.floor(Math.max(0, options.betLimit))
+  if (stakeAmountPerAccount <= 0 || accountTotalLimit <= 0) {
     return {
       canExecute: false,
       modeLabel,
@@ -409,8 +410,19 @@ export const buildAutoBettingExecutionPlan = (
     }
   }
 
-  const stakeByAccount = splitAmount(totalStake, availableAccounts.length)
-  let availableIndex = 0
+  if (stakeAmountPerAccount > accountTotalLimit) {
+    return {
+      canExecute: false,
+      modeLabel,
+      summary: '单账号投注上限低于每次投注金额',
+      totalStake: 0,
+      availableAccountCount: availableAccounts.length,
+      signal,
+      rows: skipRows(() => '单账号投注上限低于每次投注金额'),
+    }
+  }
+
+  const totalStake = stakeAmountPerAccount * availableAccounts.length
   const rows = executionAccounts.map((account) => {
     if (account.bettingEnabled === false) {
       return skippedRow(account, signal, '投注未启用')
@@ -430,8 +442,6 @@ export const buildAutoBettingExecutionPlan = (
     if (account.status !== 'success') {
       return skippedRow(account, signal, '账号未在线')
     }
-    const stakeAmount = stakeByAccount[availableIndex] || 0
-    availableIndex += 1
     return {
       id: account.id,
       accountName: account.displayName,
@@ -455,7 +465,7 @@ export const buildAutoBettingExecutionPlan = (
       oddsChangeDirection: signal.oddsChangeDirection,
       bettingLogic: signal.bettingLogic,
       capturedAt: signal.sourceAlertCreatedAt || Date.now(),
-      stakeAmount,
+      stakeAmount: stakeAmountPerAccount,
       reason: '盘口和水位通过，等待下单',
     }
   })
@@ -606,13 +616,3 @@ const skippedRow = (
   stakeAmount: 0,
   reason,
 })
-
-const splitAmount = (totalAmount: number, parts: number): number[] => {
-  if (parts <= 0) return []
-  const totalCents = Math.round(totalAmount * 100)
-  const baseCents = Math.floor(totalCents / parts)
-  const remainder = totalCents % parts
-  return Array.from({ length: parts }, (_value, index) => (
-    (baseCents + (index < remainder ? 1 : 0)) / 100
-  ))
-}

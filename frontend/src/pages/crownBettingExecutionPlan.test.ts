@@ -337,7 +337,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     ])
   })
 
-  it('splits stake using the supplied monitor signal and skips abnormal accounts', () => {
+  it('uses the per-account amount for every available account and skips abnormal accounts', () => {
     const result = buildAutoBettingExecutionPlan({
       signal: prematchSignal,
       mode: 'prematch',
@@ -354,13 +354,32 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
 
     expect(result.canExecute).toBe(true)
     expect(result.modeLabel).toBe(zh.prematch)
-    expect(result.totalStake).toBe(500)
+    expect(result.totalStake).toBe(600)
     expect(result.availableAccountCount).toBe(2)
     expect(result.rows).toEqual([
-      expect.objectContaining({ accountName: 'main account', status: 'passed', matchTitle: `${zh.manCity} vs ${zh.liverpool}`, stakeAmount: 250 }),
-      expect.objectContaining({ accountName: 'sub account', status: 'passed', matchTitle: `${zh.manCity} vs ${zh.liverpool}`, stakeAmount: 250 }),
+      expect.objectContaining({ accountName: 'main account', status: 'passed', matchTitle: `${zh.manCity} vs ${zh.liverpool}`, stakeAmount: 300 }),
+      expect.objectContaining({ accountName: 'sub account', status: 'passed', matchTitle: `${zh.manCity} vs ${zh.liverpool}`, stakeAmount: 300 }),
       expect.objectContaining({ accountName: 'bad account', status: 'skipped', stakeAmount: 0 }),
     ])
+  })
+
+  it('uses the configured per-account amount instead of splitting the total account limit', () => {
+    const result = buildAutoBettingExecutionPlan({
+      signal: prematchSignal,
+      mode: 'prematch',
+      enabled: true,
+      perAccountLimit: 50,
+      betLimit: 100,
+      minimumBetOdds: 0.7,
+      accounts: [
+        { id: 'a', displayName: 'account a', status: 'success', adsPowerProfileId: 'profile-a', adsPowerStatus: 'opened' },
+        { id: 'b', displayName: 'account b', status: 'success', adsPowerProfileId: 'profile-b', adsPowerStatus: 'opened' },
+        { id: 'c', displayName: 'account c', status: 'success', adsPowerProfileId: 'profile-c', adsPowerStatus: 'opened' },
+      ],
+    })
+
+    expect(result.totalStake).toBe(150)
+    expect(result.rows.map((row) => row.stakeAmount)).toEqual([50, 50, 50])
   })
 
   it('does not mark an opened but offline AdsPower profile as unopened', () => {
@@ -489,6 +508,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     expect(formatAutoBettingReason('crown_stake_input_not_applied')).toBe('皇冠金额未成功输入')
     expect(formatAutoBettingReason('crown_betslip_stake_input_not_applied')).toBe('皇冠注单金额未成功输入')
     expect(formatAutoBettingReason('duplicate_placed_intent')).toBe('已成功投注，重复信号已跳过')
+    expect(formatAutoBettingReason('account_stake_limit_reached')).toBe('单账号投注上限已达到')
   })
 
   it('does not keep removed auto betting restriction reason labels', () => {

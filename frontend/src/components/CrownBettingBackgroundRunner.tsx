@@ -278,6 +278,7 @@ const runAutomationForSignal = async (
           queueTotal,
           oddsChangeDirection: row.oddsChangeDirection,
           stakeAmount: row.stakeAmount,
+          accountStakeLimit: settings.betLimit,
           capturedAt: row.capturedAt,
           maxSignalAgeSeconds: settings.signalMaxAgeSeconds,
         },

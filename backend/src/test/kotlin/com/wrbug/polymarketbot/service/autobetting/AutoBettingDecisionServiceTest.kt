@@ -225,6 +225,25 @@ class AutoBettingDecisionServiceTest {
     }
 
     @Test
+    fun `account total stake limit rejects a signal that would exceed the account cap`() {
+        val request = baseRequest(
+            accountKey = "crown-a",
+            stakeAmount = BigDecimal("50.00"),
+            accountStakeLimit = BigDecimal("100.00")
+        )
+        `when`(repository.existsByDedupeKeyAndStatusIn("crown-a:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
+            .thenReturn(false)
+        `when`(repository.sumStakeAmountByAccountKeyAndStatusIn("crown-a", lockedStatuses()))
+            .thenReturn(BigDecimal("80.0000"))
+        `when`(repository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 1_000_000)
+
+        assertEquals("rejected", decision.status)
+        assertEquals("account_stake_limit_reached", decision.reason)
+    }
+
+    @Test
     fun `weak crown edge is accepted when target water is above the configured floor`() {
         val request = baseRequest(referenceOdds = BigDecimal("1.94"), targetOdds = BigDecimal("0.95"))
         val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
@@ -573,6 +592,7 @@ class AutoBettingDecisionServiceTest {
         minimumTargetOdds: BigDecimal? = null,
         oddsChangeDirection: String? = null,
         stakeAmount: BigDecimal = BigDecimal("50.00"),
+        accountStakeLimit: BigDecimal? = null,
         capturedAt: Long = 990_000,
         maxSignalAgeSeconds: Long? = null,
         queuePosition: Int? = null,
@@ -595,6 +615,7 @@ class AutoBettingDecisionServiceTest {
         minimumTargetOdds = minimumTargetOdds,
         oddsChangeDirection = oddsChangeDirection,
         stakeAmount = stakeAmount,
+        accountStakeLimit = accountStakeLimit,
         capturedAt = capturedAt,
         maxSignalAgeSeconds = maxSignalAgeSeconds,
         queuePosition = queuePosition,

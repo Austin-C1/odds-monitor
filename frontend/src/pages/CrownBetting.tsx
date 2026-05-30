@@ -951,6 +951,7 @@ const CrownBetting = () => {
               queueTotal: signalQueue.length,
               oddsChangeDirection: row.oddsChangeDirection,
               stakeAmount: row.stakeAmount,
+              accountStakeLimit: betLimit,
               capturedAt: row.capturedAt,
               maxSignalAgeSeconds: signalMaxAgeSeconds,
             },

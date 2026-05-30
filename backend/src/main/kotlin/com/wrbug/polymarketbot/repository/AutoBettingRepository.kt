@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 
 @Repository
 interface AutoBettingIntentRepository : JpaRepository<AutoBettingIntent, Long> {
@@ -18,6 +19,19 @@ interface AutoBettingIntentRepository : JpaRepository<AutoBettingIntent, Long> {
 
     fun findTop100ByOrderByCreatedAtDesc(): List<AutoBettingIntent>
     fun findTop100ByStatusAndCrownHistoryVerifiedTrueOrderByCreatedAtDesc(status: String): List<AutoBettingIntent>
+
+    @Query(
+        """
+        SELECT COALESCE(SUM(intent.stakeAmount), 0)
+        FROM AutoBettingIntent intent
+        WHERE intent.accountKey = :accountKey
+          AND intent.status IN :statuses
+        """
+    )
+    fun sumStakeAmountByAccountKeyAndStatusIn(
+        @Param("accountKey") accountKey: String,
+        @Param("statuses") statuses: Collection<String>
+    ): BigDecimal?
 
     @Modifying
     @Transactional

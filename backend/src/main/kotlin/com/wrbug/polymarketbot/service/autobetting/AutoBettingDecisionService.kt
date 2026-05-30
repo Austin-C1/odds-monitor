@@ -139,7 +139,19 @@ class AutoBettingDecisionService(
         if (existingIntent != null || intentRepository.existsByDedupeKeyAndStatusIn(dedupeKey, lockedStatuses)) {
             return Decision(STATUS_REJECTED, "duplicate_active_intent")
         }
+        if (wouldExceedAccountStakeLimit(request)) {
+            return Decision(STATUS_REJECTED, "account_stake_limit_reached")
+        }
         return Decision(STATUS_READY, "accepted")
+    }
+
+    private fun wouldExceedAccountStakeLimit(request: AutoBettingSignalRequest): Boolean {
+        val accountStakeLimit = request.accountStakeLimit ?: return false
+        if (accountStakeLimit <= BigDecimal.ZERO) return true
+        val accountKey = request.accountKey ?: DEFAULT_ACCOUNT_KEY
+        val usedStake = intentRepository.sumStakeAmountByAccountKeyAndStatusIn(accountKey, lockedStatuses)
+            ?: BigDecimal.ZERO
+        return usedStake.add(request.stakeAmount) > accountStakeLimit
     }
 
     private fun isAutoBettingEnabled(): Boolean {
