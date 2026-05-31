@@ -277,18 +277,31 @@ class AdsPowerLocalApiServiceSourceTest {
     }
 
     @Test
-    fun `crown placement opens and clears stale bet slip selections before selecting a market`() {
+    fun `crown placement stays on soccer page before selecting a market`() {
         val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
             .substringBefore("const betElement = await openTargetSoccerPage()")
 
-        assertTrue(placementBlock.contains("const openBetSlipPanel"))
-        assertTrue(placementBlock.contains("const visibleBetSlipDeleteButtons"))
-        assertTrue(placementBlock.contains("const slipCleared = await clearExistingSlip();"))
-        assertTrue(placementBlock.contains("message: 'crown_betslip_not_cleared'"))
-        assertTrue(
-            placementBlock.indexOf("const slipCleared = await clearExistingSlip();") <
-                source.indexOf("clickElement(betElement);")
-        )
+        assertFalse(placementBlock.contains("const visibleBetSlipDeleteButtons"))
+        assertFalse(placementBlock.contains("const openBetSlipPanel"))
+        assertFalse(placementBlock.contains("const clearExistingSlip"))
+        assertFalse(placementBlock.contains("const slipCleared = await clearExistingSlip();"))
+        assertFalse(placementBlock.contains("message: 'crown_betslip_not_cleared'"))
+    }
+
+    @Test
+    fun `crown placement confirms order before returning verified success`() {
+        val placementBlock = source.substringAfter("private fun crownBetExecutionScript")
+            .substringBefore("private fun buildUrl")
+
+        val placeIndex = placementBlock.indexOf("clickElement(orderButton);")
+        val confirmIndex = placementBlock.indexOf("await confirmBetIfPrompted();")
+        val receiptIndex = placementBlock.indexOf("if (ticketReference && receiptVerified(receiptText))")
+        val successIndex = placementBlock.indexOf("message: 'crown_receipt_verified'")
+
+        assertTrue(placeIndex >= 0)
+        assertTrue(confirmIndex > placeIndex)
+        assertTrue(receiptIndex > confirmIndex)
+        assertTrue(successIndex > receiptIndex)
     }
 
     @Test

@@ -786,8 +786,22 @@ class AdsPowerLocalApiService(
                 val host = hostFromUrl(target.pageUrl).orEmpty()
                 host.contains("mos077") || host.contains("hga") || host.contains("112.121.") || host == "134.159.80.63"
             }
-        return (exactHostTargets + knownCrownTargets).distinctBy { target ->
-            listOf(target.pageUrl.orEmpty(), target.webSocketDebuggerUrl.orEmpty(), target.title.orEmpty()).joinToString("|")
+        return (exactHostTargets + knownCrownTargets)
+            .distinctBy { target ->
+                listOf(target.pageUrl.orEmpty(), target.webSocketDebuggerUrl.orEmpty(), target.title.orEmpty()).joinToString("|")
+            }
+            .sortedBy(::crownTargetPriority)
+    }
+
+    private fun crownTargetPriority(target: BrowserTarget): Int {
+        val text = listOf(target.title, target.pageUrl)
+            .filterNotNull()
+            .joinToString(" ")
+            .lowercase()
+        return when {
+            Regex("""betslip|bet[_-]?slip|wager|order|statement|ticket|receipt|注单|投注记录""").containsMatchIn(text) -> 20
+            Regex("""football|soccer|league|today|early|live|in-play|滚球|足球|联赛""").containsMatchIn(text) -> 0
+            else -> 10
         }
     }
 
@@ -1446,72 +1460,6 @@ class AdsPowerLocalApiService(
                   return /最多\s*10\s*个选项|最多十个选项|maximum\s*10|10\s*selections/i.test(text)
                     || /最多\s*10\s*个选项|最多十个选项|maximum\s*10|10\s*selections/i.test(rawText);
                 };
-                const isBetSlipPanelOpen = () => {
-                  const text = currentText();
-                  return /下注总额|预计可赢|输入下注金额|Stake|Estimated/i.test(text)
-                    || visibleBetSlipDeleteButtons().length > 0;
-                };
-                const visibleBetSlipDeleteButtons = () => findAllSelector([
-                  '[id^="delete_betslip_"]',
-                  '[id^="delete_bet_"]',
-                  '.delete_betslip',
-                  '.del_betslip',
-                  '.bet-delete',
-                  '.btn_delete'
-                ].join(',')).filter((button) => isVisible(button));
-                const openBetSlipPanel = async () => {
-                  if (isBetSlipPanelOpen()) return true;
-                  const selectors = [
-                    '#wager_count',
-                    '#pc_wager_count',
-                    '#header_wager_count',
-                    '#footer_wager_count',
-                    '#bet_slip',
-                    '#betslip',
-                    '#order_betslip',
-                    '#quick_betslip',
-                    '[id*="betslip"]',
-                    '[id*="wager_count"]'
-                  ];
-                  const candidates = selectors
-                    .flatMap((selector) => findAllSelector(selector))
-                    .filter((element) => isVisible(element));
-                  const textCandidates = findAllSelector('a, button, div, span')
-                    .filter((element) => {
-                      if (!isVisible(element)) return false;
-                      const text = String(element.innerText || element.textContent || '').trim();
-                      return /^注单$|^Bet Slip$/i.test(text);
-                    });
-                  for (const element of [...candidates, ...textCandidates]) {
-                    clickElement(element);
-                    await sleep(500);
-                    if (isBetSlipPanelOpen()) return true;
-                  }
-                  return isBetSlipPanelOpen();
-                };
-                const clearExistingSlip = async () => {
-                  for (let attempt = 0; attempt < 4; attempt += 1) {
-                    await openBetSlipPanel();
-                    await sleep(300);
-                    const deleteButtons = visibleBetSlipDeleteButtons();
-                    if (deleteButtons.length === 0) {
-                      if (readWagerCount() === 0) return true;
-                      continue;
-                    }
-                    for (const button of deleteButtons) {
-                      clickElement(button);
-                      await sleep(300);
-                    }
-                    await sleep(500);
-                    if (visibleBetSlipDeleteButtons().length === 0 && readWagerCount() === 0) return true;
-                  }
-                  const closeButton = findElementById('order_close');
-                  if (closeButton && isVisible(closeButton)) {
-                    clickElement(closeButton);
-                    await sleep(400);
-                  }
-                  return visibleBetSlipDeleteButtons().length === 0 && readWagerCount() === 0;
-                };
                 const fillStakeInput = async (stakeInput, stake) => {
                   const view = ownerWindow(stakeInput);
                   const stakeDocument = stakeInput.ownerDocument || document;
@@ -1634,19 +1582,23 @@ class AdsPowerLocalApiService(
                   }
                   return waitFor(() => findElementById(args.betElementId), 8000, 300);
                 };
+                const returnToFootballPage = async () => {
+                  const candidates = menuCandidateIds();
+                  for (const id of candidates) {
+                    const element = findElementById(id);
+                    if (element && isVisible(element)) {
+                      clickElement(element);
+                      await sleep(1000);
+                      return true;
+                    }
+                  }
+                  return false;
+                };
                 disableNativePrint();
                 const existingOpenBetText = currentRawText() || currentText();
                 if (openBetVerified(existingOpenBetText)) {
+                  await returnToFootballPage();
                   return finish(verifiedOpenBetPayload(existingOpenBetText));
-                }
-                const slipCleared = await clearExistingSlip();
-                if (!slipCleared) {
-                  return finish({
-                    placed: false,
-                    historyVerified: false,
-                    message: 'crown_betslip_not_cleared',
-                    pageText: String(currentText()).slice(0, 500)
-                  });
                 }
                 const betElement = await openTargetSoccerPage();
                 if (!betElement) {
@@ -1783,6 +1735,7 @@ class AdsPowerLocalApiService(
               }, 18000, 500);
               if (receiptText && openBetVerified(receiptText)) {
                 await closeSuccessfulReceiptPanel();
+                await returnToFootballPage();
                 return finish(verifiedOpenBetPayload(receiptText, currentOdds));
               }
               if (!receiptText || !receiptVerified(receiptText)) {
@@ -1797,6 +1750,7 @@ class AdsPowerLocalApiService(
               const ticketReference = extractReceiptReference(receiptText);
               if (ticketReference && receiptVerified(receiptText)) {
                 await closeSuccessfulReceiptPanel();
+                await returnToFootballPage();
                 return finish({
                   placed: true,
                   historyVerified: true,
@@ -1833,6 +1787,7 @@ class AdsPowerLocalApiService(
                 return null;
               }, 12000, 500);
               if (!historyText) {
+                await returnToFootballPage();
                 return finish({
                   placed: true,
                   historyVerified: false,
@@ -1843,6 +1798,7 @@ class AdsPowerLocalApiService(
               }
               const verifiedTicketReference = ticketReference || extractReceiptReference(historyText);
               await closeSuccessfulReceiptPanel();
+              await returnToFootballPage();
               return finish({
                 placed: true,
                 historyVerified: true,
