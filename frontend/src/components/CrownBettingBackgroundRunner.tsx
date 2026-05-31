@@ -5,15 +5,10 @@ import {
   autoBettingSignalKey,
   buildCrownAlertSignalQueue,
   buildAutoBettingExecutionPlan,
-  executionOddsFloor,
   extractCrownAlertSignalCandidates,
   filterFreshCrownAlertSignals,
-  isCompletedDuplicateAutoBettingReason,
-  isNonRetriableAutoBettingReason,
   selectNextCrownAlertSignal,
-  shouldCompleteCrownSignalForAccounts,
   type AutoBettingMode,
-  type AutoBettingExecutionPlanRow,
   type AutoBettingSignal,
   type OddsAlertRecord,
 } from '../pages/crownBettingExecutionPlan'
@@ -73,33 +68,8 @@ type AutoBettingDecisionResponse = {
   reason?: string
   crownHistoryVerified?: boolean
   crownBetReference?: string | null
+  accountKey?: string
 }
-
-type CrownSessionResponse = {
-  profileId?: string
-  opened: boolean
-  loggedIn: boolean
-  accountStatus?: string
-  balance?: number
-  currency?: string
-}
-
-const unreadableOpenedCrownSessionStatuses = new Set([
-  'crown_page_not_found',
-  'no_logged_in_crown_profile',
-  'unknown',
-  'browser_debug_port_missing',
-])
-
-const shouldKeepKnownOnlineCrownSession = (
-  account: StoredCrownAccount,
-  result: CrownSessionResponse,
-) => (
-  result.opened &&
-  !result.loggedIn &&
-  account.status === 'success' &&
-  unreadableOpenedCrownSessionStatuses.has(result.accountStatus || '')
-)
 
 const normalizeNumberSetting = (
   value: unknown,
@@ -190,39 +160,6 @@ const readBackendAutoBettingEnabled = async (): Promise<boolean> => {
   }
 }
 
-const verifyAccountBeforeBetting = async (account: StoredCrownAccount): Promise<StoredCrownAccount> => {
-  if (account.bettingEnabled !== true) {
-    return account
-  }
-  try {
-    const response = await apiClient.post<ApiResponse<CrownSessionResponse>>(
-      '/auto-betting/adspower/crown-session/match',
-      {
-        loginName: account.loginName,
-        loginUrl: account.loginUrl || CROWN_LOGIN_URL,
-        preferredProfileId: account.adsPowerProfileId?.trim() || undefined,
-      },
-    )
-    const result = response.data.data
-    if (response.data.code !== 0 || !result) {
-      return { ...account, status: 'error', adsPowerStatus: 'error', balance: null }
-    }
-    const isClosed = !result.opened && result.accountStatus === 'profile_closed'
-    const keepKnownOnline = shouldKeepKnownOnlineCrownSession(account, result)
-    const loggedInOrKnownOnline = result.loggedIn || keepKnownOnline
-    return {
-      ...account,
-      status: loggedInOrKnownOnline ? 'success' : (isClosed ? 'unchecked' : 'error'),
-      adsPowerStatus: result.opened ? 'opened' : (isClosed ? 'closed' : 'error'),
-      adsPowerProfileId: loggedInOrKnownOnline && result.profileId ? result.profileId : account.adsPowerProfileId,
-      balance: typeof result.balance === 'number' ? result.balance : (keepKnownOnline ? account.balance : null),
-      currency: result.currency || account.currency,
-    }
-  } catch {
-    return { ...account, status: 'error', adsPowerStatus: 'error', balance: null }
-  }
-}
-
 const toExecutionAccounts = (accounts: StoredCrownAccount[]) => accounts.map((account) => ({
   id: account.id,
   displayName: account.displayName,
@@ -232,6 +169,78 @@ const toExecutionAccounts = (accounts: StoredCrownAccount[]) => accounts.map((ac
   bettingEnabled: account.bettingEnabled === true,
 }))
 
+const runQueuedAutomationForSignal = async (
+  signal: AutoBettingSignal,
+  settings: StoredAutomationSettings,
+  accounts: StoredCrownAccount[],
+  queuePosition?: number,
+  queueTotal?: number,
+): Promise<{ succeeded: boolean; stopRetry: boolean; completed: boolean }> => {
+  const plan = buildAutoBettingExecutionPlan({
+    signal,
+    mode: settings.autoMode,
+    enabled: settings.autoEnabled,
+    perAccountLimit: settings.perAccountLimit,
+    betLimit: settings.betLimit,
+    minimumBetOdds: settings.minimumBetOdds,
+    accounts: toExecutionAccounts(accounts),
+  })
+  const executableRows = plan.rows.filter((row) => row.status === 'passed' && row.stakeAmount > 0)
+  if (executableRows.length === 0) {
+    return { succeeded: false, stopRetry: true, completed: true }
+  }
+
+  const accountById = new Map(accounts.map((account) => [account.id, account]))
+  try {
+    const response = await apiClient.post<ApiResponse<AutoBettingDecisionResponse[]>>(
+      '/auto-betting/signals/odds-monitor/execute-crown-queue',
+      {
+        signalSource: 'odds_monitor',
+        bettingMode: signal.bettingMode,
+        matchPhase: signal.matchPhase,
+        leagueName: signal.leagueName,
+        matchTitle: signal.matchTitle,
+        marketType: signal.marketType,
+        lineValue: signal.lineValue,
+        selectionName: signal.selectionName,
+        referenceSourceKey: signal.referenceSourceKey,
+        targetSourceKey: signal.targetSourceKey,
+        referenceOdds: signal.referenceOdds,
+        targetOdds: signal.targetOdds,
+        minimumTargetOdds: settings.minimumBetOdds,
+        queuePosition,
+        queueTotal,
+        oddsChangeDirection: signal.oddsChangeDirection,
+        stakeAmount: executableRows[0].stakeAmount,
+        accountStakeLimit: settings.betLimit,
+        capturedAt: signal.sourceAlertCreatedAt || Date.now(),
+        maxSignalAgeSeconds: settings.signalMaxAgeSeconds,
+        accounts: executableRows.map((row) => {
+          const account = accountById.get(row.id)
+          return {
+            accountKey: row.id,
+            accountDisplayName: row.accountName,
+            profileId: account?.adsPowerProfileId?.trim() || '',
+            loginUrl: account?.loginUrl || CROWN_LOGIN_URL,
+            bettingEnabled: true,
+          }
+        }),
+      },
+      { timeout: Math.max(ACCOUNT_EXECUTION_TIMEOUT_MS, executableRows.length * ACCOUNT_EXECUTION_TIMEOUT_MS + 5000) },
+    )
+    const decisions = response.data.data || []
+    return {
+      succeeded: response.data.code === 0 && decisions.some((decision) => (
+        decision.status === 'placed' && decision.crownHistoryVerified === true
+      )),
+      stopRetry: true,
+      completed: true,
+    }
+  } catch {
+    return { succeeded: false, stopRetry: true, completed: true }
+  }
+}
+
 const runAutomationForSignal = async (
   signal: AutoBettingSignal,
   settings: StoredAutomationSettings,
@@ -239,122 +248,7 @@ const runAutomationForSignal = async (
   queuePosition?: number,
   queueTotal?: number,
 ): Promise<{ succeeded: boolean; stopRetry: boolean; completed: boolean }> => {
-  const checkedAccountById = new Map<string, StoredCrownAccount>()
-  const accountsForPlan = () => accounts.map((account) => checkedAccountById.get(account.id) || account)
-  const buildPlan = () => buildAutoBettingExecutionPlan({
-    signal,
-    mode: settings.autoMode,
-    enabled: settings.autoEnabled,
-    perAccountLimit: settings.perAccountLimit,
-    betLimit: settings.betLimit,
-    minimumBetOdds: settings.minimumBetOdds,
-    accounts: toExecutionAccounts(accountsForPlan()),
-  })
-
-  const executeRow = async (row: AutoBettingExecutionPlanRow, checkedAccount: StoredCrownAccount) => {
-    if (row.status !== 'passed' || row.stakeAmount <= 0) return { row, succeeded: false, stopRetry: false }
-    const profileId = checkedAccount?.adsPowerProfileId?.trim()
-    if (!profileId) return { row, succeeded: false, stopRetry: false }
-    try {
-      const signalResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
-        '/auto-betting/signals/odds-monitor',
-        {
-          signalSource: 'odds_monitor',
-          accountKey: row.id,
-          accountDisplayName: row.accountName,
-          bettingMode: row.bettingMode,
-          matchPhase: row.matchPhase,
-          leagueName: row.leagueName,
-          matchTitle: row.matchTitle,
-          marketType: row.marketType,
-          lineValue: row.lineValue,
-          selectionName: row.selectionName,
-          referenceSourceKey: row.referenceSourceKey,
-          targetSourceKey: row.targetSourceKey,
-          referenceOdds: row.referenceOdds,
-          targetOdds: row.targetOdds,
-          minimumTargetOdds: settings.minimumBetOdds,
-          queuePosition,
-          queueTotal,
-          oddsChangeDirection: row.oddsChangeDirection,
-          stakeAmount: row.stakeAmount,
-          accountStakeLimit: settings.betLimit,
-          capturedAt: row.capturedAt,
-          maxSignalAgeSeconds: settings.signalMaxAgeSeconds,
-        },
-      )
-      const decision = signalResponse.data.data
-      if (signalResponse.data.code !== 0 || decision?.status !== 'ready' || typeof decision.id !== 'number') {
-        const completedDuplicate = isCompletedDuplicateAutoBettingReason(decision?.reason)
-        return {
-          row: {
-            ...row,
-            status: 'skipped' as const,
-            statusLabel: completedDuplicate ? '已下注' : '跳过',
-            stakeAmount: 0,
-            stopRetry: isNonRetriableAutoBettingReason(decision?.reason),
-            retryable: completedDuplicate ? false : undefined,
-            reason: decision?.reason || '后端投注判断失败',
-          },
-          succeeded: false,
-          stopRetry: isNonRetriableAutoBettingReason(decision?.reason),
-        }
-      }
-      const executionResponse = await apiClient.post<ApiResponse<AutoBettingDecisionResponse>>(
-        `/auto-betting/intents/${decision.id}/execute-crown`,
-        {
-          profileId,
-          loginUrl: checkedAccount?.loginUrl || CROWN_LOGIN_URL,
-          minimumTargetOdds: executionOddsFloor(row.targetOdds, settings.minimumBetOdds),
-        },
-        { timeout: ACCOUNT_EXECUTION_TIMEOUT_MS },
-      )
-      const executionDecision = executionResponse.data.data
-      const succeeded = executionResponse.data.code === 0 &&
-        executionDecision?.status === 'placed' &&
-        executionDecision.crownHistoryVerified === true
-      return {
-        row: {
-          ...row,
-          status: succeeded ? 'passed' as const : 'skipped' as const,
-          statusLabel: succeeded ? '已下注' : '跳过',
-          stakeAmount: succeeded ? row.stakeAmount : 0,
-          stopRetry: !succeeded && isNonRetriableAutoBettingReason(executionDecision?.reason),
-          reason: executionDecision?.reason || '皇冠实际下注失败',
-        },
-        succeeded,
-        stopRetry: !succeeded && isNonRetriableAutoBettingReason(executionDecision?.reason),
-      }
-    } catch {
-      return {
-        row: {
-          ...row,
-          status: 'skipped' as const,
-          statusLabel: '跳过',
-          stakeAmount: 0,
-          reason: '皇冠实际下注失败',
-        },
-        succeeded: false,
-        stopRetry: false,
-      }
-    }
-  }
-  const results: Array<{ row: AutoBettingExecutionPlanRow; succeeded: boolean; stopRetry: boolean }> = []
-  for (const account of accounts.filter((item) => item.bettingEnabled === true)) {
-    const checkedAccount = await verifyAccountBeforeBetting(account)
-    checkedAccountById.set(checkedAccount.id, checkedAccount)
-    const row = buildPlan().rows.find((candidate) => candidate.id === checkedAccount.id)
-    if (row) {
-      results.push(await executeRow(row, checkedAccount))
-    }
-  }
-  const targetAccountIds = accounts.filter((item) => item.bettingEnabled === true).map((account) => account.id)
-  return {
-    succeeded: results.some((result) => result.succeeded),
-    stopRetry: results.some((result) => result.stopRetry),
-    completed: results.length === targetAccountIds.length &&
-      shouldCompleteCrownSignalForAccounts(results.map((result) => result.row), targetAccountIds),
-  }
+  return runQueuedAutomationForSignal(signal, settings, accounts, queuePosition, queueTotal)
 }
 
 const CrownBettingBackgroundRunner = () => {

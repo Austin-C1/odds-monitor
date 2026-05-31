@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 data class AutoBettingExecutionRequest(
     val profileId: String,
@@ -95,6 +96,8 @@ class AutoBettingExecutionService(
     private val staleReadyTimeoutMillis = 180_000L
     private val stalePlacingTimeoutMillis = 30_000L
     private val unverifiedRecheckDelayMillis = 30_000L
+    private val accountFailureCooldownMillis = 300_000L
+    private val accountCooldownUntil = ConcurrentHashMap<String, Long>()
 
     fun executeCrownIntent(
         intentId: Long,
@@ -125,6 +128,9 @@ class AutoBettingExecutionService(
         if (profileId.isBlank()) {
             return reject(intent, "profile_id_required", now)
         }
+        if (isAccountCoolingDown(intent.accountKey, profileId, now)) {
+            return reject(intent, "account_in_cooldown", now)
+        }
 
         val markedPlacing = intentRepository.markReadyIntentPlacingById(
             intentId = intent.id ?: return missingIntent(intentId),
@@ -139,13 +145,13 @@ class AutoBettingExecutionService(
         val placing = intentRepository.save(intent.copy(status = STATUS_PLACING, updatedAt = now))
         val commandResult = buildCommand(placing, request)
         val command = commandResult.command
-            ?: return reject(placing, commandResult.rejectReason, now)
+            ?: return rejectWithAccountCooldown(placing, commandResult.rejectReason, profileId, now)
         val placement = try {
-            profileExecutionLock.withProfileLock(profileId) {
+            profileExecutionLock.withAccountLock(placing.accountKey, profileId) {
                 crownBetPlacementGateway.placeBet(command)
             }
         } catch (_: Exception) {
-            return reject(placing, "crown_execution_error", now)
+            return rejectWithAccountCooldown(placing, "crown_execution_error", profileId, now)
         }
 
         if (placement.placed && placement.historyVerified) {
@@ -180,7 +186,12 @@ class AutoBettingExecutionService(
             return unverified.toDecision(reason)
         }
 
-        return reject(placing, shortReason(placement.message.ifBlank { "crown_bet_failed" }), now)
+        return rejectWithAccountCooldown(
+            placing,
+            shortReason(placement.message.ifBlank { "crown_bet_failed" }),
+            profileId,
+            now
+        )
     }
 
     private fun recheckUnverifiedCrownIntent(
@@ -215,7 +226,7 @@ class AutoBettingExecutionService(
         }
 
         val verification = try {
-            profileExecutionLock.withProfileLock(profileId) {
+            profileExecutionLock.withAccountLock(placing.accountKey, profileId) {
                 crownBetPlacementGateway.verifyPlacedBet(command, placing.crownBetReference)
             }
         } catch (_: Exception) {
@@ -455,6 +466,41 @@ class AutoBettingExecutionService(
             )
         )
         return rejected.toDecision(shortReason(reason))
+    }
+
+    private fun rejectWithAccountCooldown(
+        intent: AutoBettingIntent,
+        reason: String,
+        profileId: String,
+        now: Long
+    ): AutoBettingDecisionDto {
+        startAccountCooldown(intent.accountKey, profileId, now)
+        return reject(intent, reason, now)
+    }
+
+    private fun startAccountCooldown(accountKey: String, profileId: String, now: Long) {
+        val key = accountLockKey(accountKey, profileId)
+        if (key.isNotBlank()) {
+            accountCooldownUntil[key] = now + accountFailureCooldownMillis
+        }
+    }
+
+    private fun isAccountCoolingDown(accountKey: String, profileId: String, now: Long): Boolean {
+        val key = accountLockKey(accountKey, profileId)
+        if (key.isBlank()) return false
+        val until = accountCooldownUntil[key] ?: return false
+        if (until <= now) {
+            accountCooldownUntil.remove(key, until)
+            return false
+        }
+        return true
+    }
+
+    private fun accountLockKey(accountKey: String, profileId: String): String {
+        val normalizedAccountKey = accountKey.trim().lowercase(Locale.ROOT)
+        if (normalizedAccountKey.isNotBlank()) return "account:$normalizedAccountKey"
+        val normalizedProfileId = profileId.trim().lowercase(Locale.ROOT)
+        return if (normalizedProfileId.isNotBlank()) "profile:$normalizedProfileId" else ""
     }
 
     private fun missingIntent(intentId: Long) = AutoBettingDecisionDto(

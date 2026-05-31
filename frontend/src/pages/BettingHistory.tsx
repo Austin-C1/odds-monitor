@@ -60,7 +60,11 @@ type BettingSuccessBotFormValues = {
 }
 
 const statusMeta: Record<string, { label: string; color: string }> = {
+  ready: { label: '待执行', color: 'processing' },
+  placing: { label: '执行中', color: 'blue' },
   placed: { label: '已下注', color: 'success' },
+  placed_unverified: { label: '待确认', color: 'warning' },
+  rejected: { label: '失败/跳过', color: 'error' },
 }
 
 const marketLabel = (value: string) => {
@@ -137,7 +141,7 @@ const BettingHistory = () => {
     setLoading(true)
     try {
       const response = await apiClient.post<ApiResponse<AutoBettingIntentRow[]>>(
-        '/auto-betting/intents/verified-placed',
+        '/auto-betting/intents/recent',
         {},
       )
       if (response.data.code !== 0 || !Array.isArray(response.data.data)) {
@@ -264,12 +268,15 @@ const BettingHistory = () => {
 
   const summary = useMemo(() => {
     return filteredRows.reduce(
-      (result, row) => ({
-        successStake: result.successStake + Number(row.stakeAmount),
-        successCount: result.successCount + 1,
-        verifiedCount: result.verifiedCount + (row.crownHistoryVerified ? 1 : 0),
-        rowCount: result.rowCount + 1,
-      }),
+      (result, row) => {
+        const success = row.status === 'placed' && row.crownHistoryVerified === true
+        return {
+          successStake: result.successStake + (success ? Number(row.stakeAmount) : 0),
+          successCount: result.successCount + (success ? 1 : 0),
+          verifiedCount: result.verifiedCount + (row.crownHistoryVerified ? 1 : 0),
+          rowCount: result.rowCount + 1,
+        }
+      },
       { successStake: 0, successCount: 0, verifiedCount: 0, rowCount: 0 },
     )
   }, [filteredRows])
@@ -278,8 +285,8 @@ const BettingHistory = () => {
     <div>
       <Space align="center" style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <div>
-          <Title level={2} style={{ margin: 0 }}>下注成功记录</Title>
-          <Text type="secondary">只显示已完成下注，并通过皇冠投注历史二次验证的记录；判断通过但未下注不会进入这里。</Text>
+          <Title level={2} style={{ margin: 0 }}>下注记录</Title>
+          <Text type="secondary">显示成功、失败、待确认、跳过、超时等全部自动投注状态，失败原因直接从后端记录读取。</Text>
         </div>
       </Space>
 
@@ -422,9 +429,9 @@ const BettingHistory = () => {
         </Form>
       </Modal>
 
-      <Card title="下注成功记录" extra={<Tag color="green">皇冠历史已验证</Tag>}>
+      <Card title="下注记录" extra={<Tag color="blue">全状态记录</Tag>}>
         {filteredRows.length === 0 && !loading ? (
-          <Empty description="暂无下注成功记录" />
+          <Empty description="暂无下注记录" />
         ) : (
           <Table
             rowKey={(record) => String(record.id ?? record.dedupeKey)}
@@ -511,6 +518,12 @@ const BettingHistory = () => {
                 title: '皇冠记录',
                 dataIndex: 'crownBetReference',
                 width: 180,
+                render: (value?: string | null) => value || '-',
+              },
+              {
+                title: '原因',
+                dataIndex: 'reason',
+                width: 220,
                 render: (value?: string | null) => value || '-',
               },
             ]}

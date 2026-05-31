@@ -60,4 +60,36 @@ class CrownProfileExecutionLockTest {
         release.countDown()
         executor.shutdownNow()
     }
+
+    @Test
+    fun `same crown account executions run one at a time even when profile ids differ`() {
+        val lock = CrownProfileExecutionLock()
+        val executor = Executors.newFixedThreadPool(2)
+        val started = CountDownLatch(2)
+        val release = CountDownLatch(1)
+        val done = CountDownLatch(2)
+        val active = AtomicInteger(0)
+        val maxActive = AtomicInteger(0)
+
+        listOf("profile-a", "profile-b").forEach { profileId ->
+            executor.submit {
+                started.countDown()
+                started.await(3, TimeUnit.SECONDS)
+                lock.withAccountLock("account-a", profileId) {
+                    val current = active.incrementAndGet()
+                    maxActive.updateAndGet { previous -> maxOf(previous, current) }
+                    release.await(3, TimeUnit.SECONDS)
+                    active.decrementAndGet()
+                }
+                done.countDown()
+            }
+        }
+
+        started.await(3, TimeUnit.SECONDS)
+        Thread.sleep(150)
+        assertEquals(1, maxActive.get())
+        release.countDown()
+        done.await(3, TimeUnit.SECONDS)
+        executor.shutdownNow()
+    }
 }

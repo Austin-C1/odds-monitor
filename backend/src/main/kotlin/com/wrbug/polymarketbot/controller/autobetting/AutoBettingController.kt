@@ -8,11 +8,13 @@ import com.wrbug.polymarketbot.dto.AdsPowerCrownSessionRequest
 import com.wrbug.polymarketbot.dto.AdsPowerStartProfileRequest
 import com.wrbug.polymarketbot.dto.AdsPowerStatusDto
 import com.wrbug.polymarketbot.dto.AutoBettingDecisionDto
+import com.wrbug.polymarketbot.dto.AutoBettingQueuedCrownExecutionRequest
 import com.wrbug.polymarketbot.dto.AutoBettingSignalRequest
 import com.wrbug.polymarketbot.service.autobetting.AdsPowerLocalApiService
 import com.wrbug.polymarketbot.service.autobetting.AutoBettingDecisionService
 import com.wrbug.polymarketbot.service.autobetting.AutoBettingExecutionRequest
 import com.wrbug.polymarketbot.service.autobetting.AutoBettingExecutionService
+import com.wrbug.polymarketbot.service.autobetting.AutoBettingQueueService
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PostMapping
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController
 class AutoBettingController(
     private val decisionService: AutoBettingDecisionService,
     private val executionService: AutoBettingExecutionService,
+    private val queueService: AutoBettingQueueService,
     private val adsPowerLocalApiService: AdsPowerLocalApiService
 ) {
     @PostMapping("/signals/odds-monitor")
@@ -32,6 +35,13 @@ class AutoBettingController(
         @RequestBody request: AutoBettingSignalRequest
     ): ResponseEntity<ApiResponse<AutoBettingDecisionDto>> {
         return ResponseEntity.ok(ApiResponse.success(decisionService.createIntent(request)))
+    }
+
+    @PostMapping("/signals/odds-monitor/execute-crown-queue")
+    fun executeOddsMonitorCrownQueue(
+        @RequestBody request: AutoBettingQueuedCrownExecutionRequest
+    ): ResponseEntity<ApiResponse<List<AutoBettingDecisionDto>>> {
+        return ResponseEntity.ok(ApiResponse.success(queueService.executeQueuedCrownSignal(request)))
     }
 
     @PostMapping("/intents/recent")

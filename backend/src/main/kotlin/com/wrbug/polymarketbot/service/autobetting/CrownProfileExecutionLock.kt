@@ -15,4 +15,16 @@ class CrownProfileExecutionLock {
         val lock = locks.computeIfAbsent(key) { ReentrantLock() }
         return lock.withLock(action)
     }
+
+    fun <T> withAccountLock(accountKey: String, profileId: String, action: () -> T): T {
+        val normalizedAccountKey = accountKey.trim().lowercase()
+        val key = if (normalizedAccountKey.isNotBlank()) {
+            "account:$normalizedAccountKey"
+        } else {
+            profileId.trim().lowercase().takeIf { it.isNotBlank() }?.let { "profile:$it" }.orEmpty()
+        }
+        if (key.isBlank()) return action()
+        val lock = locks.computeIfAbsent(key) { ReentrantLock() }
+        return lock.withLock(action)
+    }
 }

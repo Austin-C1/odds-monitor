@@ -84,6 +84,43 @@ vi.mock('./services/api', () => ({
           },
         })
       }
+      if (url === '/auto-betting/signals/odds-monitor/execute-crown-queue') {
+        mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions) + 1
+        mockApiState.maxConcurrentExecutions = Math.max(
+          mockApiState.maxConcurrentExecutions,
+          mockApiState.activeExecutions,
+        )
+        const decisions = (data?.accounts || []).map((account: any, index: number) => {
+          mockApiState.intentId += 1
+          const executionResult = mockApiState.executionResults.length > 0
+            ? mockApiState.executionResults.shift()
+            : {
+                status: 'placed',
+                reason: 'crown_history_verified',
+                crownHistoryVerified: true,
+                crownBetReference: `OU${index + 1}`,
+              }
+          return {
+            id: mockApiState.intentId,
+            status: executionResult.status,
+            reason: executionResult.reason,
+            accountKey: account.accountKey,
+            crownHistoryVerified: executionResult.crownHistoryVerified,
+            crownHistoryCheckedAt: Date.now(),
+            crownBetReference: executionResult.crownBetReference,
+          }
+        })
+        const response = { data: { code: 0, data: decisions } }
+        const finish = () => {
+          mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions - 1)
+          return response
+        }
+        const delayMs = mockApiState.executionResults[0]?.delayMs
+        if (delayMs) {
+          return new Promise((resolve) => setTimeout(() => resolve(finish()), delayMs))
+        }
+        return Promise.resolve(finish())
+      }
       if (/^\/auto-betting\/intents\/\d+\/execute-crown$/.test(url)) {
         mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions) + 1
         mockApiState.maxConcurrentExecutions = Math.max(
@@ -209,15 +246,17 @@ describe('App background crown betting automation', () => {
     await screen.findByText('下注成功页面')
 
     await waitFor(() => {
-      expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => url === '/auto-betting/signals/odds-monitor')).toBe(true)
+      expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
+        url === '/auto-betting/signals/odds-monitor/execute-crown-queue'
+      ))).toBe(true)
     })
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
       /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
-    ))).toBe(true)
-    const executeCall = vi.mocked(apiClient.post).mock.calls.find(([url]) => (
-      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+    ))).toBe(false)
+    const queueCall = vi.mocked(apiClient.post).mock.calls.find(([url]) => (
+      url === '/auto-betting/signals/odds-monitor/execute-crown-queue'
     ))
-    expect(executeCall?.[2]?.timeout).toBe(30000)
+    expect(queueCall?.[2]?.timeout).toBe(35000)
   })
 
   it('keeps prematch automatic betting running after navigating away from the crown betting page', async () => {
@@ -249,14 +288,14 @@ describe('App background crown betting automation', () => {
 
     await waitFor(() => {
       expect(vi.mocked(apiClient.post).mock.calls.some(([url, body]) => (
-        url === '/auto-betting/signals/odds-monitor' &&
+        url === '/auto-betting/signals/odds-monitor/execute-crown-queue' &&
         body?.bettingMode === 'prematch' &&
         body?.matchPhase === 'prematch'
       ))).toBe(true)
     })
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
       /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
-    ))).toBe(true)
+    ))).toBe(false)
   })
 
   it('runs background account executions one by one for ten accounts', async () => {
@@ -292,16 +331,17 @@ describe('App background crown betting automation', () => {
     render(<App />)
 
     await waitFor(() => {
-      const executeCalls = vi.mocked(apiClient.post).mock.calls.filter(([url]) => (
-        /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+      const queueCalls = vi.mocked(apiClient.post).mock.calls.filter(([url]) => (
+        url === '/auto-betting/signals/odds-monitor/execute-crown-queue'
       ))
-      expect(executeCalls).toHaveLength(10)
+      expect(queueCalls).toHaveLength(1)
     }, { timeout: 5000 })
 
     expect(mockApiState.maxConcurrentExecutions).toBe(1)
-    const executeCalls = vi.mocked(apiClient.post).mock.calls.filter(([url]) => (
-      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+    const queueCalls = vi.mocked(apiClient.post).mock.calls.filter(([url]) => (
+      url === '/auto-betting/signals/odds-monitor/execute-crown-queue'
     ))
-    expect(executeCalls.every(([, , config]) => config?.timeout === 30000)).toBe(true)
+    expect(queueCalls[0]?.[1]?.accounts).toHaveLength(10)
+    expect(queueCalls[0]?.[2]?.timeout).toBe(305000)
   })
 })

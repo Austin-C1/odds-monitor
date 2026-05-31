@@ -31,7 +31,7 @@ const menuItems: MenuProps['items'] = [
   { key: '/pinnacle-league-filter', icon: <FilterOutlined />, label: '平博比赛选择' },
   { key: '/crown-league-filter', icon: <FilterOutlined />, label: '皇冠比赛选择' },
   { key: '/crown-betting', icon: <WalletOutlined />, label: '皇冠投注' },
-  { key: '/betting-history', icon: <HistoryOutlined />, label: '下注成功' },
+  { key: '/betting-history', icon: <HistoryOutlined />, label: '下注记录' },
   { key: '/data-sources/settings', icon: <SettingOutlined />, label: '数据源设置' },
   { key: '/data-sources/status', icon: <CloudServerOutlined />, label: '数据源状态' },
   { key: '/alerts', icon: <AlertOutlined />, label: '告警记录' },

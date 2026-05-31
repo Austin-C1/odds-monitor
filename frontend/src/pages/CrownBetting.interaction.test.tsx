@@ -156,6 +156,45 @@ vi.mock('../services/api', () => ({
           },
         })
       }
+      if (url === '/auto-betting/signals/odds-monitor/execute-crown-queue') {
+        mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions) + 1
+        mockApiState.maxConcurrentExecutions = Math.max(
+          mockApiState.maxConcurrentExecutions,
+          mockApiState.activeExecutions,
+        )
+        const consumedResults: any[] = []
+        const decisions = (data?.accounts || []).map((account: any, index: number) => {
+          mockApiState.intentId += 1
+          const executionResult = mockApiState.executionResults.length > 0
+            ? mockApiState.executionResults.shift()
+            : {
+                status: 'placed',
+                reason: 'crown_history_verified',
+                crownHistoryVerified: true,
+                crownBetReference: `CROWN-${index + 1}`,
+              }
+          consumedResults.push(executionResult)
+          return {
+            id: mockApiState.intentId,
+            status: executionResult.status,
+            reason: executionResult.reason,
+            accountKey: account.accountKey,
+            crownHistoryVerified: executionResult.crownHistoryVerified,
+            crownHistoryCheckedAt: Date.now(),
+            crownBetReference: executionResult.crownBetReference,
+          }
+        })
+        const response = { data: { code: 0, data: decisions } }
+        const finish = () => {
+          mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions - 1)
+          return response
+        }
+        const delayMs = Math.max(0, ...consumedResults.map((result) => Number(result.delayMs || 0)))
+        if (delayMs > 0) {
+          return new Promise((resolve) => setTimeout(() => resolve(finish()), delayMs))
+        }
+        return Promise.resolve(finish())
+      }
       if (/^\/auto-betting\/intents\/\d+\/execute-crown$/.test(url)) {
         mockApiState.activeExecutions = Math.max(0, mockApiState.activeExecutions) + 1
         mockApiState.maxConcurrentExecutions = Math.max(
@@ -196,6 +235,15 @@ vi.mock('../services/api', () => ({
     }),
   },
 }))
+
+const CROWN_QUEUE_ENDPOINT = '/auto-betting/signals/odds-monitor/execute-crown-queue'
+const isLegacyCrownExecuteEndpoint = (url: unknown) => (
+  /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+)
+const queueCalls = () => vi.mocked(apiClient.post).mock.calls
+  .filter(([url]) => url === CROWN_QUEUE_ENDPOINT)
+const legacyExecuteCalls = () => vi.mocked(apiClient.post).mock.calls
+  .filter(([url]) => isLegacyCrownExecuteEndpoint(url))
 
 class ResizeObserverMock {
   observe() {}
@@ -369,28 +417,25 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(screen.getByText('候选信号盘口')).toBeTruthy()
     expect(screen.getByText('采集系统合格回传')).toBeTruthy()
     expect(screen.getByText('按投注顺序排队')).toBeTruthy()
-    let signalCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-    expect(signalCalls).toHaveLength(2)
-    expect(signalCalls.every(([, body]) => (
+    let currentQueueCalls = queueCalls()
+    expect(currentQueueCalls).toHaveLength(1)
+    expect(currentQueueCalls.every(([, body]) => (
       body.bettingMode === 'prematch' &&
       body.matchPhase === 'prematch' &&
       body.matchTitle === '曼城 vs 利物浦' &&
       body.selectionName === '曼城' &&
       body.referenceSourceKey === 'crown' &&
-      body.queuePosition === 1 &&
-      body.queueTotal === 2 &&
-      body.maxSignalAgeSeconds === 360
+      body.maxSignalAgeSeconds === 360 &&
+      body.accounts.length === 2
     ))).toBe(true)
-    let executeCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-    expect(executeCalls).toHaveLength(2)
-    expect(executeCalls.every(([, body]) => (
-      body.profileId &&
-      body.loginUrl === 'https://m407.mos077.com/' &&
-      body.minimumTargetOdds === 0.94
+    expect(currentQueueCalls.every(([, body, config]) => (
+      body.accounts.every((account: any) => (
+        account.profileId &&
+        account.loginUrl === 'https://m407.mos077.com/'
+      )) &&
+      config?.timeout === 65000
     ))).toBe(true)
-    expect(executeCalls.every(([, , config]) => config?.timeout === 30000)).toBe(true)
+    expect(legacyExecuteCalls()).toHaveLength(0)
 
     expect(screen.getByText('信号来源：采集系统合格回传')).toBeTruthy()
     expect(screen.getByText('按投注顺序排队')).toBeTruthy()
@@ -430,36 +475,31 @@ describe('CrownBetting auto betting execution interaction', () => {
     await waitFor(() => {
       expect(screen.getAllByText('罗马 vs 拉齐奥').length).toBeGreaterThan(0)
       expect(screen.getAllByText('大球').length).toBeGreaterThan(0)
-      const latestSignalCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-        .slice(-2)
-      expect(latestSignalCalls).toHaveLength(2)
-      expect(latestSignalCalls.every(([, body]) => (
+      const latestQueueCalls = queueCalls().slice(-1)
+      expect(latestQueueCalls).toHaveLength(1)
+      expect(latestQueueCalls.every(([, body]) => (
         body.bettingMode === 'live' &&
         body.matchPhase === 'live' &&
         body.matchTitle === '罗马 vs 拉齐奥' &&
         body.selectionName === '大球' &&
-        body.referenceSourceKey === 'crown'
+        body.referenceSourceKey === 'crown' &&
+        body.accounts.length === 2
       ))).toBe(true)
     })
-    signalCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-      .slice(-2)
-    expect(signalCalls).toHaveLength(2)
-    expect(signalCalls.every(([, body]) => (
+    currentQueueCalls = queueCalls().slice(-1)
+    expect(currentQueueCalls).toHaveLength(1)
+    expect(currentQueueCalls.every(([, body]) => (
       body.bettingMode === 'live' &&
       body.matchPhase === 'live' &&
       body.matchTitle === '罗马 vs 拉齐奥' &&
       body.selectionName === '大球' &&
       body.referenceSourceKey === 'crown'
     ))).toBe(true)
-    executeCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-    expect(executeCalls).toHaveLength(4)
+    expect(legacyExecuteCalls()).toHaveLength(0)
     expect(screen.queryByText(/阿森纳|切尔西|国际米兰|尤文图斯/)).toBeNull()
   }, 30000)
 
-  it('checks and executes one account before preparing the next account', async () => {
+  it('submits one backend queue request for all eligible accounts', async () => {
     window.localStorage.setItem('crown-betting-automation-settings', JSON.stringify({
       autoMode: 'live',
       autoEnabled: true,
@@ -473,24 +513,14 @@ describe('CrownBetting auto betting execution interaction', () => {
 
     await screen.findByText('自动化接入投注功能')
     await waitFor(() => {
-      const executeCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-      expect(executeCalls).toHaveLength(2)
+      expect(queueCalls()).toHaveLength(1)
     })
 
-    const calls = vi.mocked(apiClient.post).mock.calls
-    const checkIndexes = calls
-      .map(([url], index) => url === '/auto-betting/adspower/crown-session/match' ? index : -1)
-      .filter((index) => index >= 0)
-    const executeIndexes = calls
-      .map(([url], index) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)) ? index : -1)
-      .filter((index) => index >= 0)
-
-    expect(checkIndexes).toHaveLength(2)
-    expect(executeIndexes).toHaveLength(2)
-    expect(checkIndexes[0]).toBeLessThan(executeIndexes[0])
-    expect(executeIndexes[0]).toBeLessThan(checkIndexes[1])
-    expect(checkIndexes[1]).toBeLessThan(executeIndexes[1])
+    const queueCall = queueCalls()[0]
+    expect(queueCall[1].accounts).toHaveLength(2)
+    expect(queueCall[1].accounts.map((account: any) => account.accountKey)).toEqual(['account-a', 'account-b'])
+    expect(queueCall[2]?.timeout).toBe(65000)
+    expect(legacyExecuteCalls()).toHaveLength(0)
   }, 30000)
 
   it('shows the active betting market while automatic betting is running', async () => {
@@ -618,12 +648,12 @@ describe('CrownBetting auto betting execution interaction', () => {
       expect(screen.getAllByText(/Account/).length).toBeGreaterThan(0)
     }, { timeout: 3000 })
     await waitFor(() => {
-      const executeCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-      expect(executeCalls).toHaveLength(accountCount)
+      expect(queueCalls()).toHaveLength(1)
     }, { timeout: 15000 })
 
     expect(mockApiState.maxConcurrentExecutions).toBe(1)
+    expect(queueCalls()[0]?.[1]?.accounts).toHaveLength(accountCount)
+    expect(legacyExecuteCalls()).toHaveLength(0)
   }, 45000)
 
   it('runs live checks from the latest crown alert rise without pinnacle', async () => {
@@ -641,13 +671,10 @@ describe('CrownBetting auto betting execution interaction', () => {
     })
 
     await waitFor(() => {
-      const signalCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-      expect(signalCalls).toHaveLength(2)
+      expect(queueCalls()).toHaveLength(1)
     })
-    const signalCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-    expect(signalCalls.every(([, body]) => (
+    const currentQueueCalls = queueCalls()
+    expect(currentQueueCalls.every(([, body]) => (
       body.bettingMode === 'live' &&
       body.matchPhase === 'live' &&
       body.matchTitle === '米亚尔比 vs 哈马比' &&
@@ -661,13 +688,11 @@ describe('CrownBetting auto betting execution interaction', () => {
         body.capturedAt === alertCreatedAt &&
         body.maxSignalAgeSeconds === 360
     ))).toBe(true)
-    const executeCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-    expect(executeCalls).toHaveLength(2)
-    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 0.76)).toBe(true)
+    expect(currentQueueCalls[0][1].accounts).toHaveLength(2)
+    expect(legacyExecuteCalls()).toHaveLength(0)
   }, 30000)
 
-  it('checks enabled account login before sending one betting signal', async () => {
+  it('sends enabled accounts to backend queue without frontend session matching', async () => {
     writeAccounts([
       {
         id: 'account-a',
@@ -702,30 +727,19 @@ describe('CrownBetting auto betting execution interaction', () => {
     fireEvent.click(screen.getByText('滚球'))
 
     await waitFor(() => {
-      const signalCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-      expect(signalCalls).toHaveLength(1)
+      expect(queueCalls()).toHaveLength(1)
     })
 
     const calls = vi.mocked(apiClient.post).mock.calls
     const checkCalls = calls.filter(([url]) => url === '/auto-betting/adspower/crown-session/match')
-    const signalCalls = calls.filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-    const executeCalls = calls.filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-    const firstCheckIndex = calls.findIndex(([url]) => url === '/auto-betting/adspower/crown-session/match')
-    const firstSignalIndex = calls.findIndex(([url]) => url === '/auto-betting/signals/odds-monitor')
-    const firstExecuteIndex = calls.findIndex(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
+    const queueCall = queueCalls()[0]
 
-    expect(checkCalls).toHaveLength(1)
-    expect(checkCalls[0][1]).toEqual(expect.objectContaining({ loginName: 'demo_a', preferredProfileId: 'profile-a' }))
-    expect(signalCalls[0][1]).toEqual(expect.objectContaining({ accountKey: 'account-a', stakeAmount: 50 }))
-    expect(executeCalls).toHaveLength(1)
-    expect(executeCalls[0][1]).toEqual(expect.objectContaining({
-      profileId: 'matched-profile',
-      minimumTargetOdds: 0.76,
-    }))
-    expect(firstCheckIndex).toBeGreaterThan(-1)
-    expect(firstSignalIndex).toBeGreaterThan(firstCheckIndex)
-    expect(firstExecuteIndex).toBeGreaterThan(firstSignalIndex)
+    expect(checkCalls).toHaveLength(0)
+    expect(queueCall[1]).toEqual(expect.objectContaining({ stakeAmount: 50 }))
+    expect(queueCall[1].accounts).toEqual([
+      expect.objectContaining({ accountKey: 'account-a', profileId: 'profile-a' }),
+    ])
+    expect(legacyExecuteCalls()).toHaveLength(0)
   }, 30000)
 
   it('does not restart automatic polling when account state changes during execution', async () => {
@@ -740,9 +754,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     render(<CrownBetting />)
 
     await waitFor(() => {
-      const executeCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-      expect(executeCalls).toHaveLength(2)
+      expect(queueCalls()).toHaveLength(1)
     })
 
     const alertCallsAfterExecution = vi.mocked(apiClient.post).mock.calls
@@ -818,9 +830,7 @@ describe('CrownBetting auto betting execution interaction', () => {
 
     await screen.findByText('自动化接入投注功能')
     await waitFor(() => {
-      const executeCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-      expect(executeCalls).toHaveLength(1)
+      expect(queueCalls()).toHaveLength(1)
     }, { timeout: 7000 })
     await screen.findByText(/CROWN-STABLE-1901/, {}, { timeout: 10000 })
     await new Promise((resolve) => setTimeout(resolve, 5500))
@@ -831,7 +841,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(alertCalls).toHaveLength(2)
   }, 30000)
 
-  it('retries the same alert after a failed crown execution', async () => {
+  it('does not retry the same alert after a failed crown execution', async () => {
     const originalNow = Date.now()
     let nowSpy: ReturnType<typeof vi.spyOn> | null = null
     try {
@@ -900,21 +910,17 @@ describe('CrownBetting auto betting execution interaction', () => {
 
       await screen.findByText('自动化接入投注功能')
       await waitFor(() => {
-        const executeCalls = vi.mocked(apiClient.post).mock.calls
-          .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-        expect(executeCalls).toHaveLength(1)
+        expect(queueCalls()).toHaveLength(1)
       })
 
       nowSpy = vi.spyOn(Date, 'now').mockReturnValue(originalNow + 6_000)
       const amountInputs = screen.getAllByRole('spinbutton') as HTMLInputElement[]
       fireEvent.change(amountInputs[3], { target: { value: '601' } })
 
-      await waitFor(() => {
-        const executeCalls = vi.mocked(apiClient.post).mock.calls
-          .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-        expect(executeCalls).toHaveLength(2)
-      }, { timeout: 1000 })
-      expect(screen.getByText(/CROWN-20001/)).toBeTruthy()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(queueCalls()).toHaveLength(1)
+      expect(legacyExecuteCalls()).toHaveLength(0)
+      expect(screen.queryByText(/CROWN-20001/)).toBeNull()
     } finally {
       nowSpy?.mockRestore()
     }
@@ -989,9 +995,7 @@ describe('CrownBetting auto betting execution interaction', () => {
 
       await screen.findByText('自动化接入投注功能')
       await waitFor(() => {
-        const executeCalls = vi.mocked(apiClient.post).mock.calls
-          .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-        expect(executeCalls).toHaveLength(1)
+        expect(queueCalls()).toHaveLength(1)
       })
 
       nowSpy = vi.spyOn(Date, 'now').mockReturnValue(originalNow + 6_000)
@@ -999,9 +1003,8 @@ describe('CrownBetting auto betting execution interaction', () => {
       fireEvent.change(amountInputs[3], { target: { value: '601' } })
 
       await new Promise((resolve) => setTimeout(resolve, 100))
-      const executeCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-      expect(executeCalls).toHaveLength(1)
+      expect(queueCalls()).toHaveLength(1)
+      expect(legacyExecuteCalls()).toHaveLength(0)
     } finally {
       nowSpy?.mockRestore()
     }
@@ -1014,13 +1017,12 @@ describe('CrownBetting auto betting execution interaction', () => {
     fireEvent.click(screen.getByText('滚球'))
 
     await waitFor(() => {
-      const executeCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-      expect(executeCalls).toHaveLength(2)
+      expect(queueCalls()).toHaveLength(1)
     })
-    const executeCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 0.76)).toBe(true)
+    const currentQueueCalls = queueCalls()
+    expect(currentQueueCalls[0][1].targetOdds).toBe(0.76)
+    expect(currentQueueCalls[0][1].accounts).toHaveLength(2)
+    expect(legacyExecuteCalls()).toHaveLength(0)
   }, 30000)
 
   it('syncs the betting page mode from the active monitor mode before consuming alerts', async () => {
@@ -1072,10 +1074,9 @@ describe('CrownBetting auto betting execution interaction', () => {
     render(<CrownBetting />)
 
     await waitFor(() => {
-      const signalCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-      expect(signalCalls.length).toBeGreaterThan(0)
-      expect(signalCalls.every(([, body]) => body.matchPhase === 'live')).toBe(true)
+      const currentQueueCalls = queueCalls()
+      expect(currentQueueCalls.length).toBeGreaterThan(0)
+      expect(currentQueueCalls.every(([, body]) => body.matchPhase === 'live')).toBe(true)
     })
     expect(screen.getAllByText('罗马 vs 拉齐奥').length).toBeGreaterThan(0)
     expect(window.localStorage.getItem('crown-betting-automation-settings')).toContain('"autoMode":"live"')
@@ -1091,10 +1092,10 @@ describe('CrownBetting auto betting execution interaction', () => {
       expect(screen.getAllByText('暂无可执行监控信号').length).toBeGreaterThan(0)
     })
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
-      url === '/auto-betting/signals/odds-monitor'
+      url === CROWN_QUEUE_ENDPOINT
     ))).toBe(false)
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
-      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+      isLegacyCrownExecuteEndpoint(url)
     ))).toBe(false)
   }, 30000)
 
@@ -1159,10 +1160,10 @@ describe('CrownBetting auto betting execution interaction', () => {
       url === '/odds-monitor/alerts/list'
     ))).toBe(true)
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
-      url === '/auto-betting/signals/odds-monitor'
+      url === CROWN_QUEUE_ENDPOINT
     ))).toBe(false)
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
-      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+      isLegacyCrownExecuteEndpoint(url)
     ))).toBe(false)
   }, 30000)
 
@@ -1187,10 +1188,10 @@ describe('CrownBetting auto betting execution interaction', () => {
       url === '/odds-monitor/alerts/list'
     ))).toBe(true)
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
-      url === '/auto-betting/signals/odds-monitor'
+      url === CROWN_QUEUE_ENDPOINT
     ))).toBe(false)
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
-      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+      isLegacyCrownExecuteEndpoint(url)
     ))).toBe(false)
   }, 30000)
 
@@ -1210,7 +1211,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     })
     expect(screen.queryByText('米亚尔比 vs 哈马比')).toBeNull()
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
-      url === '/auto-betting/signals/odds-monitor'
+      url === CROWN_QUEUE_ENDPOINT
     ))).toBe(false)
   }, 30000)
 
@@ -1252,24 +1253,17 @@ describe('CrownBetting auto betting execution interaction', () => {
       expect(screen.getAllByText('伯恩茅斯 vs 曼城').length).toBeGreaterThan(0)
     })
     await waitFor(() => {
-      const signalCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-        .slice(-2)
-      expect(signalCalls).toHaveLength(2)
+      expect(queueCalls().slice(-1)).toHaveLength(1)
     })
-    const signalCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-      .slice(-2)
-    expect(signalCalls.every(([, body]) => (
+    const currentQueueCalls = queueCalls().slice(-1)
+    expect(currentQueueCalls.every(([, body]) => (
       body.matchTitle === '伯恩茅斯 vs 曼城' &&
       body.targetOdds === 1.08 &&
       body.minimumTargetOdds === 1.01
     ))).toBe(true)
-    const executeCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url)))
-    expect(executeCalls).toHaveLength(2)
-    expect(executeCalls.every(([, body]) => body.minimumTargetOdds === 1.08)).toBe(true)
-    expect(executeCalls.every(([, , config]) => config?.timeout === 30000)).toBe(true)
+    expect(currentQueueCalls[0][1].accounts).toHaveLength(2)
+    expect(currentQueueCalls[0][2]?.timeout).toBe(65000)
+    expect(legacyExecuteCalls()).toHaveLength(0)
   }, 30000)
 
   it('does not send expired crown alerts to backend betting decisions', async () => {
@@ -1311,10 +1305,10 @@ describe('CrownBetting auto betting execution interaction', () => {
       expect(screen.getAllByText('暂无符合配置的候选盘口').length).toBeGreaterThan(0)
     })
     const decisionCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
+      .filter(([url]) => url === CROWN_QUEUE_ENDPOINT)
     expect(decisionCalls).toHaveLength(0)
     expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
-      url === '/auto-betting/signals/odds-monitor'
+      url === CROWN_QUEUE_ENDPOINT
     ))).toBe(false)
   }, 30000)
 
@@ -1378,13 +1372,10 @@ describe('CrownBetting auto betting execution interaction', () => {
       expect(screen.getAllByText('大球').length).toBeGreaterThan(0)
     })
     await waitFor(() => {
-      const signalCalls = vi.mocked(apiClient.post).mock.calls
-        .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-      expect(signalCalls).toHaveLength(2)
+      expect(queueCalls()).toHaveLength(1)
     })
-    const signalCalls = vi.mocked(apiClient.post).mock.calls
-      .filter(([url]) => url === '/auto-betting/signals/odds-monitor')
-    expect(signalCalls.every(([, body]) => (
+    const currentQueueCalls = queueCalls()
+    expect(currentQueueCalls.every(([, body]) => (
       body.matchTitle === '奥尔格里特 vs IFK哥德堡' &&
       body.marketType === 'total' &&
       body.lineValue === '4' &&

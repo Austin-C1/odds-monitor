@@ -27,6 +27,38 @@ data class AutoBettingSignalRequest(
     val queueTotal: Int? = null
 )
 
+data class AutoBettingCrownQueueAccountRequest(
+    val accountKey: String,
+    val accountDisplayName: String? = null,
+    val profileId: String,
+    val loginUrl: String? = null,
+    val bettingEnabled: Boolean = true
+)
+
+data class AutoBettingQueuedCrownExecutionRequest(
+    val signalSource: String = "odds_monitor",
+    val bettingMode: String,
+    val matchPhase: String,
+    val leagueName: String,
+    val matchTitle: String,
+    val marketType: String,
+    val lineValue: String? = null,
+    val selectionName: String,
+    val referenceSourceKey: String,
+    val targetSourceKey: String,
+    val referenceOdds: BigDecimal,
+    val targetOdds: BigDecimal,
+    val minimumTargetOdds: BigDecimal? = null,
+    val oddsChangeDirection: String? = null,
+    val stakeAmount: BigDecimal,
+    val accountStakeLimit: BigDecimal? = null,
+    val capturedAt: Long,
+    val maxSignalAgeSeconds: Long? = null,
+    val queuePosition: Int? = null,
+    val queueTotal: Int? = null,
+    val accounts: List<AutoBettingCrownQueueAccountRequest> = emptyList()
+)
+
 data class AutoBettingDecisionDto(
     val id: Long? = null,
     val status: String,

@@ -330,8 +330,35 @@ class AutoBettingDecisionServiceTest {
     }
 
     @Test
-    fun `recent crown page touched failure does not block duplicate retry`() {
+    fun `old crown page touched failure does not block duplicate retry after cooldown`() {
         val request = baseRequest()
+        `when`(repository.findTopByDedupeKeyOrderByCreatedAtDesc("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home"))
+            .thenReturn(
+                AutoBettingIntent(
+                    dedupeKey = "default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home",
+                    signalSource = "odds_monitor",
+                    bettingMode = "prematch",
+                    matchPhase = "prematch",
+                    accountKey = "default",
+                    leagueName = "Premier League",
+                    matchTitle = "Arsenal v Chelsea",
+                    marketType = "handicap",
+                    lineValue = "-0.5",
+                    selectionName = "home",
+                    referenceSourceKey = "crown",
+                    targetSourceKey = "crown",
+                    referenceOdds = BigDecimal("1.90000000"),
+                    targetOdds = BigDecimal("0.95000000"),
+                    targetDecimalOdds = BigDecimal("1.95000000"),
+                    decimalEdge = BigDecimal("0.05000000"),
+                    stakeAmount = BigDecimal("50.0000"),
+                    status = "rejected",
+                    rejectReason = "crown_page_not_found",
+                    capturedAt = 690_000,
+                    createdAt = 690_000,
+                    updatedAt = 690_000
+                )
+            )
         `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
             .thenReturn(false)
         val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
@@ -342,6 +369,44 @@ class AutoBettingDecisionServiceTest {
         assertEquals("ready", decision.status)
         assertEquals("accepted", decision.reason)
         assertEquals(null, captor.value.activeDedupeKey)
+    }
+
+    @Test
+    fun `recent failed crown attempt keeps duplicate signal in cooldown`() {
+        val request = baseRequest()
+        `when`(repository.findTopByDedupeKeyOrderByCreatedAtDesc("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home"))
+            .thenReturn(
+                AutoBettingIntent(
+                    dedupeKey = "default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home",
+                    signalSource = "odds_monitor",
+                    bettingMode = "prematch",
+                    matchPhase = "prematch",
+                    accountKey = "default",
+                    leagueName = "Premier League",
+                    matchTitle = "Arsenal v Chelsea",
+                    marketType = "handicap",
+                    lineValue = "-0.5",
+                    selectionName = "home",
+                    referenceSourceKey = "crown",
+                    targetSourceKey = "crown",
+                    referenceOdds = BigDecimal("1.90000000"),
+                    targetOdds = BigDecimal("0.95000000"),
+                    targetDecimalOdds = BigDecimal("1.95000000"),
+                    decimalEdge = BigDecimal("0.05000000"),
+                    stakeAmount = BigDecimal("50.0000"),
+                    status = "rejected",
+                    rejectReason = "crown_page_not_found",
+                    capturedAt = 990_000,
+                    createdAt = 995_000,
+                    updatedAt = 995_000
+                )
+            )
+        `when`(repository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val decision = service.createIntent(request, now = 1_000_000)
+
+        assertEquals("rejected", decision.status)
+        assertEquals("duplicate_recent_crown_attempt", decision.reason)
     }
 
     @Test

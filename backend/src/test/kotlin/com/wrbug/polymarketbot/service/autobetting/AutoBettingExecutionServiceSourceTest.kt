@@ -6,10 +6,10 @@ import java.io.File
 
 class AutoBettingExecutionServiceSourceTest {
     @Test
-    fun `crown placement gateway call is protected by profile execution lock`() {
+    fun `crown placement gateway call is protected by account execution lock`() {
         val source = File("src/main/kotlin/com/wrbug/polymarketbot/service/autobetting/AutoBettingExecutionService.kt")
             .readText()
-        val lockBlock = source.substringAfter("profileExecutionLock.withProfileLock(profileId)", "")
+        val lockBlock = source.substringAfter("profileExecutionLock.withAccountLock(placing.accountKey, profileId)", "")
             .substringBefore("if (placement.placed")
 
         assertTrue(lockBlock.contains("crownBetPlacementGateway.placeBet(command)"))

@@ -24,6 +24,7 @@ class AutoBettingDecisionService(
     private val maxSingleStake = BigDecimal("500.00")
     private val staleReadyTimeoutMillis = 180_000L
     private val stalePlacingTimeoutMillis = 30_000L
+    private val failedAttemptCooldownMillis = 300_000L
 
     @Synchronized
     fun createIntent(request: AutoBettingSignalRequest, now: Long = System.currentTimeMillis()): AutoBettingDecisionDto {
@@ -132,6 +133,9 @@ class AutoBettingDecisionService(
         if (request.stakeAmount > maxSingleStake) {
             return Decision(STATUS_REJECTED, "stake_over_single_limit")
         }
+        if (isRecentFailedAttemptInCooldown(dedupeKey, now)) {
+            return Decision(STATUS_REJECTED, "duplicate_recent_crown_attempt")
+        }
         val existingIntent = intentRepository.findTopByDedupeKeyAndStatusInOrderByCreatedAtDesc(dedupeKey, lockedStatuses)
         if (existingIntent?.status in listOf(STATUS_PLACED, STATUS_PLACED_UNVERIFIED)) {
             return Decision(STATUS_REJECTED, "duplicate_placed_intent")
@@ -152,6 +156,13 @@ class AutoBettingDecisionService(
         val usedStake = intentRepository.sumStakeAmountByAccountKeyAndStatusIn(accountKey, lockedStatuses)
             ?: BigDecimal.ZERO
         return usedStake.add(request.stakeAmount) > accountStakeLimit
+    }
+
+    private fun isRecentFailedAttemptInCooldown(dedupeKey: String, now: Long): Boolean {
+        val latest = intentRepository.findTopByDedupeKeyOrderByCreatedAtDesc(dedupeKey) ?: return false
+        if (latest.status != STATUS_REJECTED) return false
+        if (latest.rejectReason == "stale_signal") return false
+        return now - latest.createdAt < failedAttemptCooldownMillis
     }
 
     private fun isAutoBettingEnabled(): Boolean {

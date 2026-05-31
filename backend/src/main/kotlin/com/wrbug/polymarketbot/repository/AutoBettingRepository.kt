@@ -16,6 +16,7 @@ interface AutoBettingIntentRepository : JpaRepository<AutoBettingIntent, Long> {
         dedupeKey: String,
         statuses: Collection<String>
     ): AutoBettingIntent?
+    fun findTopByDedupeKeyOrderByCreatedAtDesc(dedupeKey: String): AutoBettingIntent?
 
     fun findTop100ByOrderByCreatedAtDesc(): List<AutoBettingIntent>
     fun findTop100ByStatusAndCrownHistoryVerifiedTrueOrderByCreatedAtDesc(status: String): List<AutoBettingIntent>

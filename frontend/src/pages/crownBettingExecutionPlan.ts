@@ -125,29 +125,14 @@ export const buildCrownAlertSignalQueue = (
   options: CrownAlertSignalSelectionOptions,
 ): QueuedCrownAlertSignal[] => {
   const pendingCandidates = candidates.filter((candidate) => (
-    !options.completedSignalKeys.has(autoBettingSignalKey(candidate))
-  ))
-
-  const retryCooldownMs = Math.max(0, options.retryCooldownMs)
-  const attempted = pendingCandidates.filter((candidate) => (
-    options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
-  ))
-  const neverAttempted = pendingCandidates.filter((candidate) => (
+    !options.completedSignalKeys.has(autoBettingSignalKey(candidate)) &&
     !options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
   ))
-  const retryReady = attempted.filter((candidate) => {
-    const lastAttemptAt = options.attemptedSignalAt.get(autoBettingSignalKey(candidate)) || 0
-    return options.now - lastAttemptAt >= retryCooldownMs
-  })
-  const coolingDown = attempted.filter((candidate) => {
-    const lastAttemptAt = options.attemptedSignalAt.get(autoBettingSignalKey(candidate)) || 0
-    return options.now - lastAttemptAt < retryCooldownMs
-  })
 
-  return [...retryReady, ...coolingDown, ...neverAttempted].map((candidate, index) => ({
+  return pendingCandidates.map((candidate, index) => ({
     ...candidate,
     queuePosition: index + 1,
-    queueStatus: coolingDown.includes(candidate) ? 'cooldown' : 'ready',
+    queueStatus: 'ready',
   }))
 }
 
@@ -156,12 +141,8 @@ export const selectNextCrownAlertSignal = (
   options: CrownAlertSignalSelectionOptions,
 ): AutoBettingSignal | null => {
   const queue = buildCrownAlertSignalQueue(candidates, options)
-  const hasUnfinishedAttemptedSignal = queue.some((candidate) => (
-    options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
-  ))
   const selected = queue.find((candidate) => (
-    candidate.queueStatus === 'ready' &&
-    (!hasUnfinishedAttemptedSignal || options.attemptedSignalAt.has(autoBettingSignalKey(candidate)))
+    candidate.queueStatus === 'ready'
   ))
   return selected
     ? candidates.find((candidate) => autoBettingSignalKey(candidate) === autoBettingSignalKey(selected)) || selected
@@ -440,18 +421,6 @@ export const buildAutoBettingExecutionPlan = (
     if (!hasAdsPowerProfile(account)) {
       return skippedRow(account, signal, '未绑定 AdsPower 档案')
     }
-    if (account.adsPowerStatus === 'closed') {
-      return skippedRow(account, signal, 'AdsPower 环境未打开')
-    }
-    if (account.adsPowerStatus === 'error') {
-      return skippedRow(account, signal, 'AdsPower 环境异常')
-    }
-    if (account.adsPowerStatus !== 'opened') {
-      return skippedRow(account, signal, 'AdsPower 环境未打开')
-    }
-    if (account.status !== 'success') {
-      return skippedRow(account, signal, '账号未在线')
-    }
     return {
       id: account.id,
       accountName: account.displayName,
@@ -582,9 +551,7 @@ const hasAdsPowerProfile = (account: ExecutionAccount) => Boolean(account.adsPow
 
 const isAutomationReady = (account: ExecutionAccount) => (
   account.bettingEnabled !== false &&
-  hasAdsPowerProfile(account) &&
-  account.adsPowerStatus === 'opened' &&
-  account.status === 'success'
+  hasAdsPowerProfile(account)
 )
 
 const unavailableReason = (account: ExecutionAccount) => {

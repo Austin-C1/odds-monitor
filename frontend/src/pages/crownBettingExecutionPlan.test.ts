@@ -167,7 +167,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     expect(autoBettingSignalKey(handicapSignal)).not.toBe(autoBettingSignalKey(totalSignal))
   })
 
-  it('prioritizes an unfinished attempted signal before a new signal', () => {
+  it('skips an attempted signal and selects a new signal', () => {
     const firstSignal = {
       ...prematchSignal,
       sourceAlertId: 4001,
@@ -190,10 +190,47 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
         now: 20_000,
         retryCooldownMs: 5_000,
       },
-    )).toBe(firstSignal)
+    )).toBe(secondSignal)
   })
 
-  it('waits for an unfinished attempted signal cooldown before starting a new signal', () => {
+  it('does not retry an already attempted signal after cooldown passes', () => {
+    const firstSignal = {
+      ...prematchSignal,
+      sourceAlertId: 4031,
+      matchTitle: 'First match',
+      targetOdds: 0.94,
+    }
+    const secondSignal = {
+      ...prematchSignal,
+      sourceAlertId: 4032,
+      matchTitle: 'Second match',
+      targetOdds: 0.96,
+    }
+    const attemptedSignalAt = new Map([[autoBettingSignalKey(firstSignal), 1_000]])
+
+    const queue = buildCrownAlertSignalQueue(
+      [firstSignal, secondSignal],
+      {
+        completedSignalKeys: new Set(),
+        attemptedSignalAt,
+        now: 20_000,
+        retryCooldownMs: 5_000,
+      },
+    )
+
+    expect(queue.map((signal) => signal.matchTitle)).toEqual(['Second match'])
+    expect(selectNextCrownAlertSignal(
+      [firstSignal, secondSignal],
+      {
+        completedSignalKeys: new Set(),
+        attemptedSignalAt,
+        now: 20_000,
+        retryCooldownMs: 5_000,
+      },
+    )).toBe(secondSignal)
+  })
+
+  it('does not wait for an attempted signal cooldown before starting a new signal', () => {
     const firstSignal = {
       ...prematchSignal,
       sourceAlertId: 4051,
@@ -216,7 +253,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
         now: 20_000,
         retryCooldownMs: 5_000,
       },
-    )).toBeNull()
+    )).toBe(secondSignal)
   })
 
   it('skips completed signals and keeps scanning later candidates', () => {
@@ -244,7 +281,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     )).toBe(pendingSignal)
   })
 
-  it('numbers unfinished attempted crown signals before new pending signals', () => {
+  it('keeps attempted crown signals out of the pending queue', () => {
     const completedSignal = {
       ...prematchSignal,
       sourceAlertId: 4201,
@@ -279,8 +316,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
       matchTitle: signal.matchTitle,
       queueStatus: signal.queueStatus,
     }))).toEqual([
-      { queuePosition: 1, matchTitle: 'Retry match', queueStatus: 'ready' },
-      { queuePosition: 2, matchTitle: 'First pending match', queueStatus: 'ready' },
+      { queuePosition: 1, matchTitle: 'First pending match', queueStatus: 'ready' },
     ])
     expect(selectNextCrownAlertSignal(
       [completedSignal, retrySignal, firstPendingSignal],
@@ -290,7 +326,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
         now: 20_000,
         retryCooldownMs: 5_000,
       },
-    )).toBe(retrySignal)
+    )).toBe(firstPendingSignal)
   })
 
   it('drops crown alert candidates older than the configured signal age', () => {
@@ -408,7 +444,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     expect(result.rows.map((row) => row.stakeAmount)).toEqual([50, 50, 50])
   })
 
-  it('does not mark an opened but offline AdsPower profile as unopened', () => {
+  it('queues an opened but offline AdsPower profile for backend status handling', () => {
     const result = buildAutoBettingExecutionPlan({
       signal: prematchSignal,
       mode: 'prematch',
@@ -421,13 +457,13 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
       ],
     })
 
-    expect(result.canExecute).toBe(false)
+    expect(result.canExecute).toBe(true)
     expect(result.rows).toEqual([
-      expect.objectContaining({ status: 'skipped', stakeAmount: 0 }),
+      expect.objectContaining({ status: 'passed', stakeAmount: 300 }),
     ])
   })
 
-  it('shows AdsPower errors separately from unopened environments', () => {
+  it('queues AdsPower error profiles for backend status handling', () => {
     const result = buildAutoBettingExecutionPlan({
       signal: prematchSignal,
       mode: 'prematch',
@@ -440,9 +476,9 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
       ],
     })
 
-    expect(result.canExecute).toBe(false)
+    expect(result.canExecute).toBe(true)
     expect(result.rows).toEqual([
-      expect.objectContaining({ status: 'skipped', stakeAmount: 0 }),
+      expect.objectContaining({ status: 'passed', stakeAmount: 300 }),
     ])
   })
 
