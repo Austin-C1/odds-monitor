@@ -841,7 +841,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(alertCalls).toHaveLength(2)
   }, 30000)
 
-  it('does not retry the same alert after a failed crown execution', async () => {
+  it('retries the same alert after a failed crown execution', async () => {
     const originalNow = Date.now()
     let nowSpy: ReturnType<typeof vi.spyOn> | null = null
     try {
@@ -917,16 +917,17 @@ describe('CrownBetting auto betting execution interaction', () => {
       const amountInputs = screen.getAllByRole('spinbutton') as HTMLInputElement[]
       fireEvent.change(amountInputs[3], { target: { value: '601' } })
 
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      expect(queueCalls()).toHaveLength(1)
+      await waitFor(() => {
+        expect(queueCalls()).toHaveLength(2)
+      })
       expect(legacyExecuteCalls()).toHaveLength(0)
-      expect(screen.queryByText(/CROWN-20001/)).toBeNull()
+      expect(await screen.findByText(/CROWN-20001/)).toBeTruthy()
     } finally {
       nowSpy?.mockRestore()
     }
   }, 30000)
 
-  it('stops retrying the same crown signal when the market is locked', async () => {
+  it('keeps the same crown signal retryable when the market is locked', async () => {
     const originalNow = Date.now()
     let nowSpy: ReturnType<typeof vi.spyOn> | null = null
     try {
@@ -1002,8 +1003,9 @@ describe('CrownBetting auto betting execution interaction', () => {
       const amountInputs = screen.getAllByRole('spinbutton') as HTMLInputElement[]
       fireEvent.change(amountInputs[3], { target: { value: '601' } })
 
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      expect(queueCalls()).toHaveLength(1)
+      await waitFor(() => {
+        expect(queueCalls()).toHaveLength(2)
+      })
       expect(legacyExecuteCalls()).toHaveLength(0)
     } finally {
       nowSpy?.mockRestore()
@@ -1475,6 +1477,6 @@ describe('CrownBetting auto betting execution interaction', () => {
     await screen.findByText('AdsPower 档案 ID / 编号')
     expect(screen.getByPlaceholderText(/左侧编号/)).toBeTruthy()
     expect(screen.queryByText('登录密码')).toBeNull()
-    expect(screen.getByDisplayValue('https://m407.mos077.com/')).toBeTruthy()
+    expect(screen.getByPlaceholderText('https://your-crown-host.example/')).toBeTruthy()
   }, 30000)
 })

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.wrbug.polymarketbot.entity.OddsDataSourceConfig
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
@@ -70,6 +71,24 @@ class CrownSessionStoreTest {
 
         assertNull(store.load(config))
         assertEquals(false, Files.exists(tempDir.resolve("session.json")))
+    }
+
+    @Test
+    fun `requires crown base url to be configured instead of falling back to a mirror`() {
+        val config = OddsDataSourceConfig(
+            sourceKey = "crown",
+            displayName = "Crown",
+            enabled = true,
+            username = "alice",
+            password = "secret",
+            queryKeyword = null
+        )
+
+        val exception = assertThrows(CrownCollectionException::class.java) {
+            config.crownBaseUrl()
+        }
+
+        assertEquals("failed_config", exception.status)
     }
 
     private fun crownConfig(username: String, baseUrl: String) = OddsDataSourceConfig(

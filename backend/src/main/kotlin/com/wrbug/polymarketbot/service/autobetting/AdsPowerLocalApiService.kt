@@ -20,10 +20,16 @@ import java.net.URI
 import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 private const val CROWN_NETWORK_UNSTABLE_STATUS = "crown_network_unstable"
-private const val CROWN_BET_PLACEMENT_TIMEOUT_SECONDS = 30L
+private const val CROWN_BET_PLACEMENT_TIMEOUT_SECONDS = 45L
+private val nativePlaceBetClickReasons = setOf(
+    "crown_place_button_native_click_required",
+    "crown_place_button_click_failed",
+    "crown_bet_not_confirmed"
+)
 
 @Service
 class AdsPowerLocalApiService(
@@ -425,13 +431,22 @@ class AdsPowerLocalApiService(
         } ?: return CrownBetPlacementResult(false, false, null, "crown_execution_timeout")
         val result = runCatching { objectMapper.readTree(resultText) }.getOrNull()
             ?: return CrownBetPlacementResult(false, false, null, "crown_execution_parse_failed")
-        return CrownBetPlacementResult(
-            placed = result.path("placed").asBoolean(false),
-            historyVerified = result.path("historyVerified").asBoolean(false),
-            ticketReference = result.path("ticketReference").textOrNull(),
-            message = result.path("message").textOrNull() ?: "crown_bet_failed",
-            currentOdds = result.path("currentOdds").takeIf { !it.isMissingNode && !it.isNull }?.decimalValue()
-        )
+        val placementResult = result.toCrownBetPlacementResult()
+        if (shouldDispatchNativePlaceBetClick(placementResult.message, result) && dispatchNativePlaceBetClick(wsUrl, result)) {
+            val nativeResultText = evaluateCrownPageJson(
+                wsUrl,
+                crownBetHistoryVerificationScript(argsJson, objectMapper.writeValueAsString(""))
+            )
+                ?: return placementResult
+            val nativeResult = runCatching { objectMapper.readTree(nativeResultText) }.getOrNull()
+                ?: return placementResult
+            dispatchNativeReceiptOkClick(wsUrl, nativeResult)
+            if (nativeResult.path("historyVerified").asBoolean(false)) {
+                return nativeResult.toCrownBetPlacementResult()
+            }
+        }
+        dispatchNativeReceiptOkClick(wsUrl, result)
+        return placementResult
     }
 
     override fun verifyPlacedBet(command: CrownBetPlacementCommand, ticketReference: String?): CrownBetPlacementResult {
@@ -469,6 +484,7 @@ class AdsPowerLocalApiService(
             ?: return CrownBetPlacementResult(true, false, ticketReference, "crown_history_unverified")
         val result = runCatching { objectMapper.readTree(resultText) }.getOrNull()
             ?: return CrownBetPlacementResult(true, false, ticketReference, "crown_execution_parse_failed")
+        dispatchNativeReceiptOkClick(wsUrl, result)
         return CrownBetPlacementResult(
             placed = true,
             historyVerified = result.path("historyVerified").asBoolean(false),
@@ -779,14 +795,11 @@ class AdsPowerLocalApiService(
     }
 
     private fun selectCrownTargets(targets: List<BrowserTarget>, loginUrl: String?): List<BrowserTarget> {
-        val pageTargets = targets.filter { it.type == "page" && !it.pageUrl.isNullOrBlank() }
+        val pageTargets = targets.filter { it.type == "page" && it.pageUrl.isUsableCrownPageCandidate() }
         val loginHost = hostFromUrl(loginUrl)
         val exactHostTargets = pageTargets.filter { it.pageUrl.hostEquals(loginHost) }
-        val knownCrownTargets = pageTargets.filter { target ->
-                val host = hostFromUrl(target.pageUrl).orEmpty()
-                host.contains("mos077") || host.contains("hga") || host.contains("112.121.") || host == "134.159.80.63"
-            }
-        return (exactHostTargets + knownCrownTargets)
+        val fallbackTargets = if (exactHostTargets.isEmpty()) pageTargets else emptyList()
+        return (exactHostTargets + fallbackTargets)
             .distinctBy { target ->
                 listOf(target.pageUrl.orEmpty(), target.webSocketDebuggerUrl.orEmpty(), target.title.orEmpty()).joinToString("|")
             }
@@ -1048,6 +1061,89 @@ class AdsPowerLocalApiService(
             )
         )
         return executeCdpCommand(wsUrl, command, timeoutSeconds = CROWN_BET_PLACEMENT_TIMEOUT_SECONDS)
+    }
+
+    private fun dispatchNativePlaceBetClick(
+        wsUrl: String,
+        result: com.fasterxml.jackson.databind.JsonNode
+    ): Boolean = dispatchNativeJsonPointClick(wsUrl, result, "placeButton")
+
+    private fun dispatchNativeReceiptOkClick(
+        wsUrl: String,
+        result: com.fasterxml.jackson.databind.JsonNode
+    ): Boolean = dispatchNativeJsonPointClick(wsUrl, result, "receiptOkButton")
+
+    private fun dispatchNativeJsonPointClick(
+        wsUrl: String,
+        result: com.fasterxml.jackson.databind.JsonNode,
+        fieldName: String
+    ): Boolean {
+        val x = result.path(fieldName).path("x").asDouble(Double.NaN)
+        val y = result.path(fieldName).path("y").asDouble(Double.NaN)
+        if (!x.isFinite() || !y.isFinite() || x <= 0.0 || y <= 0.0) return false
+        return dispatchCdpMouseClick(wsUrl, x, y)
+    }
+
+    private fun shouldDispatchNativePlaceBetClick(
+        message: String,
+        result: com.fasterxml.jackson.databind.JsonNode
+    ): Boolean {
+        if (message !in nativePlaceBetClickReasons) return false
+        val point = result.path("placeButton")
+        val x = point.path("x").asDouble(Double.NaN)
+        val y = point.path("y").asDouble(Double.NaN)
+        return x.isFinite() && y.isFinite() && x > 0.0 && y > 0.0
+    }
+
+    private fun dispatchCdpMouseClick(wsUrl: String, x: Double, y: Double): Boolean {
+        if (!wsUrl.startsWith("ws://127.0.0.1:") && !wsUrl.startsWith("ws://localhost:")) {
+            return false
+        }
+        val acknowledged = AtomicBoolean(false)
+        val latch = CountDownLatch(1)
+        val request = Request.Builder().url(wsUrl).build()
+        val commands = listOf(
+            "mouseMoved" to 0,
+            "mousePressed" to 1,
+            "mouseReleased" to 0
+        ).mapIndexed { index, (type, buttons) ->
+            objectMapper.writeValueAsString(
+                mapOf(
+                    "id" to index + 1,
+                    "method" to "Input.dispatchMouseEvent",
+                    "params" to mapOf(
+                        "type" to type,
+                        "x" to x,
+                        "y" to y,
+                        "button" to "left",
+                        "buttons" to buttons,
+                        "clickCount" to if (type == "mouseMoved") 0 else 1
+                    )
+                )
+            )
+        }
+        val webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                commands.forEach(webSocket::send)
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val root = runCatching { objectMapper.readTree(text) }.getOrNull() ?: return
+                if (root.path("id").asInt() != commands.size) return
+                acknowledged.set(!root.has("error"))
+                webSocket.close(1000, null)
+                latch.countDown()
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                latch.countDown()
+            }
+        })
+        return try {
+            latch.await(5, TimeUnit.SECONDS) && acknowledged.get()
+        } finally {
+            webSocket.cancel()
+        }
     }
 
     private fun executeCdpCommand(wsUrl: String, command: String, timeoutSeconds: Long): String? {
@@ -1331,12 +1427,95 @@ class AdsPowerLocalApiService(
                 }
                 return Boolean(extractReceiptReference(value)) || /Confirmed/i.test(value);
               };
+              const parseMoney = (value) => {
+                const match = String(value || '').replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+                return match ? Number(match[0]) : null;
+              };
+              const parseVerifiedBetSelection = (selectionLine, marketType) => {
+                const oddsMatch = String(selectionLine || '').match(/(.+?)\s*@\s*(-?\d+(?:\.\d+)?)/);
+                const body = oddsMatch ? oddsMatch[1].trim() : String(selectionLine || '').trim();
+                const odds = oddsMatch ? Number(oddsMatch[2]) : null;
+                let selectionName = body;
+                let lineValue = null;
+                if (marketType === 'total') {
+                  const totalMatch = body.match(/^(Over|Under|O|U)\s+(.+)$/i);
+                  if (totalMatch) {
+                    selectionName = /^u/i.test(totalMatch[1]) ? 'Under' : 'Over';
+                    lineValue = totalMatch[2].replace(/\s+/g, ' ').trim();
+                  }
+                } else if (marketType === 'handicap') {
+                  const handicapMatch = body.match(/^(.+?)\s+([+-]?\d+(?:\.\d+)?(?:\s*\/\s*[+-]?\d+(?:\.\d+)?)?)$/);
+                  if (handicapMatch) {
+                    selectionName = handicapMatch[1].trim();
+                    lineValue = handicapMatch[2].replace(/\s+/g, ' ').trim();
+                  }
+                }
+                return { selectionName, lineValue, odds };
+              };
+              const parseVerifiedBetRecord = (text, currentOdds = null) => {
+                const lines = String(text || '')
+                  .split('\n')
+                  .map((line) => line.trim())
+                  .filter(Boolean);
+                let leagueName = '';
+                let matchTitle = '';
+                let marketLine = '';
+                let selectionLine = '';
+                for (let index = 0; index < lines.length - 3; index += 1) {
+                  if (/^Soccer\b/i.test(lines[index]) && /\s+v(?:s)?\s+/i.test(lines[index + 2]) && /@\s*-?\d+(?:\.\d+)?/.test(lines[index + 3])) {
+                    marketLine = lines[index];
+                    leagueName = lines[index + 1];
+                    matchTitle = lines[index + 2];
+                    selectionLine = lines[index + 3];
+                    break;
+                  }
+                  if (/\s+v(?:s)?\s+/i.test(lines[index + 1]) && /^Soccer\b/i.test(lines[index + 2]) && /@\s*-?\d+(?:\.\d+)?/.test(lines[index + 3])) {
+                    leagueName = lines[index];
+                    matchTitle = lines[index + 1];
+                    marketLine = lines[index + 2];
+                    selectionLine = lines[index + 3];
+                    break;
+                  }
+                }
+                if (!marketLine || !matchTitle || !selectionLine) return null;
+                const marketType = /1\s*X\s*2|Moneyline|Winner/i.test(marketLine)
+                  ? 'moneyline'
+                  : (/Over\s*\/\s*Under|O\/U|Total/i.test(marketLine) ? 'total' : (/Handicap|HDP/i.test(marketLine) ? 'handicap' : 'other'));
+                const parsedSelection = parseVerifiedBetSelection(selectionLine, marketType);
+                const ticketReference = extractReceiptReference(text);
+                let stakeAmount = null;
+                let estimatedWin = null;
+                let placedAtText = null;
+                for (let index = 0; index < lines.length; index += 1) {
+                  const line = lines[index];
+                  if (/^Stake:/i.test(line)) stakeAmount = parseMoney(line);
+                  if (/^Stake$/i.test(line) && index + 1 < lines.length) stakeAmount = parseMoney(lines[index + 1]);
+                  if (/^(?:Est\.\s*Win|To\s+Win):/i.test(line)) estimatedWin = parseMoney(line);
+                  if (/^(?:Est\.\s*Win|To\s+Win)$/i.test(line) && index + 1 < lines.length) estimatedWin = parseMoney(lines[index + 1]);
+                  if (/\d{1,2}:\d{2}:\d{2}\s*\([A-Z]{2,4}\)/.test(line)) placedAtText = line;
+                }
+                const odds = Number.isFinite(parsedSelection.odds) ? parsedSelection.odds : currentOdds;
+                if (!ticketReference || !Number.isFinite(odds) || !stakeAmount || stakeAmount <= 0) return null;
+                return {
+                  ticketReference,
+                  leagueName,
+                  matchTitle,
+                  marketType,
+                  lineValue: parsedSelection.lineValue,
+                  selectionName: parsedSelection.selectionName,
+                  odds,
+                  stakeAmount,
+                  estimatedWin,
+                  placedAtText
+                };
+              };
               const verifiedOpenBetPayload = (text, currentOdds = null) => ({
                 placed: true,
                 historyVerified: true,
                 ticketReference: extractReceiptReference(text),
                 message: 'crown_history_verified',
-                currentOdds
+                currentOdds,
+                record: parseVerifiedBetRecord(text, currentOdds)
               });
                 const clickElement = (element) => {
                   if (!element) return;
@@ -1361,9 +1540,269 @@ class AdsPowerLocalApiService(
                       && (element.offsetWidth || element.offsetHeight || element.getClientRects().length);
                   })()
                 ));
-                const visibleStakeInput = (...selectors) => selectors
-                  .map((selector) => findSelector(selector))
-                  .find((input) => input && isVisible(input)) || null;
+                const stakeInputSelectors = () => [
+                  'input#bet_gold_pc',
+                  'input#bet_gold',
+                  'input[placeholder="Enter Stake"]'
+                ];
+                const visibleStakeInputs = (...selectors) => {
+                  const seen = new Set();
+                  return selectors
+                    .flatMap((selector) => findAllSelector(selector))
+                    .filter((input) => {
+                      if (!input || seen.has(input) || !isVisible(input)) return false;
+                      seen.add(input);
+                      return true;
+                    });
+                };
+                const visibleStakeInput = (...selectors) => visibleStakeInputs(...selectors)[0] || null;
+                const parseStakeNumber = (value) => {
+                  const parsed = Number(String(value || '').replace(/,/g, '').trim());
+                  return Number.isFinite(parsed) ? parsed : null;
+                };
+                const readStakeNumber = (input) => parseStakeNumber(input?.value) || 0;
+                const textMatchesExpectedSlip = (text) => {
+                  const value = String(text || '');
+                  const lower = value.toLowerCase();
+                  const tokens = expectedMatchTokens();
+                  if (tokens.length >= 2 && !tokens.every((token) => lower.includes(token))) return false;
+                  if (args.lineValue && !normalizeLine(value).includes(normalizeLine(args.lineValue))) return false;
+                  const side = expectedOpenBetSide();
+                  if (side && !(new RegExp('\\b' + side + '\\b', 'i')).test(value)) return false;
+                  const selectionText = expectedOpenBetSelection();
+                  if (selectionText && !lower.includes(selectionText.toLowerCase())) return false;
+                  return true;
+                };
+                const nearestStakeContainer = (input) => {
+                  let current = input?.parentElement || null;
+                  let best = input;
+                  for (let depth = 0; current && depth < 10; depth += 1) {
+                    const inputs = Array.from(current.querySelectorAll('input')).filter((candidate) => isVisible(candidate));
+                    const text = String(current.innerText || current.textContent || '').trim();
+                    if (inputs.includes(input) && text) {
+                      best = current;
+                      if (inputs.length === 1 && /Soccer|Handicap|Over\s*\/\s*Under|HDP|O\/U|@/i.test(text)) {
+                        return current;
+                      }
+                    }
+                    if (inputs.length > 1) return best;
+                    current = current.parentElement;
+                  }
+                  return best;
+                };
+                const stakeInputCandidates = () => visibleStakeInputs(...stakeInputSelectors())
+                  .map((input) => {
+                    const container = nearestStakeContainer(input);
+                    const text = String(container?.innerText || container?.textContent || '');
+                    return {
+                      input,
+                      container,
+                      text,
+                      matchesExpected: textMatchesExpectedSlip(text),
+                      selectionLike: /Soccer|Handicap|Over\s*\/\s*Under|HDP|O\/U|@/i.test(text)
+                        && !/^\s*Singles\b/i.test(text)
+                    };
+                  });
+                const findMatchingBetSlipStakeInput = () => {
+                  const candidates = stakeInputCandidates();
+                  const exact = candidates.find((candidate) => candidate.matchesExpected);
+                  if (exact) return exact.input;
+                  return candidates.length === 1 ? candidates[0].input : null;
+                };
+                const betSlipCloseControl = (container) => {
+                  if (!container) return null;
+                  const containerRect = container.getBoundingClientRect();
+                  const controls = Array.from(container.querySelectorAll('button,a,[role="button"],div,span'))
+                    .filter((element) => element !== container && isVisible(element));
+                  return controls.find((element) => {
+                    const text = String(element.innerText || element.textContent || element.value || '').trim();
+                    const attrs = [
+                      element.id,
+                      element.className,
+                      element.getAttribute?.('aria-label'),
+                      element.getAttribute?.('title')
+                    ].filter(Boolean).join(' ');
+                    const rect = element.getBoundingClientRect();
+                    const nearRightEdge = rect.left >= containerRect.left + (containerRect.width * 0.65);
+                    const singleCharCode = text.length === 1 ? text.charCodeAt(0) : null;
+                    const closeGlyph = singleCharCode === 215 || singleCharCode === 10005 || singleCharCode === 10006;
+                    return /^x$/i.test(text)
+                      || closeGlyph
+                      || /delete|remove|close|trash|clear|del/i.test(attrs)
+                      || (nearRightEdge && (/x/i.test(text) || closeGlyph));
+                  }) || null;
+                };
+                const pruneUnexpectedBetSlipSelections = async () => {
+                  const candidates = stakeInputCandidates();
+                  if (!candidates.some((candidate) => candidate.matchesExpected)) return false;
+                  let removed = false;
+                  for (const candidate of candidates) {
+                    if (candidate.matchesExpected || !candidate.selectionLike) continue;
+                    const closeControl = betSlipCloseControl(candidate.container);
+                    if (!closeControl) continue;
+                    clickElement(closeControl);
+                    removed = true;
+                    await sleep(250);
+                  }
+                  if (removed) await sleep(700);
+                  return removed;
+                };
+                const closedBettingPattern = /currently\s+closed\s+for\s+betting|selection\s+is\s+closed|closed\s+for\s+betting|market\s+closed|not\s+available|suspended/i;
+                const expectedBetSlipContainer = () => {
+                  const candidates = stakeInputCandidates();
+                  const exact = candidates.find((candidate) => candidate.matchesExpected);
+                  if (exact?.container) return exact.container;
+                  return findAllSelector('div,section,li')
+                    .filter((element) => isVisible(element))
+                    .map((element) => ({
+                      element,
+                      text: String(element.innerText || element.textContent || '')
+                    }))
+                    .find((candidate) => textMatchesExpectedSlip(candidate.text)
+                      && (/Soccer|Handicap|Over\s*\/\s*Under|HDP|O\/U|@/i.test(candidate.text)
+                        || closedBettingPattern.test(candidate.text)))?.element || null;
+                };
+                const closeExpectedBetSlipSelection = async () => {
+                  const container = expectedBetSlipContainer();
+                  const closeControl = betSlipCloseControl(container);
+                  if (!closeControl) return false;
+                  clickElement(closeControl);
+                  await sleep(700);
+                  return true;
+                };
+                const closeClosedBetSlipSelection = async () => {
+                  const text = currentText();
+                  const rawText = currentRawText();
+                  if (!closedBettingPattern.test(text) && !closedBettingPattern.test(rawText)) return false;
+                  return closeExpectedBetSlipSelection();
+                };
+                const failAfterSelection = async (payload) => {
+                  await closeExpectedBetSlipSelection();
+                  return finish(payload);
+                };
+                const buttonDisabled = (button) => Boolean(button?.disabled)
+                  || String(button?.getAttribute?.('aria-disabled') || '').toLowerCase() === 'true'
+                  || /\bdisabled\b/i.test(String(button?.className || ''));
+                const buttonTextMatchesPlaceBet = (button) => {
+                  const text = String(button?.innerText || button?.textContent || button?.value || '').trim();
+                  return /PLACE\s*BET/i.test(text)
+                    && !/PLACE\s*BET\s*0(?:\.00)?\s*RMB/i.test(text)
+                    && !/Add\s+to\s+Bet\s+Slip/i.test(text);
+                };
+                const mixedPlaceBetActionBar = (button) => {
+                  const text = String(button?.innerText || button?.textContent || button?.value || '').trim();
+                  return /Add\s+to\s+Bet\s+Slip/i.test(text)
+                    && /PLACE\s*BET/i.test(text)
+                    && !/PLACE\s*BET\s*0(?:\.00)?\s*RMB/i.test(text);
+                };
+                const findPlaceBetButton = () => {
+                  const fixedButton = findElementById('order_bet');
+                  if (fixedButton && !buttonDisabled(fixedButton) && isVisible(fixedButton)) {
+                    const fixedDescendant = Array.from(fixedButton.querySelectorAll('button,input[type="button"],input[type="submit"],[role="button"],a,div,span'))
+                      .find((button) => isVisible(button) && !buttonDisabled(button) && buttonTextMatchesPlaceBet(button));
+                    if (fixedDescendant) return fixedDescendant;
+                    const fixedPlaceButton = buttonTextMatchesPlaceBet(fixedButton) || mixedPlaceBetActionBar(fixedButton)
+                      ? fixedButton
+                      : null;
+                    if (fixedPlaceButton) return fixedPlaceButton;
+                  }
+                  return findAllSelector('button,input[type="button"],input[type="submit"],[role="button"],a,div,span')
+                    .find((button) => isVisible(button) && !buttonDisabled(button) && buttonTextMatchesPlaceBet(button)) || null;
+                };
+                const placeClickAccepted = () => {
+                  const text = currentText();
+                  const rawText = currentRawText();
+                  if (openBetVerified(rawText || text) || receiptVerified(text)) return true;
+                  if (/Rejected|Failed to Place|not placed|incorrect|maximum|minimum/i.test(text)) return true;
+                  if (isVisible(findElementById('alert_confirm')) || isVisible(findElementById('C_alert_confirm'))) return true;
+                  return false;
+                };
+                const placeBetClickPoint = (element) => {
+                  if (!element) return null;
+                  const rect = element.getBoundingClientRect();
+                  if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+                  const text = String(element.innerText || element.textContent || element.value || '').trim();
+                  const x = /Add\s+to\s+Bet\s+Slip/i.test(text) && /PLACE\s*BET/i.test(text)
+                    ? rect.left + rect.width * 0.75
+                    : rect.left + rect.width / 2;
+                  return { x, y: rect.top + rect.height / 2 };
+                };
+                const absoluteCenter = (element) => {
+                  if (!element) return null;
+                  try { element.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
+                  let rect = element.getBoundingClientRect();
+                  if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+                  const point = placeBetClickPoint(element);
+                  if (!point) return null;
+                  let left = point.x;
+                  let top = point.y;
+                  let currentWindow = ownerWindow(element);
+                  for (let depth = 0; currentWindow && currentWindow !== window && depth < 8; depth += 1) {
+                    const frame = currentWindow.frameElement;
+                    if (!frame) break;
+                    const frameRect = frame.getBoundingClientRect();
+                    left += frameRect.left;
+                    top += frameRect.top;
+                    currentWindow = currentWindow.parent;
+                  }
+                  return { x: left, y: top };
+                };
+                const trustedLikeClickElement = (element) => {
+                  if (!element) return false;
+                  const view = ownerWindow(element);
+                  element.scrollIntoView({ block: 'center', inline: 'center' });
+                  const point = placeBetClickPoint(element);
+                  if (!point) return false;
+                  const x = point.x;
+                  const y = point.y;
+                  const target = element.ownerDocument?.elementFromPoint?.(x, y) || element;
+                  const MouseEventCtor = view.MouseEvent || window.MouseEvent;
+                  const PointerEventCtor = view.PointerEvent || MouseEventCtor;
+                  try { element.focus?.(); } catch (_) {}
+                  for (const type of ['pointerover', 'pointermove', 'pointerdown', 'pointerup']) {
+                    try {
+                      target.dispatchEvent(new PointerEventCtor(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        view,
+                        clientX: x,
+                        clientY: y,
+                        pointerType: 'mouse',
+                        button: 0,
+                        buttons: type === 'pointerdown' ? 1 : 0
+                      }));
+                    } catch (_) {}
+                  }
+                  for (const type of ['mouseover', 'mousemove', 'mousedown', 'mouseup', 'click']) {
+                    target.dispatchEvent(new MouseEventCtor(type, {
+                      bubbles: true,
+                      cancelable: true,
+                      view,
+                      clientX: x,
+                      clientY: y,
+                      button: 0,
+                      buttons: type === 'mousedown' ? 1 : 0
+                    }));
+                  }
+                  try { target.click?.(); } catch (_) {}
+                  if (target !== element) {
+                    try { element.click?.(); } catch (_) {}
+                  }
+                  return true;
+                };
+                const clickPlaceBetButton = async (initialButton) => {
+                  for (let attempt = 0; attempt < 3; attempt += 1) {
+                    const button = attempt === 0 && initialButton && isVisible(initialButton)
+                      ? initialButton
+                      : findPlaceBetButton();
+                    if (!button) return false;
+                    trustedLikeClickElement(button);
+                    await sleep(650);
+                    await confirmBetIfPrompted();
+                    if (placeClickAccepted()) return true;
+                  }
+                  return placeClickAccepted();
+                };
                 const parseCrownOddsText = (value) => {
                   const matches = String(value || '').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/g);
                   if (!matches || matches.length === 0) return null;
@@ -1460,7 +1899,7 @@ class AdsPowerLocalApiService(
                   return /最多\s*10\s*个选项|最多十个选项|maximum\s*10|10\s*selections/i.test(text)
                     || /最多\s*10\s*个选项|最多十个选项|maximum\s*10|10\s*selections/i.test(rawText);
                 };
-                const fillStakeInput = async (stakeInput, stake) => {
+                const fillStakeInput = async (stakeInput, stake, accepted = null) => {
                   const view = ownerWindow(stakeInput);
                   const stakeDocument = stakeInput.ownerDocument || document;
                   const EventCtor = view.Event || window.Event;
@@ -1469,7 +1908,19 @@ class AdsPowerLocalApiService(
                   const HTMLInputElementCtor = view.HTMLInputElement || window.HTMLInputElement;
                   const findStakeElementById = (id) => stakeDocument.getElementById(id) || findElementById(id);
                   const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElementCtor.prototype, 'value')?.set;
-                  const stakeMatches = () => String(stakeInput.value || '').trim() === stake;
+                  const normalizeStakeValue = (value) => {
+                    const parsed = parseStakeNumber(value);
+                    return parsed !== null ? String(parsed) : String(value || '').trim();
+                  };
+                  const expectedStake = normalizeStakeValue(stake);
+                  const stakeMatches = () => normalizeStakeValue(stakeInput.value) === expectedStake;
+                  const stakeAccepted = async () => {
+                    await sleep(250);
+                    if (!stakeMatches()) return false;
+                    if (!accepted || accepted()) return true;
+                    await sleep(500);
+                    return stakeMatches() && (!accepted || accepted());
+                  };
                   const focusStakeInput = async () => {
                     stakeInput.scrollIntoView({ block: 'center', inline: 'center' });
                     stakeInput.focus();
@@ -1520,36 +1971,30 @@ class AdsPowerLocalApiService(
                     stakeInput.dispatchEvent(new EventCtor('change', { bubbles: true }));
                     return stakeMatches();
                   };
-                  await focusStakeInput();
-                  if (applyStakeDirectly()) {
-                    await sleep(500);
-                    if (stakeMatches()) return true;
-                  }
-                  await focusStakeInput();
                   const keyboardVisible = () => isVisible(findStakeElementById('num_0'))
                     && isVisible(findStakeElementById('num_done'));
+                  await focusStakeInput();
                   if (!keyboardVisible()) {
                     await sleep(500);
                   }
-                  if (!keyboardVisible()) return stakeMatches();
-                  for (let index = 0; index < 14; index += 1) {
-                    const deleteButton = findStakeElementById('num_x');
-                    if (deleteButton) clickElement(deleteButton);
-                    await sleep(35);
+                  if (keyboardVisible()) {
+                    for (let index = 0; index < 14; index += 1) {
+                      const deleteButton = findStakeElementById('num_x');
+                      if (deleteButton) clickElement(deleteButton);
+                      await sleep(35);
+                    }
+                    for (const char of stake) {
+                      const numberButton = findStakeElementById('num_' + char);
+                      if (!numberButton) return false;
+                      clickElement(numberButton);
+                      await sleep(80);
+                    }
+                    return stakeAccepted();
                   }
-                  for (const char of stake) {
-                    const numberButton = findStakeElementById('num_' + char);
-                    if (!numberButton) return;
-                    clickElement(numberButton);
-                    await sleep(80);
+                  if (applyStakeDirectly()) {
+                    if (await stakeAccepted()) return true;
                   }
-                  const doneButton = findStakeElementById('num_done');
-                  if (doneButton) {
-                    clickElement(doneButton);
-                    await sleep(250);
-                  }
-                  await sleep(500);
-                  return stakeMatches();
+                  return stakeAccepted();
                 };
                 const waitFor = async (reader, timeoutMs = 10000, intervalMs = 250) => {
                   const deadline = Date.now() + timeoutMs;
@@ -1635,70 +2080,50 @@ class AdsPowerLocalApiService(
                 clickElement(betElement);
                 await sleep(500);
                 if (betSlipLimitReached()) {
-                  return finish({ placed: false, historyVerified: false, message: 'crown_betslip_full', currentOdds });
+                  return await failAfterSelection({ placed: false, historyVerified: false, message: 'crown_betslip_full', currentOdds });
                 }
+                await waitFor(() => findMatchingBetSlipStakeInput(), 10000, 250);
+                await pruneUnexpectedBetSlipSelections();
                 const stake = String(Number(args.stakeAmount));
-                const stakeInput = await waitFor(() => visibleStakeInput(
-                  'input#bet_gold_pc',
-                  'input#bet_gold',
-                  'input[placeholder="Enter Stake"]'
-                ), 10000, 250);
+                const stakeSettleBeforePlaceBetMs = 10000;
+                const stakeInput = await waitFor(() => findMatchingBetSlipStakeInput(), 10000, 250);
                 if (!stakeInput) {
                   if (betSlipLimitReached()) {
-                    return finish({ placed: false, historyVerified: false, message: 'crown_betslip_full', currentOdds });
+                    return await failAfterSelection({ placed: false, historyVerified: false, message: 'crown_betslip_full', currentOdds });
                   }
-                  return finish({ placed: false, historyVerified: false, message: 'crown_stake_input_missing', currentOdds });
+                  if (await closeClosedBetSlipSelection()) {
+                    return finish({ placed: false, historyVerified: false, message: 'crown_selection_closed', currentOdds });
+                  }
+                  return await failAfterSelection({ placed: false, historyVerified: false, message: 'crown_stake_input_missing', currentOdds });
                 }
-                const stakeFilled = await fillStakeInput(stakeInput, stake);
+                const stakeAcceptedBySlip = () => {
+                  const expectedStakeAmount = Number(stake);
+                  const candidates = stakeInputCandidates();
+                  const exactStakeCandidates = candidates.filter((candidate) =>
+                    readStakeNumber(candidate.input) === expectedStakeAmount
+                  );
+                  const filledExpectedSelection = exactStakeCandidates.find((candidate) => candidate.matchesExpected)
+                    || (exactStakeCandidates.length === 1 ? exactStakeCandidates[0] : null);
+                  if (!filledExpectedSelection) return false;
+                  const unexpectedFilledSelection = candidates.some((candidate) =>
+                    candidate !== filledExpectedSelection && candidate.selectionLike && readStakeNumber(candidate.input) > 0
+                  );
+                  if (unexpectedFilledSelection) return false;
+                  const button = findPlaceBetButton();
+                  if (button) return true;
+                  const pageText = currentText();
+                  return /PLACE\s*BET/i.test(pageText)
+                    && !/PLACE\s*BET\s*0(?:\.00)?\s*RMB/i.test(pageText);
+                };
+                const stakeFilled = await fillStakeInput(stakeInput, stake, stakeAcceptedBySlip);
                 if (!stakeFilled) {
-                  return finish({ placed: false, historyVerified: false, message: 'crown_stake_input_not_applied', currentOdds });
+                  return await failAfterSelection({ placed: false, historyVerified: false, message: 'crown_stake_input_not_applied', currentOdds });
                 }
+                await sleep(stakeSettleBeforePlaceBetMs);
   
                 let orderButton = await waitFor(() => {
-                  const button = findElementById('order_bet');
-                  return button && !button.disabled && isVisible(button) ? button : null;
+                  return findPlaceBetButton();
                 }, 4000, 250);
-                if (!orderButton) {
-                  const addButton = findElementById('add_total_bet');
-                  if (!addButton || addButton.disabled || !isVisible(addButton)) {
-                    const pageText = currentText();
-                    const rawPageText = currentRawText();
-                    if (openBetVerified(rawPageText || pageText)) {
-                      return finish(verifiedOpenBetPayload(rawPageText || pageText, currentOdds));
-                    }
-                    if (/minimum stake|min(?:imum)?\\.? stake/i.test(pageText)) {
-                      return finish({ placed: false, historyVerified: false, message: 'crown_stake_below_minimum', currentOdds });
-                    }
-                    if (betSlipLimitReached()) {
-                      return finish({ placed: false, historyVerified: false, message: 'crown_betslip_full', currentOdds });
-                    }
-                    return finish({ placed: false, historyVerified: false, message: 'crown_place_button_disabled', currentOdds });
-                  }
-                  clickElement(addButton);
-                  await sleep(500);
-                  if (betSlipLimitReached()) {
-                    return finish({ placed: false, historyVerified: false, message: 'crown_betslip_full', currentOdds });
-                  }
-                  const betElementParts = String(args.betElementId || '').split('_');
-                  const ecid = betElementParts.length >= 3 ? betElementParts[2] : '';
-                  const slipStakeInput = await waitFor(() => {
-                    const byEcid = ecid ? findSelector('input#bet_gold_' + ecid + '_pc') : null;
-                    if (byEcid && isVisible(byEcid)) return byEcid;
-                    return findAllSelector('input[id^="bet_gold_"][id$="_pc"]')
-                      .find((input) => isVisible(input));
-                  }, 8000, 250);
-                  if (!slipStakeInput) {
-                    return finish({ placed: false, historyVerified: false, message: 'crown_betslip_stake_input_missing', currentOdds });
-                  }
-                  const slipStakeFilled = await fillStakeInput(slipStakeInput, stake);
-                  if (!slipStakeFilled) {
-                    return finish({ placed: false, historyVerified: false, message: 'crown_betslip_stake_input_not_applied', currentOdds });
-                  }
-                  orderButton = await waitFor(() => {
-                    const button = findElementById('order_bet');
-                    return button && !button.disabled && isVisible(button) ? button : null;
-                  }, 8000, 250);
-                }
                 if (!orderButton) {
                   const pageText = currentText();
                   const rawPageText = currentRawText();
@@ -1706,15 +2131,38 @@ class AdsPowerLocalApiService(
                     return finish(verifiedOpenBetPayload(rawPageText || pageText, currentOdds));
                   }
                   if (/minimum stake|min(?:imum)?\\.? stake/i.test(pageText)) {
-                    return finish({ placed: false, historyVerified: false, message: 'crown_stake_below_minimum', currentOdds });
+                    return await failAfterSelection({ placed: false, historyVerified: false, message: 'crown_stake_below_minimum', currentOdds });
                   }
                   if (/maximum stake|max(?:imum)?\\.? stake/i.test(pageText)) {
-                    return finish({ placed: false, historyVerified: false, message: 'crown_stake_above_maximum', currentOdds });
+                    return await failAfterSelection({ placed: false, historyVerified: false, message: 'crown_stake_above_maximum', currentOdds });
                   }
-                  return finish({ placed: false, historyVerified: false, message: 'crown_place_button_disabled', currentOdds });
+                  if (betSlipLimitReached()) {
+                    return await failAfterSelection({ placed: false, historyVerified: false, message: 'crown_betslip_full', currentOdds });
+                  }
+                  if (await closeClosedBetSlipSelection()) {
+                    return finish({ placed: false, historyVerified: false, message: 'crown_selection_closed', currentOdds });
+                  }
+                  return await failAfterSelection({ placed: false, historyVerified: false, message: 'crown_place_button_disabled', currentOdds });
                 }
                 disableNativePrint();
-              clickElement(orderButton);
+                const finalPlaceButton = findPlaceBetButton() || orderButton;
+                const nativePlaceButtonPoint = absoluteCenter(finalPlaceButton);
+                if (nativePlaceButtonPoint) {
+                  return finish({
+                    placed: false,
+                    historyVerified: false,
+                    message: 'crown_place_button_native_click_required',
+                    currentOdds,
+                    placeButton: nativePlaceButtonPoint
+                  });
+                }
+                return await failAfterSelection({
+                  placed: false,
+                  historyVerified: false,
+                  message: 'crown_place_button_click_failed',
+                  currentOdds,
+                  placeButton: nativePlaceButtonPoint
+                });
               disableNativePrint();
               await confirmBetIfPrompted();
               disableNativePrint();
@@ -1739,7 +2187,7 @@ class AdsPowerLocalApiService(
                 return finish(verifiedOpenBetPayload(receiptText, currentOdds));
               }
               if (!receiptText || !receiptVerified(receiptText)) {
-                return finish({
+                return await failAfterSelection({
                   placed: false,
                   historyVerified: false,
                   message: 'crown_bet_not_confirmed',
@@ -1756,7 +2204,8 @@ class AdsPowerLocalApiService(
                   historyVerified: true,
                   ticketReference,
                   message: 'crown_receipt_verified',
-                  currentOdds
+                  currentOdds,
+                  record: parseVerifiedBetRecord(receiptText, currentOdds)
                 });
               }
 
@@ -1804,7 +2253,8 @@ class AdsPowerLocalApiService(
                 historyVerified: true,
                 ticketReference: verifiedTicketReference,
                 message: 'crown_history_verified',
-                currentOdds
+                currentOdds,
+                record: parseVerifiedBetRecord(historyText, currentOdds)
               });
             })()
         """.trimIndent()
@@ -1840,8 +2290,137 @@ class AdsPowerLocalApiService(
                 }
                 return null;
               };
+              const ownerWindow = (element) => element?.ownerDocument?.defaultView || window;
+              const isVisible = (element) => Boolean(element && (() => {
+                const view = ownerWindow(element);
+                const style = view.getComputedStyle(element);
+                return style.display !== 'none'
+                  && style.visibility !== 'hidden'
+                  && style.visibility !== 'collapse'
+                  && style.opacity !== '0'
+                  && (element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+              })());
+              const allSelector = (selector) => documents().flatMap((doc) => Array.from(doc.querySelectorAll(selector)));
+              const clickElement = (element) => {
+                if (!element) return false;
+                const view = ownerWindow(element);
+                const MouseEventCtor = view.MouseEvent || window.MouseEvent;
+                try { element.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
+                const rect = element.getBoundingClientRect();
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                const target = element.ownerDocument?.elementFromPoint?.(x, y) || element;
+                for (const type of ['mouseover', 'mousemove', 'mousedown', 'mouseup', 'click']) {
+                  try {
+                    target.dispatchEvent(new MouseEventCtor(type, {
+                      bubbles: true,
+                      cancelable: true,
+                      view,
+                      clientX: x,
+                      clientY: y,
+                      button: 0,
+                      buttons: type === 'mousedown' ? 1 : 0
+                    }));
+                  } catch (_) {}
+                }
+                try { target.click?.(); } catch (_) {}
+                if (target !== element) {
+                  try { element.click?.(); } catch (_) {}
+                }
+                return true;
+              };
+              const nativePoint = (element) => {
+                if (!element) return null;
+                try { element.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
+                const rect = element.getBoundingClientRect();
+                if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+                let left = rect.left + rect.width / 2;
+                let top = rect.top + rect.height / 2;
+                let currentWindow = ownerWindow(element);
+                for (let depth = 0; currentWindow && currentWindow !== window && depth < 8; depth += 1) {
+                  const frame = currentWindow.frameElement;
+                  if (!frame) break;
+                  const frameRect = frame.getBoundingClientRect();
+                  left += frameRect.left;
+                  top += frameRect.top;
+                  currentWindow = currentWindow.parent;
+                }
+                return { x: left, y: top };
+              };
               const text = () => documents().map((doc) => doc.body?.innerText || '').join('\n');
               const rawText = () => documents().map((doc) => doc.documentElement?.innerText || '').join('\n');
+              const menuCandidateIds = () => {
+                const phase = String(args.matchPhase || 'live').toLowerCase();
+                if (phase === 'prematch') {
+                  return ['today_page', 'old_ft_league', 'ft_league', 'old_ft_today_league', 'ft_today_league', 'today'];
+                }
+                return ['old_ft_live_league', 'ft_live_league', 'live_page'];
+              };
+              const returnToFootballPage = async () => {
+                for (const id of menuCandidateIds()) {
+                  const element = byId(id);
+                  if (element && isVisible(element)) {
+                    clickElement(element);
+                    await sleep(800);
+                    return true;
+                  }
+                }
+                return false;
+              };
+              const confirmBetIfPrompted = async () => {
+                const prompts = [
+                  { container: 'alert_confirm', yes: 'yes_btn', checkbox: 'confirm_chk' },
+                  { container: 'C_alert_confirm', yes: 'C_yes_btn', checkbox: 'C_confirm_chk' }
+                ];
+                for (let index = 0; index < 20; index += 1) {
+                  for (const prompt of prompts) {
+                    const container = byId(prompt.container);
+                    if (!isVisible(container)) continue;
+                    const checkbox = byId(prompt.checkbox);
+                    if (checkbox && !checkbox.checked) {
+                      checkbox.checked = true;
+                      const EventCtor = ownerWindow(checkbox).Event || window.Event;
+                      checkbox.dispatchEvent(new EventCtor('change', { bubbles: true }));
+                      await sleep(100);
+                    }
+                    const yesButton = byId(prompt.yes);
+                    if (yesButton && isVisible(yesButton)) {
+                      clickElement(yesButton);
+                      await sleep(500);
+                      return true;
+                    }
+                  }
+                  await sleep(150);
+                }
+                return false;
+              };
+              const receiptSuccessMarker = /YOUR BETS HAVE BEEN SUCCESSFULLY PLACED|successfully placed|BET RECEIPT/i;
+              const receiptOkButtonPoint = async () => {
+                const receiptVisible = () => receiptSuccessMarker.test(text()) || receiptSuccessMarker.test(rawText()) || /Retain Selection/i.test(text());
+                if (!receiptVisible()) return false;
+                for (let attempt = 0; attempt < 8; attempt += 1) {
+                  const candidates = [
+                    byId('order_close'),
+                    byId('btn_close'),
+                    byId('close_btn'),
+                    ...allSelector('.close,.btn_close,.order_close,button,[role="button"],a,div')
+                  ].filter(Boolean);
+                  const okButton = candidates.find((element) => {
+                    if (!isVisible(element)) return false;
+                    const label = String(element.innerText || element.textContent || element.value || '').trim();
+                    const id = String(element.id || '');
+                    const className = String(element.className || '');
+                    const combined = [label, id, className].join(' ');
+                    if (/My\s*Bets|Open\s*Bets|Statement|Wager/i.test(combined)) return false;
+                    return label === 'OK' || /order_close|close|ok/i.test(id) || /order_close|close|ok/i.test(className);
+                  });
+                  if (okButton) {
+                    return nativePoint(okButton);
+                  }
+                  await sleep(250);
+                }
+                return null;
+              };
               const normalizeLine = (value) => String(value || '').replace(/\s+/g, '').replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 65248));
               const extractReceiptReference = (value) => {
                 const ticketMatch = String(value || '').match(/Ticket No:\s*([A-Za-z0-9-]+)/i);
@@ -1877,6 +2456,7 @@ class AdsPowerLocalApiService(
                 const content = String(value || '');
                 const lower = content.toLowerCase();
                 if (ticketReference && content.includes(ticketReference)) return true;
+                if (receiptSuccessMarker.test(content) && extractReceiptReference(content)) return true;
                 const tokens = matchTokens();
                 if (tokens.length >= 2 && !tokens.every((token) => lower.includes(token))) return false;
                 if (args.lineValue && !normalizeLine(content).includes(normalizeLine(args.lineValue))) return false;
@@ -1887,30 +2467,121 @@ class AdsPowerLocalApiService(
                 if (selection && !lower.includes(selection.toLowerCase())) return false;
                 return /OPEN BETS|Open Bets|Confirmed|Statement|My Bets|Ticket No:/i.test(content);
               };
-              const result = (verified, value) => JSON.stringify({
-                placed: true,
-                historyVerified: verified,
-                ticketReference: extractReceiptReference(value) || ticketReference || null,
-                message: verified ? 'crown_history_verified' : 'crown_history_unverified'
-              });
+              const parseMoney = (value) => {
+                const match = String(value || '').replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+                return match ? Number(match[0]) : null;
+              };
+              const parseSelection = (selectionLine, marketType) => {
+                const oddsMatch = String(selectionLine || '').match(/(.+?)\s*@\s*(-?\d+(?:\.\d+)?)/);
+                const body = oddsMatch ? oddsMatch[1].trim() : String(selectionLine || '').trim();
+                const odds = oddsMatch ? Number(oddsMatch[2]) : null;
+                let selectionName = body;
+                let lineValue = null;
+                if (marketType === 'total') {
+                  const totalMatch = body.match(/^(Over|Under|O|U)\s+(.+)$/i);
+                  if (totalMatch) {
+                    selectionName = /^u/i.test(totalMatch[1]) ? 'Under' : 'Over';
+                    lineValue = totalMatch[2].replace(/\s+/g, ' ').trim();
+                  }
+                } else if (marketType === 'handicap') {
+                  const handicapMatch = body.match(/^(.+?)\s+([+-]?\d+(?:\.\d+)?(?:\s*\/\s*[+-]?\d+(?:\.\d+)?)?)$/);
+                  if (handicapMatch) {
+                    selectionName = handicapMatch[1].trim();
+                    lineValue = handicapMatch[2].replace(/\s+/g, ' ').trim();
+                  }
+                }
+                return { selectionName, lineValue, odds };
+              };
+              const parseVerifiedBetRecord = (value) => {
+                const lines = String(value || '').split('\n').map((line) => line.trim()).filter(Boolean);
+                let leagueName = '';
+                let matchTitle = '';
+                let marketLine = '';
+                let selectionLine = '';
+                for (let index = 0; index < lines.length - 3; index += 1) {
+                  if (/^Soccer\b/i.test(lines[index]) && /\s+v(?:s)?\s+/i.test(lines[index + 2]) && /@\s*-?\d+(?:\.\d+)?/.test(lines[index + 3])) {
+                    marketLine = lines[index];
+                    leagueName = lines[index + 1];
+                    matchTitle = lines[index + 2];
+                    selectionLine = lines[index + 3];
+                    break;
+                  }
+                  if (/\s+v(?:s)?\s+/i.test(lines[index + 1]) && /^Soccer\b/i.test(lines[index + 2]) && /@\s*-?\d+(?:\.\d+)?/.test(lines[index + 3])) {
+                    leagueName = lines[index];
+                    matchTitle = lines[index + 1];
+                    marketLine = lines[index + 2];
+                    selectionLine = lines[index + 3];
+                    break;
+                  }
+                }
+                if (!marketLine || !matchTitle || !selectionLine) return null;
+                const marketType = /1\s*X\s*2|Moneyline|Winner/i.test(marketLine)
+                  ? 'moneyline'
+                  : (/Over\s*\/\s*Under|O\/U|Total/i.test(marketLine) ? 'total' : (/Handicap|HDP/i.test(marketLine) ? 'handicap' : 'other'));
+                const parsedSelection = parseSelection(selectionLine, marketType);
+                const ticket = extractReceiptReference(value) || ticketReference || null;
+                let stakeAmount = null;
+                let estimatedWin = null;
+                let placedAtText = null;
+                for (let index = 0; index < lines.length; index += 1) {
+                  const line = lines[index];
+                  if (/^Stake:/i.test(line)) stakeAmount = parseMoney(line);
+                  if (/^Stake$/i.test(line) && index + 1 < lines.length) stakeAmount = parseMoney(lines[index + 1]);
+                  if (/^(?:Est\.\s*Win|To\s+Win):/i.test(line)) estimatedWin = parseMoney(line);
+                  if (/^(?:Est\.\s*Win|To\s+Win)$/i.test(line) && index + 1 < lines.length) estimatedWin = parseMoney(lines[index + 1]);
+                  if (/\d{1,2}:\d{2}:\d{2}\s*\([A-Z]{2,4}\)/.test(line)) placedAtText = line;
+                }
+                if (!ticket || !Number.isFinite(parsedSelection.odds) || !stakeAmount || stakeAmount <= 0) return null;
+                return {
+                  ticketReference: ticket,
+                  leagueName,
+                  matchTitle,
+                  marketType,
+                  lineValue: parsedSelection.lineValue,
+                  selectionName: parsedSelection.selectionName,
+                  odds: parsedSelection.odds,
+                  stakeAmount,
+                  estimatedWin,
+                  placedAtText
+                };
+              };
+              const result = async (verified, value) => {
+                let receiptOkButton = null;
+                if (verified) {
+                  await confirmBetIfPrompted();
+                  receiptOkButton = await receiptOkButtonPoint();
+                  if (!receiptOkButton) await returnToFootballPage();
+                }
+                return JSON.stringify({
+                  placed: true,
+                  historyVerified: verified,
+                  ticketReference: extractReceiptReference(value) || ticketReference || null,
+                  message: verified ? 'crown_history_verified' : 'crown_history_unverified',
+                  record: verified ? parseVerifiedBetRecord(value) : null,
+                  receiptOkButton: receiptOkButton
+                });
+              };
 
+              await sleep(600);
+              await confirmBetIfPrompted();
               const initial = rawText() || text();
-              if (historyVerified(initial)) return result(true, initial);
+              if (historyVerified(initial)) return await result(true, initial);
 
               const historyButton = byId('header_todaywagers') || byId('menu_todaywagers');
               if (historyButton) {
                 historyButton.scrollIntoView({ block: 'center', inline: 'center' });
-                historyButton.click();
+                clickElement(historyButton);
                 await sleep(1800);
               }
 
               const deadline = Date.now() + 15000;
               while (Date.now() <= deadline) {
+                await confirmBetIfPrompted();
                 const current = rawText() || text();
-                if (historyVerified(current)) return result(true, current);
+                if (historyVerified(current)) return await result(true, current);
                 await sleep(500);
               }
-              return result(false, rawText() || text());
+              return await result(false, rawText() || text());
             })()
         """.trimIndent()
     }
@@ -1939,6 +2610,42 @@ class AdsPowerLocalApiService(
 
     private fun com.fasterxml.jackson.databind.JsonNode.textOrNull(): String? {
         return takeIf { !it.isMissingNode && !it.isNull }?.asText()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun com.fasterxml.jackson.databind.JsonNode.decimalOrNull(): BigDecimal? {
+        if (isMissingNode || isNull) return null
+        return runCatching { BigDecimal(asText().replace(",", "").trim()) }.getOrNull()
+    }
+
+    private fun com.fasterxml.jackson.databind.JsonNode.toCrownBetPlacementResult(): CrownBetPlacementResult {
+        return CrownBetPlacementResult(
+            placed = path("placed").asBoolean(false),
+            historyVerified = path("historyVerified").asBoolean(false),
+            ticketReference = path("ticketReference").textOrNull(),
+            message = path("message").textOrNull() ?: "crown_bet_failed",
+            currentOdds = path("currentOdds").decimalOrNull(),
+            verifiedRecord = path("record").crownOpenBetRecordOrNull()
+        )
+    }
+
+    private fun com.fasterxml.jackson.databind.JsonNode.crownOpenBetRecordOrNull(): CrownOpenBetRecord? {
+        if (isMissingNode || isNull || !isObject) return null
+        val odds = path("odds").decimalOrNull() ?: return null
+        val stakeAmount = path("stakeAmount").decimalOrNull() ?: return null
+        val ticketReference = path("ticketReference").textOrNull()
+        if (ticketReference.isNullOrBlank() || stakeAmount <= BigDecimal.ZERO) return null
+        return CrownOpenBetRecord(
+            ticketReference = ticketReference,
+            leagueName = path("leagueName").textOrNull().orEmpty(),
+            matchTitle = path("matchTitle").textOrNull().orEmpty(),
+            marketType = path("marketType").textOrNull().orEmpty(),
+            lineValue = path("lineValue").textOrNull(),
+            selectionName = path("selectionName").textOrNull().orEmpty(),
+            odds = odds,
+            stakeAmount = stakeAmount,
+            estimatedWin = path("estimatedWin").decimalOrNull(),
+            placedAtText = path("placedAtText").textOrNull()
+        )
     }
 
     private fun com.fasterxml.jackson.databind.JsonNode?.debugPortOrNull(): String? {
@@ -2017,6 +2724,16 @@ class AdsPowerLocalApiService(
             ?.trim()
             ?.lowercase()
             ?.removePrefix("www.")
+    }
+
+    private fun String?.isUsableCrownPageCandidate(): Boolean {
+        val raw = this?.trim()?.takeIf { it.isNotBlank() } ?: return false
+        val uri = runCatching { URI(raw) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase()
+        val host = uri.host?.trim()?.lowercase() ?: return false
+        if (scheme != "http" && scheme != "https") return false
+        if (host == "start.adspower.net" || host.endsWith(".adspower.net")) return false
+        return true
     }
 
     private fun String?.hostEquals(host: String?): Boolean {

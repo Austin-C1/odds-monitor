@@ -259,6 +259,43 @@ describe('App background crown betting automation', () => {
     expect(queueCall?.[2]?.timeout).toBe(35000)
   })
 
+  it('retries a failed background crown signal on the next poll', async () => {
+    mockApiState.executionResults = [
+      {
+        status: 'rejected',
+        reason: 'crown_execution_timeout',
+        crownHistoryVerified: false,
+        crownBetReference: null,
+      },
+      {
+        status: 'placed',
+        reason: 'crown_history_verified',
+        crownHistoryVerified: true,
+        crownBetReference: 'BG-RETRY-1',
+      },
+    ]
+
+    render(<App />)
+
+    await screen.findByText('下注成功页面')
+    await waitFor(() => {
+      const queueCalls = vi.mocked(apiClient.post).mock.calls.filter(([url]) => (
+        url === '/auto-betting/signals/odds-monitor/execute-crown-queue'
+      ))
+      expect(queueCalls).toHaveLength(1)
+    })
+
+    await waitFor(() => {
+      const queueCalls = vi.mocked(apiClient.post).mock.calls.filter(([url]) => (
+        url === '/auto-betting/signals/odds-monitor/execute-crown-queue'
+      ))
+      expect(queueCalls).toHaveLength(2)
+    }, { timeout: 7000 })
+    expect(vi.mocked(apiClient.post).mock.calls.some(([url]) => (
+      /^\/auto-betting\/intents\/\d+\/execute-crown$/.test(String(url))
+    ))).toBe(false)
+  }, 10000)
+
   it('keeps prematch automatic betting running after navigating away from the crown betting page', async () => {
     window.localStorage.clear()
     writeAutomationStorage('prematch')

@@ -9,7 +9,9 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
+import org.mockito.Mockito.any
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.Mockito.`when`
@@ -107,6 +109,71 @@ class AutoBettingExecutionServiceTest {
         assertEquals(listOf("placing", "placed"), captor.allValues.map { it.status })
         assertEquals("CROWN-10001", captor.allValues.last().crownBetReference)
         verify(bettingNotificationService).sendPlacedIntent(captor.allValues.last(), 2_000_000)
+    }
+
+    @Test
+    fun `verified crown receipt details are written to betting history immediately`() {
+        val intent = liveHandicapIntent()
+        val match = crownPlatformMatch()
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(intent))
+        stubCrownPlatformMatchFor(intent, match)
+        `when`(
+            gateway.placeBet(
+                CrownBetPlacementCommand(
+                    profileId = "k1chipm1",
+                    loginUrl = "https://m407.mos077.com/",
+                    matchTitle = crownMatchTitle(match),
+                    marketType = intent.marketType,
+                    selectionName = intent.selectionName,
+                    betElementId = "bet_8764315_11049615_REH",
+                    stakeAmount = BigDecimal("10.0000"),
+                    targetOdds = BigDecimal("0.87000000"),
+                    lineValue = "0/0.5"
+                )
+            )
+        ).thenReturn(
+            CrownBetPlacementResult(
+                placed = true,
+                historyVerified = true,
+                ticketReference = "OU23993783274",
+                message = "crown_receipt_verified",
+                currentOdds = BigDecimal("1.09000000"),
+                verifiedRecord = CrownOpenBetRecord(
+                    ticketReference = "OU23993783274",
+                    leagueName = "International Friendly",
+                    matchTitle = "Germany v Finland",
+                    marketType = "moneyline",
+                    lineValue = null,
+                    selectionName = "Germany",
+                    odds = BigDecimal("1.09"),
+                    stakeAmount = BigDecimal("50.00"),
+                    estimatedWin = BigDecimal("4.50"),
+                    placedAtText = null
+                )
+            )
+        )
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(intentRepository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val result = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+
+        val saved = captor.allValues.last()
+        assertEquals("placed", result.status)
+        assertEquals("OU23993783274", saved.crownBetReference)
+        assertEquals("International Friendly", saved.leagueName)
+        assertEquals("Germany v Finland", saved.matchTitle)
+        assertEquals("moneyline", saved.marketType)
+        assertEquals("Germany", saved.selectionName)
+        assertEquals(BigDecimal("1.09000000"), saved.targetOdds)
+        assertEquals(BigDecimal("50.0000"), saved.stakeAmount)
+        assertEquals(true, saved.crownHistoryVerified)
     }
 
     @Test
@@ -586,6 +653,108 @@ class AutoBettingExecutionServiceTest {
     }
 
     @Test
+    fun `failed crown placement does not put account into cooldown`() {
+        val firstIntent = liveHandicapIntent()
+        val secondIntent = liveHandicapIntent().copy(
+            id = 22L,
+            dedupeKey = liveHandicapIntent().dedupeKey + ":retry",
+            activeDedupeKey = liveHandicapIntent().activeDedupeKey + ":retry"
+        )
+        val failure = CrownBetPlacementResult(
+            placed = false,
+            historyVerified = false,
+            ticketReference = null,
+            message = "crown_place_button_native_click_required",
+            currentOdds = BigDecimal("0.87000000")
+        )
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(firstIntent))
+        `when`(intentRepository.findById(22L)).thenReturn(Optional.of(secondIntent))
+        `when`(
+            intentRepository.markReadyIntentPlacingById(
+                22L,
+                "ready",
+                "placing",
+                2_001_000
+            )
+        ).thenReturn(1)
+        stubCrownPlatformMatchFor(firstIntent)
+        `when`(gateway.placeBet(expectedLiveHandicapCommand())).thenReturn(failure, failure)
+        `when`(intentRepository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val first = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+        val second = service.executeCrownIntent(
+            intentId = 22L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_001_000
+        )
+
+        assertEquals("crown_place_button_native_click_required", first.reason)
+        assertEquals("crown_place_button_native_click_required", second.reason)
+        verify(gateway, times(2)).placeBet(expectedLiveHandicapCommand())
+    }
+
+    @Test
+    fun `verified crown placement puts account into cooldown for following ready intent`() {
+        val firstIntent = liveHandicapIntent()
+        val secondIntent = liveHandicapIntent().copy(
+            id = 22L,
+            dedupeKey = liveHandicapIntent().dedupeKey + ":next",
+            activeDedupeKey = liveHandicapIntent().activeDedupeKey + ":next"
+        )
+        val success = CrownBetPlacementResult(
+            placed = true,
+            historyVerified = true,
+            ticketReference = "CROWN-COOLDOWN-1",
+            message = "crown_history_verified",
+            currentOdds = BigDecimal("0.87000000")
+        )
+        `when`(intentRepository.findById(21L)).thenReturn(Optional.of(firstIntent))
+        `when`(intentRepository.findById(22L)).thenReturn(Optional.of(secondIntent))
+        `when`(
+            intentRepository.markReadyIntentPlacingById(
+                22L,
+                "ready",
+                "placing",
+                2_001_000
+            )
+        ).thenReturn(1)
+        stubCrownPlatformMatchFor(firstIntent)
+        `when`(gateway.placeBet(expectedLiveHandicapCommand())).thenReturn(success, success)
+        `when`(intentRepository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
+
+        val first = service.executeCrownIntent(
+            intentId = 21L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_000_000
+        )
+        val second = service.executeCrownIntent(
+            intentId = 22L,
+            request = AutoBettingExecutionRequest(
+                profileId = "k1chipm1",
+                loginUrl = "https://m407.mos077.com/"
+            ),
+            now = 2_001_000
+        )
+
+        assertEquals("placed", first.status)
+        assertEquals("account_in_cooldown", second.reason)
+        verify(gateway, times(1)).placeBet(expectedLiveHandicapCommand())
+    }
+
+    @Test
     fun `recent unverified crown placement waits before delayed history recheck`() {
         val intent = liveHandicapIntent().copy(
             status = "placed_unverified",
@@ -837,4 +1006,16 @@ class AutoBettingExecutionServiceTest {
     }
 
     private fun crownMatchTitle(match: OddsPlatformMatch) = "${match.rawHomeTeam} vs ${match.rawAwayTeam}"
+
+    private fun expectedLiveHandicapCommand() = CrownBetPlacementCommand(
+        profileId = "k1chipm1",
+        loginUrl = "https://m407.mos077.com/",
+        matchTitle = crownMatchTitle(crownPlatformMatch()),
+        marketType = liveHandicapIntent().marketType,
+        selectionName = liveHandicapIntent().selectionName,
+        betElementId = "bet_8764315_11049615_REH",
+        stakeAmount = BigDecimal("10.0000"),
+        targetOdds = BigDecimal("0.87000000"),
+        lineValue = "0/0.5"
+    )
 }

@@ -9,7 +9,8 @@ describe('data source settings source', () => {
     expect(source).toContain("sourceKey === 'crown'")
     expect(source).toContain("name={[field.name, 'queryKeyword']}")
     expect(source).toContain('平台网址')
-    expect(source).toContain('https://hga038.com/')
+    expect(source).toContain('https://your-crown-host.example/')
+    expect(source).not.toContain('hga038')
   })
 
   it('describes that enabled sources are collected by the backend scheduler', () => {

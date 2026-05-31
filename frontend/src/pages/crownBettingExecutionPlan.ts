@@ -98,9 +98,7 @@ const modeLabels: Record<AutoBettingMode, string> = {
 
 export type CrownAlertSignalSelectionOptions = {
   completedSignalKeys: ReadonlySet<string>
-  attemptedSignalAt: ReadonlyMap<string, number>
   now: number
-  retryCooldownMs: number
 }
 
 export type QueuedCrownAlertSignal = AutoBettingSignal & {
@@ -125,8 +123,7 @@ export const buildCrownAlertSignalQueue = (
   options: CrownAlertSignalSelectionOptions,
 ): QueuedCrownAlertSignal[] => {
   const pendingCandidates = candidates.filter((candidate) => (
-    !options.completedSignalKeys.has(autoBettingSignalKey(candidate)) &&
-    !options.attemptedSignalAt.has(autoBettingSignalKey(candidate))
+    !options.completedSignalKeys.has(autoBettingSignalKey(candidate))
   ))
 
   return pendingCandidates.map((candidate, index) => ({
@@ -149,26 +146,9 @@ export const selectNextCrownAlertSignal = (
     : null
 }
 
-const nonRetriableAutoBettingReasons = new Set([
-  'crown_market_locked',
-  'crown_place_button_disabled',
-  'crown_market_not_found',
-  'crown_line_mismatch',
-  'crown_betslip_not_cleared',
-  'crown_betslip_full',
-  'crown_phase_unknown',
-  'crown_phase_mismatch',
-  'account_stake_limit_reached',
-  'target_odds_below_minimum',
-])
-
 const completedDuplicateAutoBettingReasons = new Set([
   'duplicate_placed_intent',
 ])
-
-export const isNonRetriableAutoBettingReason = (reason?: string | null): boolean => (
-  Boolean(reason && nonRetriableAutoBettingReasons.has(reason))
-)
 
 export const isCompletedDuplicateAutoBettingReason = (reason?: string | null): boolean => (
   Boolean(reason && completedDuplicateAutoBettingReasons.has(reason))
@@ -219,7 +199,6 @@ const autoBettingReasonLabels: Record<string, string> = {
   crown_history_unverified: '下注后未确认到历史记录',
   stale_signal: '信号已过期',
   duplicate_active_intent: '已有投注任务处理中，重复信号已跳过',
-  duplicate_recent_crown_attempt: '近期已尝试该信号，重复信号已跳过',
   duplicate_placed_intent: '已成功投注，重复信号已跳过',
   account_stake_limit_reached: '单账号投注上限已达到',
   target_odds_below_minimum: '皇冠当前水位低于最低投注水位',

@@ -40,7 +40,21 @@ data class CrownBetPlacementResult(
     val historyVerified: Boolean,
     val ticketReference: String?,
     val message: String,
-    val currentOdds: BigDecimal? = null
+    val currentOdds: BigDecimal? = null,
+    val verifiedRecord: CrownOpenBetRecord? = null
+)
+
+data class CrownOpenBetRecord(
+    val ticketReference: String?,
+    val leagueName: String,
+    val matchTitle: String,
+    val marketType: String,
+    val lineValue: String? = null,
+    val selectionName: String,
+    val odds: BigDecimal,
+    val stakeAmount: BigDecimal,
+    val estimatedWin: BigDecimal? = null,
+    val placedAtText: String? = null
 )
 
 private data class CrownMatchResolution(
@@ -96,7 +110,7 @@ class AutoBettingExecutionService(
     private val staleReadyTimeoutMillis = 180_000L
     private val stalePlacingTimeoutMillis = 30_000L
     private val unverifiedRecheckDelayMillis = 30_000L
-    private val accountFailureCooldownMillis = 300_000L
+    private val accountSuccessCooldownMillis = 300_000L
     private val accountCooldownUntil = ConcurrentHashMap<String, Long>()
 
     fun executeCrownIntent(
@@ -145,19 +159,20 @@ class AutoBettingExecutionService(
         val placing = intentRepository.save(intent.copy(status = STATUS_PLACING, updatedAt = now))
         val commandResult = buildCommand(placing, request)
         val command = commandResult.command
-            ?: return rejectWithAccountCooldown(placing, commandResult.rejectReason, profileId, now)
+            ?: return reject(placing, commandResult.rejectReason, now)
         val placement = try {
             profileExecutionLock.withAccountLock(placing.accountKey, profileId) {
                 crownBetPlacementGateway.placeBet(command)
             }
         } catch (_: Exception) {
-            return rejectWithAccountCooldown(placing, "crown_execution_error", profileId, now)
+            return reject(placing, "crown_execution_error", now)
         }
 
         if (placement.placed && placement.historyVerified) {
             val reason = shortReason(placement.message.ifBlank { "crown_history_verified" })
+            val verifiedRecord = placement.verifiedRecord
             val placed = intentRepository.save(
-                placing.copy(
+                placing.withVerifiedRecord(verifiedRecord).copy(
                     status = STATUS_PLACED,
                     rejectReason = null,
                     activeDedupeKey = placing.dedupeKey,
@@ -168,6 +183,7 @@ class AutoBettingExecutionService(
                 )
             )
             bettingNotificationService?.sendPlacedIntent(placed, now)
+            startAccountCooldown(placing.accountKey, profileId, now)
             return placed.toDecision(reason)
         }
 
@@ -186,12 +202,7 @@ class AutoBettingExecutionService(
             return unverified.toDecision(reason)
         }
 
-        return rejectWithAccountCooldown(
-            placing,
-            shortReason(placement.message.ifBlank { "crown_bet_failed" }),
-            profileId,
-            now
-        )
+        return reject(placing, shortReason(placement.message.ifBlank { "crown_bet_failed" }), now)
     }
 
     private fun recheckUnverifiedCrownIntent(
@@ -240,8 +251,9 @@ class AutoBettingExecutionService(
 
         if (verification.placed && verification.historyVerified) {
             val reason = shortReason(verification.message.ifBlank { "crown_history_verified" })
+            val verifiedRecord = verification.verifiedRecord
             val placed = intentRepository.save(
-                placing.copy(
+                placing.withVerifiedRecord(verifiedRecord).copy(
                     status = STATUS_PLACED,
                     rejectReason = null,
                     activeDedupeKey = placing.dedupeKey,
@@ -252,6 +264,7 @@ class AutoBettingExecutionService(
                 )
             )
             bettingNotificationService?.sendPlacedIntent(placed, now)
+            startAccountCooldown(placing.accountKey, profileId, now)
             return placed.toDecision(reason)
         }
 
@@ -468,20 +481,10 @@ class AutoBettingExecutionService(
         return rejected.toDecision(shortReason(reason))
     }
 
-    private fun rejectWithAccountCooldown(
-        intent: AutoBettingIntent,
-        reason: String,
-        profileId: String,
-        now: Long
-    ): AutoBettingDecisionDto {
-        startAccountCooldown(intent.accountKey, profileId, now)
-        return reject(intent, reason, now)
-    }
-
     private fun startAccountCooldown(accountKey: String, profileId: String, now: Long) {
         val key = accountLockKey(accountKey, profileId)
         if (key.isNotBlank()) {
-            accountCooldownUntil[key] = now + accountFailureCooldownMillis
+            accountCooldownUntil[key] = now + accountSuccessCooldownMillis
         }
     }
 
@@ -528,6 +531,21 @@ class AutoBettingExecutionService(
         capturedAt = 0,
         createdAt = 0
     )
+
+    private fun AutoBettingIntent.withVerifiedRecord(record: CrownOpenBetRecord?): AutoBettingIntent {
+        if (record == null) return this
+        return copy(
+            leagueName = truncateField(record.leagueName.ifBlank { leagueName }, 128),
+            matchTitle = truncateField(record.matchTitle.ifBlank { matchTitle }, 255),
+            marketType = truncateField(record.marketType.ifBlank { marketType }, 32),
+            lineValue = record.lineValue?.trim()?.takeIf { it.isNotBlank() }?.let { truncateField(it, 32) } ?: lineValue,
+            selectionName = truncateField(record.selectionName.ifBlank { selectionName }, 64),
+            referenceOdds = scaleOdds(record.odds.takeIf { it > BigDecimal.ZERO } ?: referenceOdds),
+            targetOdds = scaleOdds(record.odds.takeIf { it > BigDecimal.ZERO } ?: targetOdds),
+            targetDecimalOdds = scaleOdds((record.odds.takeIf { it > BigDecimal.ZERO } ?: targetOdds).add(BigDecimal.ONE)),
+            stakeAmount = record.stakeAmount.takeIf { it > BigDecimal.ZERO }?.setScale(4, RoundingMode.HALF_UP) ?: stakeAmount
+        )
+    }
 
     private fun AutoBettingIntent.toDecision(reason: String): AutoBettingDecisionDto {
         return AutoBettingDecisionDto(
@@ -587,6 +605,14 @@ class AutoBettingExecutionService(
 
     private fun shortReason(reason: String): String {
         return reason.trim().take(64).ifBlank { "crown_bet_failed" }
+    }
+
+    private fun truncateField(value: String, length: Int): String {
+        return value.trim().take(length)
+    }
+
+    private fun scaleOdds(value: BigDecimal): BigDecimal {
+        return value.setScale(8, RoundingMode.HALF_UP)
     }
 
     companion object {

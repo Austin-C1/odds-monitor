@@ -167,7 +167,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     expect(autoBettingSignalKey(handicapSignal)).not.toBe(autoBettingSignalKey(totalSignal))
   })
 
-  it('skips an attempted signal and selects a new signal', () => {
+  it('keeps a failed attempted signal retryable and selects it again', () => {
     const firstSignal = {
       ...prematchSignal,
       sourceAlertId: 4001,
@@ -180,20 +180,16 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
       matchTitle: 'Second match',
       targetOdds: 0.96,
     }
-    const attemptedSignalAt = new Map([[autoBettingSignalKey(firstSignal), 1_000]])
-
     expect(selectNextCrownAlertSignal(
       [firstSignal, secondSignal],
       {
         completedSignalKeys: new Set(),
-        attemptedSignalAt,
         now: 20_000,
-        retryCooldownMs: 5_000,
       },
-    )).toBe(secondSignal)
+    )).toBe(firstSignal)
   })
 
-  it('does not retry an already attempted signal after cooldown passes', () => {
+  it('keeps attempted signals in the pending queue after cooldown passes', () => {
     const firstSignal = {
       ...prematchSignal,
       sourceAlertId: 4031,
@@ -206,31 +202,25 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
       matchTitle: 'Second match',
       targetOdds: 0.96,
     }
-    const attemptedSignalAt = new Map([[autoBettingSignalKey(firstSignal), 1_000]])
-
     const queue = buildCrownAlertSignalQueue(
       [firstSignal, secondSignal],
       {
         completedSignalKeys: new Set(),
-        attemptedSignalAt,
         now: 20_000,
-        retryCooldownMs: 5_000,
       },
     )
 
-    expect(queue.map((signal) => signal.matchTitle)).toEqual(['Second match'])
+    expect(queue.map((signal) => signal.matchTitle)).toEqual(['First match', 'Second match'])
     expect(selectNextCrownAlertSignal(
       [firstSignal, secondSignal],
       {
         completedSignalKeys: new Set(),
-        attemptedSignalAt,
         now: 20_000,
-        retryCooldownMs: 5_000,
       },
-    )).toBe(secondSignal)
+    )).toBe(firstSignal)
   })
 
-  it('does not wait for an attempted signal cooldown before starting a new signal', () => {
+  it('does not use attempted signal cooldown to hide retryable signals', () => {
     const firstSignal = {
       ...prematchSignal,
       sourceAlertId: 4051,
@@ -243,17 +233,13 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
       matchTitle: 'Second match',
       targetOdds: 0.96,
     }
-    const attemptedSignalAt = new Map([[autoBettingSignalKey(firstSignal), 19_000]])
-
     expect(selectNextCrownAlertSignal(
       [firstSignal, secondSignal],
       {
         completedSignalKeys: new Set(),
-        attemptedSignalAt,
         now: 20_000,
-        retryCooldownMs: 5_000,
       },
-    )).toBe(secondSignal)
+    )).toBe(firstSignal)
   })
 
   it('skips completed signals and keeps scanning later candidates', () => {
@@ -274,14 +260,12 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
       [completedSignal, pendingSignal],
       {
         completedSignalKeys: new Set([autoBettingSignalKey(completedSignal)]),
-        attemptedSignalAt: new Map(),
         now: 20_000,
-        retryCooldownMs: 5_000,
       },
     )).toBe(pendingSignal)
   })
 
-  it('keeps attempted crown signals out of the pending queue', () => {
+  it('keeps only completed crown signals out of the pending queue', () => {
     const completedSignal = {
       ...prematchSignal,
       sourceAlertId: 4201,
@@ -305,9 +289,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
       [completedSignal, retrySignal, firstPendingSignal],
       {
         completedSignalKeys: new Set([autoBettingSignalKey(completedSignal)]),
-        attemptedSignalAt: new Map([[autoBettingSignalKey(retrySignal), 10_000]]),
         now: 20_000,
-        retryCooldownMs: 5_000,
       },
     )
 
@@ -316,17 +298,16 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
       matchTitle: signal.matchTitle,
       queueStatus: signal.queueStatus,
     }))).toEqual([
-      { queuePosition: 1, matchTitle: 'First pending match', queueStatus: 'ready' },
+      { queuePosition: 1, matchTitle: 'Retry match', queueStatus: 'ready' },
+      { queuePosition: 2, matchTitle: 'First pending match', queueStatus: 'ready' },
     ])
     expect(selectNextCrownAlertSignal(
       [completedSignal, retrySignal, firstPendingSignal],
       {
         completedSignalKeys: new Set([autoBettingSignalKey(completedSignal)]),
-        attemptedSignalAt: new Map([[autoBettingSignalKey(retrySignal), 10_000]]),
         now: 20_000,
-        retryCooldownMs: 5_000,
       },
-    )).toBe(firstPendingSignal)
+    )).toBe(retrySignal)
   })
 
   it('drops crown alert candidates older than the configured signal age', () => {

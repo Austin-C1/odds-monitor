@@ -12,10 +12,8 @@ import com.wrbug.polymarketbot.dto.AutoBettingQueuedCrownExecutionRequest
 import com.wrbug.polymarketbot.dto.AutoBettingSignalRequest
 import com.wrbug.polymarketbot.service.autobetting.AdsPowerLocalApiService
 import com.wrbug.polymarketbot.service.autobetting.AutoBettingDecisionService
-import com.wrbug.polymarketbot.service.autobetting.AutoBettingExecutionRequest
 import com.wrbug.polymarketbot.service.autobetting.AutoBettingExecutionService
 import com.wrbug.polymarketbot.service.autobetting.AutoBettingQueueService
-import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -52,14 +50,6 @@ class AutoBettingController(
     @PostMapping("/intents/verified-placed")
     fun listVerifiedPlacedIntents(): ResponseEntity<ApiResponse<List<AutoBettingDecisionDto>>> {
         return ResponseEntity.ok(ApiResponse.success(decisionService.listRecentVerifiedPlacedIntents()))
-    }
-
-    @PostMapping("/intents/{intentId}/execute-crown")
-    fun executeCrownIntent(
-        @PathVariable intentId: Long,
-        @RequestBody request: AutoBettingExecutionRequest
-    ): ResponseEntity<ApiResponse<AutoBettingDecisionDto>> {
-        return ResponseEntity.ok(ApiResponse.success(executionService.executeCrownIntent(intentId, request)))
     }
 
     @PostMapping("/adspower/status")

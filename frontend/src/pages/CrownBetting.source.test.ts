@@ -5,6 +5,7 @@ import { join } from 'node:path'
 describe('crown betting pages source', () => {
   const pagePath = join(process.cwd(), 'src', 'pages', 'CrownBetting.tsx')
   const historyPath = join(process.cwd(), 'src', 'pages', 'BettingHistory.tsx')
+  const backgroundRunnerPath = join(process.cwd(), 'src', 'components', 'CrownBettingBackgroundRunner.tsx')
   const appSource = readFileSync(join(process.cwd(), 'src', 'App.tsx'), 'utf8')
   const layoutSource = readFileSync(join(process.cwd(), 'src', 'components', 'Layout.tsx'), 'utf8')
 
@@ -39,7 +40,7 @@ describe('crown betting pages source', () => {
     expect(source).toContain('AdsPower 环境未打开')
     expect(source).toContain('登录网站')
     expect(source).toContain('loginUrl')
-    expect(source).toContain('https://m407.mos077.com/')
+    expect(source).toContain('VITE_CROWN_LOGIN_URL')
     expect(source).not.toContain('/odds-monitor/crown/accounts/check')
     expect(source).not.toContain('登录密码')
     expect(source).not.toContain('Input.Password')
@@ -86,11 +87,11 @@ describe('crown betting pages source', () => {
     expect(source).toContain('已下注')
     expect(source).toContain('后端队列执行')
     expect(source).toContain('下注队列已完成，成功记录已写入后端')
-    expect(source).toContain('本轮信号已执行完毕，不再重复重试')
+    expect(source).toContain('本轮信号没有确认成功，后续可重新尝试')
     expect(source).not.toContain('下注成功，已核对皇冠投注历史')
     expect(source).toContain('/odds-monitor/alerts/list')
     expect(source).toContain('executeLatestCrownSignal')
-    expect(source).toContain('attemptedSignalAtRef')
+    expect(source).not.toContain('attemptedSignalAtRef')
     expect(source).toContain('候选信号盘口')
     expect(source).toContain('采集系统合格回传')
     expect(source).toContain('按投注顺序排队')
@@ -121,6 +122,17 @@ describe('crown betting pages source', () => {
     expect(source).not.toContain("rules={[{ required: true, message: '请输入 AdsPower 档案 ID' }]}")
     expect(source).not.toContain('name="status"')
     expect(source).not.toContain('name="balance"')
+  })
+
+  it('does not hard-code a crown mirror domain in betting runtime code', () => {
+    const pageSource = readFileSync(pagePath, 'utf8')
+    const backgroundRunnerSource = readFileSync(backgroundRunnerPath, 'utf8')
+    const runtimeSource = `${pageSource}\n${backgroundRunnerSource}`
+
+    expect(runtimeSource).toContain('VITE_CROWN_LOGIN_URL')
+    expect(runtimeSource).not.toContain('https://m407.mos077.com/')
+    expect(runtimeSource).not.toContain('mos077')
+    expect(runtimeSource).not.toContain('hga038')
   })
 
   it('selects the next runnable signal before showing running state', () => {
@@ -169,12 +181,14 @@ describe('crown betting pages source', () => {
     expect(source).not.toContain('extra={<Tag color="processing">账号状态</Tag>}')
   })
 
-  it('loads full status betting records', () => {
+  it('loads only verified betting records by default and keeps full status as diagnostics', () => {
     expect(existsSync(historyPath)).toBe(true)
     const source = readFileSync(historyPath, 'utf8')
 
     expect(source).toContain('下注记录')
+    expect(source).toContain('/auto-betting/intents/verified-placed')
     expect(source).toContain('/auto-betting/intents/recent')
+    expect(source).toContain('showAllStatuses')
     expect(source).toContain('全状态记录')
     expect(source).toContain('暂无下注记录')
     expect(source).toContain('失败/跳过')
@@ -198,11 +212,19 @@ describe('crown betting pages source', () => {
     expect(source).toContain('phaseLabel')
     expect(source).toContain("import { extractApiErrorMessage } from '../utils/apiError'")
     expect(source).toContain('extractApiErrorMessage(error,')
-    expect(source).not.toContain('/auto-betting/intents/verified-placed')
     expect(source).not.toContain('待下注')
     expect(source).not.toContain('已通过')
     expect(source).not.toContain('sampleRows')
     expect(source).not.toContain("id: 'bet-001-a'")
     expect(source).not.toContain('盈利情况')
+  })
+
+  it('reads betting history from backend records written after successful placement', () => {
+    expect(existsSync(historyPath)).toBe(true)
+    const source = readFileSync(historyPath, 'utf8')
+
+    expect(source).toContain('/auto-betting/intents/verified-placed')
+    expect(source).toContain('投注成功后自动写入这里')
+    expect(source).not.toContain('syncCrownOpenBets')
   })
 })

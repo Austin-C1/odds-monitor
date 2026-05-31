@@ -53,5 +53,6 @@ class CrownSessionStore @Autowired constructor(
 
 internal fun OddsDataSourceConfig.crownBaseUrl(): String {
     val configured = queryKeyword?.trim()?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-    return configured ?: CrownApiClient.DEFAULT_BASE_URL
+    return configured
+        ?: throw CrownCollectionException("failed_config", "crown platform url is empty")
 }

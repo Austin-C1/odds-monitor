@@ -118,7 +118,7 @@ open class CrownApiClient @Autowired constructor(
     private fun fetchAccountBalance(session: CrownSession): BigDecimal? {
         val cookieJar = session.cookies.toMutableMap()
         val response = postForm(
-            baseUrl = session.baseUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_BASE_URL,
+            baseUrl = session.requireBaseUrl(),
             path = "/transform.php",
             form = mapOf(
                 "uid" to session.uid,
@@ -268,7 +268,7 @@ open class CrownApiClient @Autowired constructor(
     private fun logout(session: CrownSession) {
         runCatching {
             postForm(
-                baseUrl = session.baseUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_BASE_URL,
+                baseUrl = session.requireBaseUrl(),
                 path = "/transform_nl.php",
                 form = mapOf(
                     "uid" to session.uid,
@@ -312,8 +312,12 @@ open class CrownApiClient @Autowired constructor(
         }
     }
 
+    private fun CrownSession.requireBaseUrl(): String {
+        return baseUrl?.trim()?.takeIf { it.isNotBlank() }
+            ?: throw CrownCollectionException("failed_config", "crown platform url is empty")
+    }
+
     companion object {
-        const val DEFAULT_BASE_URL = "https://m407.mos077.com"
         private const val REQUEST_MAX_ATTEMPTS = 2
         private const val REQUEST_RETRY_DELAY_MILLIS = 250L
     }

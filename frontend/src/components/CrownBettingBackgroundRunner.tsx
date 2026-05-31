@@ -7,7 +7,9 @@ import {
   buildAutoBettingExecutionPlan,
   extractCrownAlertSignalCandidates,
   filterFreshCrownAlertSignals,
+  isCompletedDuplicateAutoBettingReason,
   selectNextCrownAlertSignal,
+  shouldCompleteCrownSignalForAccounts,
   type AutoBettingMode,
   type AutoBettingSignal,
   type OddsAlertRecord,
@@ -20,9 +22,8 @@ import {
 const ACCOUNTS_STORAGE_KEY = 'crown-betting-accounts'
 const SETTINGS_STORAGE_KEY = 'crown-betting-automation-settings'
 const POLL_INTERVAL_MS = 5000
-const SIGNAL_RETRY_COOLDOWN_MS = POLL_INTERVAL_MS
 const ACCOUNT_EXECUTION_TIMEOUT_MS = 30000
-const CROWN_LOGIN_URL = 'https://m407.mos077.com/'
+const DEFAULT_CROWN_LOGIN_URL = (import.meta.env.VITE_CROWN_LOGIN_URL || '').trim()
 
 type StoredAutomationSettings = {
   autoMode: AutoBettingMode
@@ -70,6 +71,8 @@ type AutoBettingDecisionResponse = {
   crownBetReference?: string | null
   accountKey?: string
 }
+
+const resolveCrownLoginUrl = (loginUrl?: string | null) => loginUrl?.trim() || DEFAULT_CROWN_LOGIN_URL
 
 const normalizeNumberSetting = (
   value: unknown,
@@ -187,7 +190,7 @@ const runQueuedAutomationForSignal = async (
   })
   const executableRows = plan.rows.filter((row) => row.status === 'passed' && row.stakeAmount > 0)
   if (executableRows.length === 0) {
-    return { succeeded: false, stopRetry: true, completed: true }
+    return { succeeded: false, stopRetry: false, completed: false }
   }
 
   const accountById = new Map(accounts.map((account) => [account.id, account]))
@@ -221,7 +224,7 @@ const runQueuedAutomationForSignal = async (
             accountKey: row.id,
             accountDisplayName: row.accountName,
             profileId: account?.adsPowerProfileId?.trim() || '',
-            loginUrl: account?.loginUrl || CROWN_LOGIN_URL,
+            loginUrl: resolveCrownLoginUrl(account?.loginUrl),
             bettingEnabled: true,
           }
         }),
@@ -229,15 +232,33 @@ const runQueuedAutomationForSignal = async (
       { timeout: Math.max(ACCOUNT_EXECUTION_TIMEOUT_MS, executableRows.length * ACCOUNT_EXECUTION_TIMEOUT_MS + 5000) },
     )
     const decisions = response.data.data || []
+    const decisionByAccountKey = new Map(decisions.map((decision) => [decision.accountKey, decision]))
+    const finalRows = plan.rows.map((row) => {
+      const decision = decisionByAccountKey.get(row.id)
+      if (!decision) return row
+      const verified = decision.status === 'placed' && decision.crownHistoryVerified === true
+      const duplicatePlaced = isCompletedDuplicateAutoBettingReason(decision.reason)
+      return {
+        ...row,
+        status: verified ? 'passed' as const : 'skipped' as const,
+        stakeAmount: verified ? row.stakeAmount : 0,
+        stopRetry: verified || duplicatePlaced,
+        retryable: !(verified || duplicatePlaced),
+      }
+    })
+    const completed = response.data.code === 0 && shouldCompleteCrownSignalForAccounts(
+      finalRows,
+      executableRows.map((row) => row.id),
+    )
     return {
-      succeeded: response.data.code === 0 && decisions.some((decision) => (
+      succeeded: response.data.code === 0 && finalRows.some((row) => row.status === 'passed') && decisions.some((decision) => (
         decision.status === 'placed' && decision.crownHistoryVerified === true
       )),
-      stopRetry: true,
-      completed: true,
+      stopRetry: completed,
+      completed,
     }
   } catch {
-    return { succeeded: false, stopRetry: true, completed: true }
+    return { succeeded: false, stopRetry: false, completed: false }
   }
 }
 
@@ -253,7 +274,6 @@ const runAutomationForSignal = async (
 
 const CrownBettingBackgroundRunner = () => {
   const runningRef = useRef(false)
-  const attemptedSignalAtRef = useRef<Map<string, number>>(new Map())
   const completedSignalKeysRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
@@ -294,9 +314,7 @@ const CrownBettingBackgroundRunner = () => {
         ).filter((candidate) => candidate.targetOdds >= settings.minimumBetOdds)
         const signalSelectionOptions = {
           completedSignalKeys: completedSignalKeysRef.current,
-          attemptedSignalAt: attemptedSignalAtRef.current,
           now,
-          retryCooldownMs: SIGNAL_RETRY_COOLDOWN_MS,
         }
         const signalQueue = buildCrownAlertSignalQueue(candidates, signalSelectionOptions)
         const signal = selectNextCrownAlertSignal(candidates, signalSelectionOptions)
@@ -306,7 +324,6 @@ const CrownBettingBackgroundRunner = () => {
         ))
 
         const key = autoBettingSignalKey(signal)
-        attemptedSignalAtRef.current.set(key, now)
         const result = await runAutomationForSignal(
           signal,
           settings,
@@ -314,7 +331,7 @@ const CrownBettingBackgroundRunner = () => {
           selectedQueueItem?.queuePosition,
           signalQueue.length,
         )
-        if (result.completed || result.stopRetry) {
+        if (result.completed) {
           completedSignalKeysRef.current.add(key)
         }
       } finally {

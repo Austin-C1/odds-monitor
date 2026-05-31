@@ -28,6 +28,7 @@ import {
   formatAutoBettingReason,
   isCompletedDuplicateAutoBettingReason,
   selectNextCrownAlertSignal,
+  shouldCompleteCrownSignalForAccounts,
   type AutoBettingMode,
   type AutoBettingExecutionPlan,
   type QueuedCrownAlertSignal,
@@ -144,10 +145,9 @@ type SystemConfigResponse = {
 
 const STORAGE_KEY = 'crown-betting-accounts'
 const AUTOMATION_SETTINGS_STORAGE_KEY = 'crown-betting-automation-settings'
-const CROWN_LOGIN_URL = 'https://m407.mos077.com/'
+const DEFAULT_CROWN_LOGIN_URL = (import.meta.env.VITE_CROWN_LOGIN_URL || '').trim()
 const LEGACY_SEEDED_ACCOUNT_PREFIX = 'crown-seed-'
 const AUTO_BETTING_POLL_INTERVAL_MS = 5000
-const AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS = AUTO_BETTING_POLL_INTERVAL_MS
 const AUTO_BETTING_ACCOUNT_EXECUTION_TIMEOUT_MS = 30000
 
 type AutomationSettings = {
@@ -396,6 +396,8 @@ const adsPowerStatusColor = (account: CrownAccount) => {
   return 'blue'
 }
 
+const resolveCrownLoginUrl = (loginUrl?: string | null) => loginUrl?.trim() || DEFAULT_CROWN_LOGIN_URL
+
 const readStoredAccounts = (): CrownAccount[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -412,7 +414,7 @@ const readStoredAccounts = (): CrownAccount[] => {
       ))
       .map((item) => ({
         ...item,
-        loginUrl: item.loginUrl || CROWN_LOGIN_URL,
+        loginUrl: resolveCrownLoginUrl(item.loginUrl),
         adsPowerProfileId: item.adsPowerProfileId || '',
         adsPowerStatus: item.adsPowerStatus || (item.adsPowerProfileId ? 'unlinked' : undefined),
         adsPowerMessage: item.adsPowerMessage || undefined,
@@ -721,7 +723,6 @@ const CrownBetting = () => {
   const [currentExecutionStep, setCurrentExecutionStep] = useState<CurrentExecutionStep>(null)
   const executionRunningRef = useRef(false)
   const automationPollingRef = useRef(false)
-  const attemptedSignalAtRef = useRef<Map<string, number>>(new Map())
   const completedSignalKeysRef = useRef<Set<string>>(new Set())
   const mountedRef = useRef(true)
 
@@ -761,9 +762,7 @@ const CrownBetting = () => {
       ))
       const signalSelectionOptions = {
         completedSignalKeys: completedSignalKeysRef.current,
-        attemptedSignalAt: attemptedSignalAtRef.current,
         now,
-        retryCooldownMs: AUTO_BETTING_SIGNAL_RETRY_COOLDOWN_MS,
       }
       const signalQueue = buildCrownAlertSignalQueue(qualifiedCandidates, signalSelectionOptions)
       setSignalCandidates(signalQueue)
@@ -772,9 +771,6 @@ const CrownBetting = () => {
         ? signalQueue.find((candidate) => autoBettingSignalKey(candidate) === autoBettingSignalKey(signal))
         : null
       const signalKey = signal ? autoBettingSignalKey(signal) : null
-      if (signalKey && autoEnabled) {
-        attemptedSignalAtRef.current.set(signalKey, now)
-      }
       const shouldExecuteSignal = autoEnabled && Boolean(signal)
       if (shouldExecuteSignal) {
         executionStarted = true
@@ -797,7 +793,7 @@ const CrownBetting = () => {
         minimumBetOdds,
         accounts: toExecutionAccounts(planAccounts),
       })
-      let nextPlan = buildExecutionPlan(currentAccounts)
+      const nextPlan = buildExecutionPlan(currentAccounts)
       setExecutionPlan((currentPlan) => (
         signal || !currentPlan?.signal ? nextPlan : currentPlan
       ))
@@ -815,7 +811,6 @@ const CrownBetting = () => {
       const executableRows = nextPlan.rows.filter((row) => row.status === 'passed' && row.stakeAmount > 0)
       if (executableRows.length === 0) {
         setCurrentExecutionStep((current) => current ? { ...current, stageLabel: nextPlan.summary } : null)
-        if (signalKey) completedSignalKeysRef.current.add(signalKey)
         return
       }
       const accountById = new Map(currentAccounts.map((account) => [account.id, account]))
@@ -830,7 +825,8 @@ const CrownBetting = () => {
               status: 'skipped' as const,
               statusLabel: '跳过',
               stakeAmount: 0,
-              stopRetry: true,
+              stopRetry: false,
+              retryable: true,
               reason,
             }
           : row
@@ -873,7 +869,7 @@ const CrownBetting = () => {
                 accountKey: row.id,
                 accountDisplayName: row.accountName,
                 profileId: account?.adsPowerProfileId?.trim() || '',
-                loginUrl: account?.loginUrl || CROWN_LOGIN_URL,
+                loginUrl: resolveCrownLoginUrl(account?.loginUrl),
                 bettingEnabled: true,
               }
             }),
@@ -896,8 +892,7 @@ const CrownBetting = () => {
           availableAccountCount: 0,
           summary: '没有确认成功的下注',
         })
-        if (signalKey) completedSignalKeysRef.current.add(signalKey)
-        message.warning('本轮信号已记录失败，不再重复重试')
+        message.warning('本轮信号执行失败，后续可重新尝试')
         setCurrentExecutionStep((current) => current ? { ...current, stageLabel: '本轮完成' } : null)
         return
       }
@@ -908,13 +903,14 @@ const CrownBetting = () => {
         if (!decision) return row
         const historyVerified = decision.status === 'placed' && decision.crownHistoryVerified === true
         const completedDuplicate = isCompletedDuplicateAutoBettingReason(decision.reason)
+        const completed = historyVerified || completedDuplicate
         return {
           ...row,
           status: historyVerified ? 'passed' as const : 'skipped' as const,
-          statusLabel: historyVerified || completedDuplicate ? '已下注' : '跳过',
+          statusLabel: completed ? '已下注' : '跳过',
           stakeAmount: historyVerified ? row.stakeAmount : 0,
-          stopRetry: true,
-          retryable: false,
+          stopRetry: completed,
+          retryable: !completed,
           reason: decision.crownBetReference
             ? `${formatAutoBettingReason(decision.reason)} ${decision.crownBetReference}`
             : formatAutoBettingReason(decision.reason),
@@ -932,11 +928,13 @@ const CrownBetting = () => {
           ? `下注成功 ${placedRows.length} 个账号`
           : '没有确认成功的下注',
       })
-      if (signalKey) completedSignalKeysRef.current.add(signalKey)
+      if (signalKey && shouldCompleteCrownSignalForAccounts(finalRows, executableRows.map((row) => row.id))) {
+        completedSignalKeysRef.current.add(signalKey)
+      }
       if (placedRows.length > 0) {
         message.success('下注队列已完成，成功记录已写入后端')
       } else {
-        message.warning('本轮信号已执行完毕，不再重复重试')
+        message.warning('本轮信号没有确认成功，后续可重新尝试')
       }
       setCurrentExecutionStep((current) => current ? { ...current, stageLabel: '本轮完成' } : null)
       return
@@ -1428,7 +1426,7 @@ const CrownBetting = () => {
           form={form}
           layout="vertical"
           preserve={false}
-          initialValues={{ loginUrl: CROWN_LOGIN_URL }}
+          initialValues={{ loginUrl: DEFAULT_CROWN_LOGIN_URL }}
         >
           <Form.Item
             label="账号名称"
@@ -1455,10 +1453,10 @@ const CrownBetting = () => {
             name="loginUrl"
             rules={[
               { required: true, message: '请输入登录网站' },
-              { type: 'url', message: '请输入完整网站地址，例如 https://m407.mos077.com/' },
+              { type: 'url', message: '请输入完整网站地址，例如 https://your-crown-host.example/' },
             ]}
           >
-            <Input placeholder="https://m407.mos077.com/" />
+            <Input placeholder="https://your-crown-host.example/" />
           </Form.Item>
           <Form.Item label="备注" name="note">
             <Input.TextArea rows={3} placeholder="可填写用途、归属或异常说明" />

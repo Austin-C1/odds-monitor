@@ -372,7 +372,7 @@ class AutoBettingDecisionServiceTest {
     }
 
     @Test
-    fun `recent failed crown attempt keeps duplicate signal in cooldown`() {
+    fun `recent failed crown attempt does not block duplicate retry`() {
         val request = baseRequest()
         `when`(repository.findTopByDedupeKeyOrderByCreatedAtDesc("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home"))
             .thenReturn(
@@ -401,12 +401,16 @@ class AutoBettingDecisionServiceTest {
                     updatedAt = 995_000
                 )
             )
-        `when`(repository.save(any(AutoBettingIntent::class.java))).thenAnswer { invocation -> invocation.arguments[0] }
+        `when`(repository.existsByDedupeKeyAndStatusIn("default:prematch:premierleaguearsenalvchelsea:handicap:-0.5:home", lockedStatuses()))
+            .thenReturn(false)
+        val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
+        `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
 
         val decision = service.createIntent(request, now = 1_000_000)
 
-        assertEquals("rejected", decision.status)
-        assertEquals("duplicate_recent_crown_attempt", decision.reason)
+        assertEquals("ready", decision.status)
+        assertEquals("accepted", decision.reason)
+        assertEquals(null, captor.value.activeDedupeKey)
     }
 
     @Test

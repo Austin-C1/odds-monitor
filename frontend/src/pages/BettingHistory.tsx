@@ -44,6 +44,8 @@ type StoredCrownAccount = {
   id: string
   displayName: string
   loginName?: string
+  loginUrl?: string
+  adsPowerProfileId?: string
 }
 
 const ACCOUNTS_STORAGE_KEY = 'crown-betting-accounts'
@@ -118,6 +120,7 @@ const BettingHistory = () => {
   const [testBotId, setTestBotId] = useState<number | null>(null)
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [showAllStatuses, setShowAllStatuses] = useState(false)
 
   const loadBotConfigs = async () => {
     setBotLoading(true)
@@ -140,14 +143,15 @@ const BettingHistory = () => {
   const loadRows = async () => {
     setLoading(true)
     try {
+      const accounts = readStoredCrownAccounts()
+      setImportedAccounts(accounts)
       const response = await apiClient.post<ApiResponse<AutoBettingIntentRow[]>>(
-        '/auto-betting/intents/recent',
+        showAllStatuses ? '/auto-betting/intents/recent' : '/auto-betting/intents/verified-placed',
         {},
       )
       if (response.data.code !== 0 || !Array.isArray(response.data.data)) {
         throw new Error(response.data.msg || '投注记录读取失败')
       }
-      setImportedAccounts(readStoredCrownAccounts())
       setRows(response.data.data)
     } catch (error: any) {
       message.error(extractApiErrorMessage(error, '投注记录读取失败'))
@@ -159,7 +163,7 @@ const BettingHistory = () => {
   useEffect(() => {
     void loadRows()
     void loadBotConfigs()
-  }, [])
+  }, [showAllStatuses])
 
   const openBotModal = () => {
     botForm.resetFields()
@@ -286,7 +290,7 @@ const BettingHistory = () => {
       <Space align="center" style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <div>
           <Title level={2} style={{ margin: 0 }}>下注记录</Title>
-          <Text type="secondary">显示成功、失败、待确认、跳过、超时等全部自动投注状态，失败原因直接从后端记录读取。</Text>
+          <Text type="secondary">投注成功后自动写入这里；默认只显示已验证成功的下注，失败、冷却、重复等只在全状态记录里查看。</Text>
         </div>
       </Space>
 
@@ -429,7 +433,14 @@ const BettingHistory = () => {
         </Form>
       </Modal>
 
-      <Card title="下注记录" extra={<Tag color="blue">全状态记录</Tag>}>
+      <Card
+        title="下注记录"
+        extra={(
+          <Button size="small" onClick={() => setShowAllStatuses((value) => !value)}>
+            {showAllStatuses ? '仅验证记录' : '全状态记录'}
+          </Button>
+        )}
+      >
         {filteredRows.length === 0 && !loading ? (
           <Empty description="暂无下注记录" />
         ) : (

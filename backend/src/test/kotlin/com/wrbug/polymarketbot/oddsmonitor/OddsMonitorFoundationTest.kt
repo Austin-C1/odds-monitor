@@ -72,4 +72,13 @@ class OddsMonitorFoundationTest {
         assertTrue(sql.contains("全平台赔率监控皇冠默认比赛清单"))
         assertTrue(sql.contains("美国公开赛冠军杯"))
     }
+    @Test
+    fun `unconfigured crown source does not keep a seeded mirror as runtime default`() {
+        val sql = Files.readString(Path.of("src/main/resources/db/migration/V67__clear_unconfigured_crown_default_mirror.sql"))
+
+        assertTrue(sql.contains("source_key = 'crown'"))
+        assertTrue(sql.contains("query_keyword = NULL"))
+        assertTrue(sql.contains("username IS NULL"))
+        assertTrue(sql.contains("password IS NULL"))
+    }
 }

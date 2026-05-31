@@ -70,7 +70,7 @@ const DataSourceSettings = () => {
                     </Form.Item>
                     {sourceKey === 'crown' && (
                       <Form.Item name={[field.name, 'queryKeyword']} label="平台网址">
-                        <Input placeholder="https://hga038.com/" />
+                        <Input placeholder="https://your-crown-host.example/" />
                       </Form.Item>
                     )}
                     <Form.Item name={[field.name, 'intervalSeconds']} label="采集间隔（秒）" rules={[{ required: true }]}>
