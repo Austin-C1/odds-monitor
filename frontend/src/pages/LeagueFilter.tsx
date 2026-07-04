@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button, Card, Checkbox, Empty, Input, Space, Tag, Typography, message } from 'antd'
 import { PlusOutlined, ReloadOutlined, SaveOutlined, SearchOutlined } from '@ant-design/icons'
 import { apiClient } from '../services/api'
+import { PageShell } from './PageShell'
 
-const { Text, Title } = Typography
+const { Text } = Typography
 
 type ApiResponse<T> = {
   code: number
@@ -20,7 +21,7 @@ type LeagueSelectorPageProps = {
   title?: string
   cardTitle?: string
   description?: string
-  sourceKey?: 'pinnacle' | 'crown'
+  sourceKey?: 'crown'
 }
 
 const LeagueSelectorPage: React.FC<LeagueSelectorPageProps> = ({
@@ -114,16 +115,16 @@ const LeagueSelectorPage: React.FC<LeagueSelectorPageProps> = ({
   }
 
   return (
-    <div>
-      <Space align="center" style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Title level={2} style={{ margin: 0 }}>{title}</Title>
-        <Button icon={<ReloadOutlined />} onClick={loadLeagues} loading={loading}>刷新</Button>
-      </Space>
-
+    <PageShell
+      title={title}
+      description={description}
+      actions={<Button icon={<ReloadOutlined />} onClick={loadLeagues} loading={loading}>刷新</Button>}
+      className="league-selector-page"
+    >
       <Card
         title={cardTitle}
         extra={
-          <Space wrap>
+          <Space wrap className="page-toolbar-group">
             <Input
               prefix={<SearchOutlined />}
               value={searchQuery}
@@ -145,19 +146,22 @@ const LeagueSelectorPage: React.FC<LeagueSelectorPageProps> = ({
         }
       >
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Text type="secondary">{description}</Text>
-          <Space wrap>
-            <Tag color="blue">已选 {selectedLeagues.length}</Tag>
-            <Tag>可选 {allLeagues.length}</Tag>
-            {searchQuery.trim() && <Tag color="processing">搜索结果 {filteredLeagues.length}</Tag>}
-          </Space>
+          <div className="page-toolbar">
+            <Text type="secondary">勾选后立即在本页预览，保存后才影响比赛监控和 TG 推送。</Text>
+            <Space wrap>
+              <Tag color="blue">已选 {selectedLeagues.length}</Tag>
+              <Tag>可选 {allLeagues.length}</Tag>
+              {sourceKey ? <Tag color="green">皇冠</Tag> : <Tag>默认名单</Tag>}
+              {searchQuery.trim() && <Tag color="processing">搜索结果 {filteredLeagues.length}</Tag>}
+            </Space>
+          </div>
           {filteredLeagues.length === 0 ? (
             <Empty description={searchQuery.trim() ? '没有找到联赛' : '暂无联赛，等待采集后刷新'} />
           ) : (
             <Checkbox.Group
               value={selectedLeagues}
               onChange={(values) => setSelectedLeagues(values.map(String))}
-              style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}
+              className="page-league-grid"
             >
               {filteredLeagues.map((league) => (
                 <Checkbox key={league} value={league}>
@@ -168,7 +172,7 @@ const LeagueSelectorPage: React.FC<LeagueSelectorPageProps> = ({
           )}
         </Space>
       </Card>
-    </div>
+    </PageShell>
   )
 }
 

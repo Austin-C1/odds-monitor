@@ -92,6 +92,35 @@ function assertPackagedAssetContains {
     throw "Packaged frontend asset missing $Description ($Needle)."
 }
 
+function Assert-NoLocalStatePackaged {
+    $blockedPatterns = @(
+        'config/*',
+        'logs/*',
+        'backups/*',
+        'updates/*',
+        'output/*',
+        '*.env',
+        '*.log',
+        '*.db',
+        '*.sqlite',
+        '*.sqlite3',
+        '*-db-backup*.sql',
+        '*.tmp',
+        '*.temp'
+    )
+
+    $violations = Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force |
+        ForEach-Object { $_.FullName.Substring($packageDir.Length + 1).Replace('\', '/') } |
+        Where-Object {
+            $relativePath = $_
+            $blockedPatterns | Where-Object { $relativePath -like $_ } | Select-Object -First 1
+        }
+
+    if ($violations) {
+        throw "Package contains local state files: $($violations -join ', ')"
+    }
+}
+
 $version = Get-VersionFromBuildFiles
 $packageDirName = "odds-monitor-full-v$version"
 $packageDir = Join-Path $desktopDir $packageDirName
@@ -152,6 +181,8 @@ New-Item -ItemType Directory -Path (Join-Path $packageDir 'frontend') -Force | O
 Copy-Item -LiteralPath (Join-Path $frontendDir 'dist') -Destination (Join-Path $packageDir 'frontend') -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $packageDir '.tools') -Force | Out-Null
 Copy-Item -LiteralPath $javaHome -Destination (Join-Path $packageDir '.tools') -Recurse -Force
+
+Assert-NoLocalStatePackaged
 
 Assert-TextInFile `
     -Path (Join-Path $packageDir 'start-odds-backend.ps1') `

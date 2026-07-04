@@ -1,11 +1,11 @@
-# Odds Monitor
+# Crown Odds Monitor and Auto Betting
 
-Odds Monitor is a local football odds monitoring and Crown betting automation tool.
+Crown Odds Monitor and Auto Betting is a local tool for collecting Crown football odds, tracking market changes, sending Telegram notifications, and executing/verifying Crown bets through AdsPower profiles.
 
 ## Features
 
-- Pinnacle and Crown odds monitoring.
-- Match, league, platform, handicap, and total market views.
+- Crown odds monitoring.
+- Match, league, handicap, and total market views.
 - Odds-change alerts and Telegram notification templates.
 - Crown account status checks through AdsPower profiles.
 - Auto-betting intent creation from monitor alerts.

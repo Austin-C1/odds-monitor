@@ -15,9 +15,9 @@ const dashboardFor = (status: 'scheduled' | 'live') => ({
           awayTeam: '拉齐奥',
           startTime: Date.now() - 60_000,
           status: 'live',
-          sourceCount: 2,
+          sourceCount: 1,
           alertCount: 0,
-          matchedPlatforms: ['pinnacle', 'crown'],
+          matchedPlatforms: ['crown'],
         }
       : {
           id: 1,
@@ -26,17 +26,15 @@ const dashboardFor = (status: 'scheduled' | 'live') => ({
           awayTeam: '利物浦',
           startTime: Date.now() + 60_000,
           status: 'scheduled',
-          sourceCount: 2,
+          sourceCount: 1,
           alertCount: 0,
-          matchedPlatforms: ['pinnacle', 'crown'],
+          matchedPlatforms: ['crown'],
         },
     metrics: status === 'live'
       ? [
-          { label: 'total over 2.5', value: '1.94', trend: 'up', sourceKey: 'pinnacle' },
           { label: 'total over 2.5', value: '0.98', trend: 'up', sourceKey: 'crown' },
         ]
       : [
-          { label: 'handicap home -0.5', value: '1.92', trend: 'stable', sourceKey: 'pinnacle' },
           { label: 'handicap home -0.5', value: '0.95', trend: 'stable', sourceKey: 'crown' },
         ],
     oddsHistory: [],
@@ -143,7 +141,7 @@ vi.mock('../services/api', () => ({
               marketType: data?.marketType,
               lineValue: data?.lineValue,
               selectionName: data?.selectionName,
-              referenceSourceKey: data?.referenceSourceKey || 'pinnacle',
+              referenceSourceKey: data?.referenceSourceKey || 'crown',
               targetSourceKey: data?.targetSourceKey || 'crown',
               referenceOdds: data?.referenceOdds,
               targetOdds: data?.targetOdds,
@@ -318,11 +316,9 @@ describe('CrownBetting auto betting execution interaction', () => {
 比分：2-1
 
 盘口：让球 主队 0/0.5
-平博：0.71 -> 0.75
 皇冠：0.73 -> 0.76
 
 盘口：让球 客队 0/0.5
-平博：1.17 -> 1.13
 皇冠：1.15 -> 1.12
 
 筛选：动水通过 / 合水通过
@@ -390,11 +386,9 @@ describe('CrownBetting auto betting execution interaction', () => {
 比赛：曼城 vs 利物浦
 
 盘口：让球 主队 -0.5
-平博：0.91 -> 0.95
 皇冠：0.90 -> 0.94
 
 盘口：让球 客队 -0.5
-平博：1.11 -> 1.07
 皇冠：1.10 -> 1.06
 
 筛选：动水通过 / 合水通过
@@ -457,11 +451,9 @@ describe('CrownBetting auto betting execution interaction', () => {
 比分：0-0
 
 盘口：大小球 大球 2.5
-平博：0.95 -> 0.99
 皇冠：0.94 -> 0.98
 
 盘口：大小球 小球 2.5
-平博：1.08 -> 1.03
 皇冠：1.06 -> 1.02
 
 筛选：动水通过 / 合水通过
@@ -623,7 +615,6 @@ describe('CrownBetting auto betting execution interaction', () => {
 比赛：曼城 vs 利物浦
 
 盘口：让球 主队 -0.5
-平博：0.91 -> 0.95
 皇冠：0.90 -> 0.94
 
 筛选：动水通过 / 合水通过
@@ -656,7 +647,7 @@ describe('CrownBetting auto betting execution interaction', () => {
     expect(legacyExecuteCalls()).toHaveLength(0)
   }, 45000)
 
-  it('runs live checks from the latest crown alert rise without pinnacle', async () => {
+  it('runs live checks from the latest crown alert rise', async () => {
     const alertCreatedAt = Date.now()
     mockApiState.alerts = [{ ...mockApiState.alerts[0], createdAt: alertCreatedAt }]
     render(<CrownBetting />)

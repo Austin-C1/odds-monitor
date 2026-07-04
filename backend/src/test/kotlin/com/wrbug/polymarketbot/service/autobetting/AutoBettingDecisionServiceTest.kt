@@ -21,7 +21,7 @@ class AutoBettingDecisionServiceTest {
     @Test
     fun `odds monitor signal creates ready intent when crown price beats reference after risk checks`() {
         val request = baseRequest(
-            referenceOdds = BigDecimal("1.90"),
+            referenceOdds = BigDecimal("0.90"),
             targetOdds = BigDecimal("0.95"),
             stakeAmount = BigDecimal("50.00")
         )
@@ -44,7 +44,7 @@ class AutoBettingDecisionServiceTest {
     }
 
     @Test
-    fun `crown alert rise signal creates ready intent without pinnacle reference`() {
+    fun `crown alert rise signal creates ready intent without external reference`() {
         val request = baseRequest(
             bettingMode = "live",
             matchPhase = "live",
@@ -245,7 +245,7 @@ class AutoBettingDecisionServiceTest {
 
     @Test
     fun `weak crown edge is accepted when target water is above the configured floor`() {
-        val request = baseRequest(referenceOdds = BigDecimal("1.94"), targetOdds = BigDecimal("0.95"))
+        val request = baseRequest(referenceOdds = BigDecimal("0.94"), targetOdds = BigDecimal("0.95"))
         val captor = ArgumentCaptor.forClass(AutoBettingIntent::class.java)
         `when`(repository.save(captor.capture())).thenAnswer { invocation -> invocation.arguments[0] }
 
@@ -578,9 +578,9 @@ class AutoBettingDecisionServiceTest {
                     marketType = "total",
                     lineValue = "2.5",
                     selectionName = "大球",
-                    referenceSourceKey = "pinnacle",
+                    referenceSourceKey = "crown",
                     targetSourceKey = "crown",
-                    referenceOdds = BigDecimal("1.92000000"),
+                    referenceOdds = BigDecimal("0.92000000"),
                     targetOdds = BigDecimal("0.95000000"),
                     targetDecimalOdds = BigDecimal("1.95000000"),
                     decimalEdge = BigDecimal("0.03000000"),
@@ -617,9 +617,9 @@ class AutoBettingDecisionServiceTest {
                     marketType = "total",
                     lineValue = "2.5",
                     selectionName = "大球",
-                    referenceSourceKey = "pinnacle",
+                    referenceSourceKey = "crown",
                     targetSourceKey = "crown",
-                    referenceOdds = BigDecimal("1.92000000"),
+                    referenceOdds = BigDecimal("0.92000000"),
                     targetOdds = BigDecimal("0.95000000"),
                     targetDecimalOdds = BigDecimal("1.95000000"),
                     decimalEdge = BigDecimal("0.03000000"),
@@ -654,9 +654,9 @@ class AutoBettingDecisionServiceTest {
         matchTitle: String = "Arsenal v Chelsea",
         marketType: String = "handicap",
         selectionName: String = "home",
-        referenceSourceKey: String = "pinnacle",
+        referenceSourceKey: String = "crown",
         targetSourceKey: String = "crown",
-        referenceOdds: BigDecimal = BigDecimal("1.90"),
+        referenceOdds: BigDecimal = BigDecimal("0.90"),
         targetOdds: BigDecimal = BigDecimal("0.95"),
         minimumTargetOdds: BigDecimal? = null,
         oddsChangeDirection: String? = null,

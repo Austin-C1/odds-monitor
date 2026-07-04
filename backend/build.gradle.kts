@@ -50,10 +50,6 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("com.fasterxml.jackson.core:jackson-databind")
 
-    // HTML parsing and browser automation for odds collectors
-    implementation("org.jsoup:jsoup:1.17.2")
-    implementation("com.microsoft.playwright:playwright:1.49.0")
-    
     // JWT
     implementation("io.jsonwebtoken:jjwt-api:0.12.3")
     implementation("io.jsonwebtoken:jjwt-impl:0.12.3")

@@ -28,7 +28,6 @@ interface LayoutProps {
 const menuItems: MenuProps['items'] = [
   { key: '/odds-monitor', icon: <BarChartOutlined />, label: '比赛监控' },
   { key: '/default-tracking', icon: <FilterOutlined />, label: '默认追踪' },
-  { key: '/pinnacle-league-filter', icon: <FilterOutlined />, label: '平博比赛选择' },
   { key: '/crown-league-filter', icon: <FilterOutlined />, label: '皇冠比赛选择' },
   { key: '/crown-betting', icon: <WalletOutlined />, label: '皇冠投注' },
   { key: '/betting-history', icon: <HistoryOutlined />, label: '下注记录' },

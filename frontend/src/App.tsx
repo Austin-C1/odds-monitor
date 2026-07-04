@@ -11,7 +11,6 @@ const Login = lazy(() => import('./pages/Login'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const OddsMonitor = lazy(() => import('./pages/OddsMonitor'))
 const DefaultTracking = lazy(() => import('./pages/DefaultTracking'))
-const PinnacleLeagueFilter = lazy(() => import('./pages/PinnacleLeagueFilter'))
 const CrownLeagueFilter = lazy(() => import('./pages/CrownLeagueFilter'))
 const CrownBetting = lazy(() => import('./pages/CrownBetting'))
 const BettingHistory = lazy(() => import('./pages/BettingHistory'))
@@ -106,7 +105,6 @@ function App() {
           <Route path="/" element={<ProtectedRoute><Navigate to="/odds-monitor" replace /></ProtectedRoute>} />
           <Route path="/odds-monitor" element={<ProtectedRoute><LazyRoute><OddsMonitor /></LazyRoute></ProtectedRoute>} />
           <Route path="/default-tracking" element={<ProtectedRoute><LazyRoute><DefaultTracking /></LazyRoute></ProtectedRoute>} />
-          <Route path="/pinnacle-league-filter" element={<ProtectedRoute><LazyRoute><PinnacleLeagueFilter /></LazyRoute></ProtectedRoute>} />
           <Route path="/crown-league-filter" element={<ProtectedRoute><LazyRoute><CrownLeagueFilter /></LazyRoute></ProtectedRoute>} />
           <Route path="/crown-betting" element={<ProtectedRoute><LazyRoute><CrownBetting /></LazyRoute></ProtectedRoute>} />
           <Route path="/betting-history" element={<ProtectedRoute><LazyRoute><BettingHistory /></LazyRoute></ProtectedRoute>} />

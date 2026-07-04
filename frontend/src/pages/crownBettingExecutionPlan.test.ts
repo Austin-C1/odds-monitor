@@ -329,7 +329,7 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
     )).toEqual([freshSignal])
   })
 
-  it('parses crown alert signal candidates from default telegram blocks with pinnacle before crown', () => {
+  it('parses crown alert signal candidates from default telegram crown blocks', () => {
     const candidates = extractCrownAlertSignalCandidates([
       {
         id: 1002,
@@ -339,11 +339,9 @@ ${zh.time}\uff1a2026-05-14 16:04:10`,
 ${zh.league}\uff1a${zh.epl}
 ${zh.match}\uff1a${zh.manCity} vs ${zh.liverpool}
 ${zh.market}\uff1a${zh.handicap} ${zh.home} -0.5
-\u5e73\u535a\uff1a0.91 -> 0.95
 ${zh.crown}\uff1a0.90 -> 0.94
 
 ${zh.market}\uff1a${zh.handicap} ${zh.away} -0.5
-\u5e73\u535a\uff1a0.92 -> 0.88
 ${zh.crown}\uff1a1.10 -> 1.06
 
 ${zh.filter}\uff1a\u52a8\u6c34\u901a\u8fc7 / \u5408\u6c34\u901a\u8fc7

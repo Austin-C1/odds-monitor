@@ -42,8 +42,9 @@ function Get-CurrentBackendJar {
 }
 $jarFile = Get-CurrentBackendJar
 $jarPath = if ($jarFile) { $jarFile.FullName } else { Join-Path $backendDir 'build\libs\odds-monitor-backend.jar' }
-$outLog = Join-Path $rootDir 'backend-live.out.log'
-$errLog = Join-Path $rootDir 'backend-live.err.log'
+$logDir = Join-Path $rootDir 'logs'
+$outLog = Join-Path $logDir 'backend-live.out.log'
+$errLog = Join-Path $logDir 'backend-live.err.log'
 $localConfig = Join-Path $rootDir 'config\local.env.ps1'
 $sourcePaths = @(
     (Join-Path $backendDir 'src'),
@@ -93,6 +94,8 @@ function Set-TrimmedEnv {
 if (-not (Test-Path $javaExe)) {
     throw "Java runtime not found: $javaExe"
 }
+
+New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 
 function Get-NewestWriteTime {
     param([string[]]$Paths)

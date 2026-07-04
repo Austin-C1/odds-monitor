@@ -1,6 +1,7 @@
 package com.wrbug.polymarketbot.service.autobetting
 
 import com.wrbug.polymarketbot.dto.AdsPowerCrownSessionCandidateDto
+import com.wrbug.polymarketbot.service.autobetting.crown.AdsPowerCrownProfileMatcher
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test

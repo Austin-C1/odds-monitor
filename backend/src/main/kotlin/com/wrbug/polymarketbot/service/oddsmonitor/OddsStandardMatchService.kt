@@ -165,7 +165,6 @@ class OddsStandardMatchService(
     private fun startTimeSourcePriority(sourceKey: String): Int {
         return when (sourceKey) {
             "crown" -> 0
-            "pinnacle" -> 1
             else -> 2
         }
     }

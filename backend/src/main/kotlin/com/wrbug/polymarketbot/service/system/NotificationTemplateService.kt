@@ -285,7 +285,7 @@ class NotificationTemplateService(
             "account_key" to "crown-account-1",
             "match_title" to "Arsenal vs Chelsea",
             "league_name" to "英格兰超级联赛",
-            "market_lines" to "盘口：让球 主队 -0.5\n平博：0.91 -> 0.86\n皇冠：0.94 -> 0.90",
+            "market_lines" to "盘口：让球 主队 -0.5\n皇冠：0.94 -> 0.90",
             "filter_summary" to "动水通过 / 合水通过",
             "elapsed_minutes" to "第 37 分钟",
             "score_text" to "1-0",

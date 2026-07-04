@@ -10,9 +10,9 @@ describe('odds monitor match search', () => {
       awayTeam: '红星',
       startTime: 1777752000000,
       status: '赛前',
-      sourceCount: 2,
+      sourceCount: 1,
       alertCount: 0,
-      matchedPlatforms: ['pinnacle', 'crown'],
+      matchedPlatforms: ['crown'],
     },
     {
       id: 2,

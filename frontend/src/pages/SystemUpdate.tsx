@@ -12,6 +12,7 @@ import { apiClient } from '../services/api'
 import { getVersionText } from '../utils'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { PageShell } from './PageShell'
 
 
 interface UpdateInfo {
@@ -220,6 +221,11 @@ const SystemUpdate: React.FC = () => {
     }
 
     return (
+        <PageShell
+            title={t('systemUpdate.title')}
+            description="版本检查、更新执行、进度状态和历史数据大清理。"
+            className="system-update-page"
+        >
         <Card
             title={
                 <Space>
@@ -235,24 +241,16 @@ const SystemUpdate: React.FC = () => {
         >
             <Space direction="vertical" style={{ width: '100%' }} size="large">
                 {/* 当前版本信息 */}
-                <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '16px',
-                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                    borderRadius: '8px',
-                    color: '#fff'
-                }}>
+                <div className="system-version-panel">
                     <div>
-                        <div style={{ fontSize: '13px', opacity: 0.9, marginBottom: '4px' }}>
+                        <div className="system-version-label">
                             {t('systemUpdate.currentVersion')}
                         </div>
-                        <div style={{ fontSize: '20px', fontWeight: 600 }}>
+                        <div className="system-version-value">
                             v{currentVersion}
                         </div>
                     </div>
-                    <CheckCircleOutlined style={{ fontSize: '32px', opacity: 0.8 }} />
+                    <CheckCircleOutlined className="system-version-icon" />
                 </div>
 
                 {/* 更新状态 */}
@@ -588,6 +586,7 @@ const SystemUpdate: React.FC = () => {
                 )}
             </Space>
         </Card>
+        </PageShell>
     )
 }
 

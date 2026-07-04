@@ -83,6 +83,35 @@ function assertPackagedAssetContains {
     throw "Packaged frontend asset missing $Description ($Needle)."
 }
 
+function Assert-NoLocalStatePackaged {
+    $blockedPatterns = @(
+        'config/*',
+        'logs/*',
+        'backups/*',
+        'updates/*',
+        'output/*',
+        '*.env',
+        '*.log',
+        '*.db',
+        '*.sqlite',
+        '*.sqlite3',
+        '*-db-backup*.sql',
+        '*.tmp',
+        '*.temp'
+    )
+
+    $violations = Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force |
+        ForEach-Object { $_.FullName.Substring($packageDir.Length + 1).Replace('\', '/') } |
+        Where-Object {
+            $relativePath = $_
+            $blockedPatterns | Where-Object { $relativePath -like $_ } | Select-Object -First 1
+        }
+
+    if ($violations) {
+        throw "Package contains local state files: $($violations -join ', ')"
+    }
+}
+
 $version = Get-VersionFromBuildFiles
 $packageDirName = "odds-monitor-update-v$version"
 $packageDir = Join-Path $desktopDir $packageDirName
@@ -141,6 +170,8 @@ Copy-RequiredFile -Source (Join-Path $rootDir 'scripts\serve-odds-frontend.ps1')
 
 New-Item -ItemType Directory -Path (Join-Path $packageDir 'frontend') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $frontendDir 'dist') -Destination (Join-Path $packageDir 'frontend') -Recurse -Force
+
+Assert-NoLocalStatePackaged
 
 assertPackagedAssetContains -Needle (Get-Utf8StringFromBase64 '5rWL6K+V5qih5byP') -Description 'notification test mode'
 assertPackagedAssetContains -Needle (Get-Utf8StringFromBase64 '5oqV5rOo5oiQ5Yqf5py65Zmo5Lq6') -Description 'betting success bot'

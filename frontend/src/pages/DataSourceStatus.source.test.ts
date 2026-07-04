@@ -15,8 +15,8 @@ describe('data source status source', () => {
 
   it('does not render Polymarket status rows from stale backend data', () => {
     expect(source).toContain('SUPPORTED_SOURCE_KEYS')
-    expect(source).toContain("'pinnacle'")
     expect(source).toContain("'crown'")
+    expect(source).not.toContain("'pinnacle'")
     expect(source).not.toContain("'polymarket'")
   })
 })

@@ -55,8 +55,9 @@ import {
   getDefaultNotificationTemplateVariables,
   getVisibleNotificationTemplateTypes,
 } from './notificationTemplateOptions'
+import { PageShell } from './PageShell'
 
-const { Paragraph, Text, Title } = Typography
+const { Paragraph, Text } = Typography
 
 const variableTagStyle: React.CSSProperties = {
   display: 'inline-flex',
@@ -1195,13 +1196,11 @@ const NotificationSettingsPage: React.FC = () => {
   ]
 
   return (
-    <div>
-      <div style={{ marginBottom: 16 }}>
-        <Title level={2} style={{ margin: 0 }}>
-          {t('notificationSettings.title')}
-        </Title>
-      </div>
-
+    <PageShell
+      title={t('notificationSettings.title')}
+      description="机器人配置、滚球全局筛选、模板配置和变量。"
+      className="notification-settings-page"
+    >
       <Card
         title={
           <Space>
@@ -1432,7 +1431,7 @@ const NotificationSettingsPage: React.FC = () => {
           {renderLiveObservationControls()}
         </Space>
       </Modal>
-    </div>
+    </PageShell>
   )
 }
 
