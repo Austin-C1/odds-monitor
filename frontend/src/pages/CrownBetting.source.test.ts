@@ -1,13 +1,31 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 describe('crown betting pages source', () => {
   const pagePath = join(process.cwd(), 'src', 'pages', 'CrownBetting.tsx')
+  const accountModulePath = join(process.cwd(), 'src', 'pages', 'crownBettingAccounts.ts')
+  const settingsModulePath = join(process.cwd(), 'src', 'pages', 'crownBettingSettings.ts')
+  const typesModulePath = join(process.cwd(), 'src', 'pages', 'crownBettingTypes.ts')
+  const componentDir = join(process.cwd(), 'src', 'pages', 'crown-betting')
   const historyPath = join(process.cwd(), 'src', 'pages', 'BettingHistory.tsx')
   const backgroundRunnerPath = join(process.cwd(), 'src', 'components', 'CrownBettingBackgroundRunner.tsx')
   const appSource = readFileSync(join(process.cwd(), 'src', 'App.tsx'), 'utf8')
   const layoutSource = readFileSync(join(process.cwd(), 'src', 'components', 'Layout.tsx'), 'utf8')
+  const readSourcesIn = (dir: string): string[] => readdirSync(dir)
+    .flatMap((entry) => {
+      const fullPath = join(dir, entry)
+      return statSync(fullPath).isDirectory() ? readSourcesIn(fullPath) : [fullPath]
+    })
+    .filter((path) => path.endsWith('.ts') || path.endsWith('.tsx'))
+
+  const readCrownBettingModuleSource = () => [
+    pagePath,
+    ...readSourcesIn(componentDir),
+    accountModulePath,
+    settingsModulePath,
+    typesModulePath,
+  ].map((path) => readFileSync(path, 'utf8')).join('\n')
 
   it('adds crown betting and betting history routes below crown league selection', () => {
     expect(appSource).toContain("import('./pages/CrownBetting')")
@@ -25,7 +43,7 @@ describe('crown betting pages source', () => {
 
   it('lets crown betting add AdsPower accounts and detect account status and balance', () => {
     expect(existsSync(pagePath)).toBe(true)
-    const source = readFileSync(pagePath, 'utf8')
+    const source = readCrownBettingModuleSource()
 
     expect(source).toContain('皇冠投注')
     expect(source).toContain('监控保持本地浏览器直连，投注检测和执行只走 AdsPower 环境。')
@@ -77,7 +95,7 @@ describe('crown betting pages source', () => {
     expect(source).toContain('/auto-betting/adspower/start-profile')
     expect(source).toContain('/auto-betting/adspower/crown-session')
     expect(source).toContain('/auto-betting/adspower/crown-session/match')
-    expect(source).toContain("import { extractApiErrorMessage } from '../utils/apiError'")
+    expect(source).toContain("import { extractApiErrorMessage } from '../../utils/apiError'")
     expect(source).toContain('extractApiErrorMessage(error,')
     expect(source).toContain('matchAdsPowerCrownSession')
     expect(source).toContain('/auto-betting/signals/odds-monitor/execute-crown-queue')
@@ -125,7 +143,7 @@ describe('crown betting pages source', () => {
   })
 
   it('does not hard-code a crown mirror domain in betting runtime code', () => {
-    const pageSource = readFileSync(pagePath, 'utf8')
+    const pageSource = readCrownBettingModuleSource()
     const backgroundRunnerSource = readFileSync(backgroundRunnerPath, 'utf8')
     const runtimeSource = `${pageSource}\n${backgroundRunnerSource}`
 
@@ -136,7 +154,7 @@ describe('crown betting pages source', () => {
   })
 
   it('selects the next runnable signal before showing running state', () => {
-    const source = readFileSync(pagePath, 'utf8')
+    const source = readCrownBettingModuleSource()
     const signalSelectionIndex = source.indexOf('selectNextCrownAlertSignal(qualifiedCandidates')
     const runningStateIndex = source.indexOf('setExecutionRunning(true)')
 
@@ -147,7 +165,7 @@ describe('crown betting pages source', () => {
   })
 
   it('does not seed hard-coded crown accounts into production storage', () => {
-    const source = readFileSync(pagePath, 'utf8')
+    const source = readCrownBettingModuleSource()
 
     expect(source).not.toContain('SHOULD_SEED_BETTING_ACCOUNTS')
     expect(source).not.toContain('seededBettingAccounts')
@@ -157,7 +175,7 @@ describe('crown betting pages source', () => {
 
   it('keeps crown account table fields grouped and compact', () => {
     expect(existsSync(pagePath)).toBe(true)
-    const source = readFileSync(pagePath, 'utf8')
+    const source = readCrownBettingModuleSource()
 
     expect(source).toContain('账号与 AdsPower 环境')
     expect(source).toContain('账号状态')

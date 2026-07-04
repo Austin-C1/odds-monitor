@@ -79,7 +79,7 @@ class OddsMatchMatcherTest {
     }
 
     @Test
-    fun `matches pinnacle and crown names from the same latvia match`() {
+    fun `matches alternate and crown names from the same latvia match`() {
         val crown = OddsMatchCandidate(
             id = 5,
             leagueName = "拉脱维亚超级联赛",
@@ -87,7 +87,7 @@ class OddsMatchMatcherTest {
             awayTeam = "奥格雷联",
             startTime = Instant.parse("2026-05-07T15:00:00Z").toEpochMilli()
         )
-        val pinnacle = OddsMatchCandidate(
+        val alternate = OddsMatchCandidate(
             id = null,
             leagueName = "拉脱维亚 - 超级联赛",
             homeTeam = "图库姆斯2000‎",
@@ -95,14 +95,14 @@ class OddsMatchMatcherTest {
             startTime = Instant.parse("2026-05-07T15:00:00Z").toEpochMilli()
         )
 
-        val result = OddsMatchMatcher.score(crown, pinnacle)
+        val result = OddsMatchMatcher.score(crown, alternate)
 
         assertTrue(result.score >= 0.85, "score was ${result.score}")
         assertFalse(result.reversed)
     }
 
     @Test
-    fun `matches pinnacle and crown translated reserve team names`() {
+    fun `matches alternate and crown translated reserve team names`() {
         val crown = OddsMatchCandidate(
             id = 6,
             leagueName = "挪威丙组联赛",
@@ -110,7 +110,7 @@ class OddsMatchMatcherTest {
             awayTeam = "奥特B队",
             startTime = Instant.parse("2026-05-07T15:00:00Z").toEpochMilli()
         )
-        val pinnacle = OddsMatchCandidate(
+        val alternate = OddsMatchCandidate(
             id = null,
             leagueName = "挪威 - 丙级联赛第4组",
             homeTeam = "豪格松二队‎",
@@ -118,22 +118,22 @@ class OddsMatchMatcherTest {
             startTime = Instant.parse("2026-05-07T15:00:00Z").toEpochMilli()
         )
 
-        val result = OddsMatchMatcher.score(crown, pinnacle)
+        val result = OddsMatchMatcher.score(crown, alternate)
 
         assertTrue(result.score >= 0.65, "score was ${result.score}")
         assertFalse(result.reversed)
     }
 
     @Test
-    fun `matches observed pinnacle and crown translated aliases`() {
+    fun `matches observed alternate and crown translated aliases`() {
         data class MatchCase(
             val name: String,
             val crownLeague: String,
             val crownHome: String,
             val crownAway: String,
-            val pinnacleLeague: String,
-            val pinnacleHome: String,
-            val pinnacleAway: String
+            val alternateLeague: String,
+            val alternateHome: String,
+            val alternateAway: String
         )
 
         val startTime = Instant.parse("2026-05-07T16:00:00Z").toEpochMilli()
@@ -163,9 +163,9 @@ class OddsMatchMatcherTest {
                 ),
                 OddsMatchCandidate(
                     id = null,
-                    leagueName = case.pinnacleLeague,
-                    homeTeam = case.pinnacleHome,
-                    awayTeam = case.pinnacleAway,
+                    leagueName = case.alternateLeague,
+                    homeTeam = case.alternateHome,
+                    awayTeam = case.alternateAway,
                     startTime = startTime
                 )
             )

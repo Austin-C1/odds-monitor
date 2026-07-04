@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Form, Input, InputNumber, message, Space, Switch, Typography } from 'antd'
+import { Button, Card, Form, Input, InputNumber, message, Switch, Typography } from 'antd'
 import { apiClient } from '../services/api'
+import { PageShell } from './PageShell'
 
-const { Title, Text } = Typography
-const SUPPORTED_SOURCE_KEYS = new Set(['pinnacle', 'crown'])
+const { Text } = Typography
+const SUPPORTED_SOURCE_KEYS = new Set(['crown'])
 
 type ApiResponse<T> = { code: number; data: T; msg: string }
 type DataSourceConfig = {
@@ -43,16 +44,16 @@ const DataSourceSettings = () => {
   }
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <div>
-        <Title level={3} style={{ margin: 0 }}>数据源设置</Title>
-        <Text type="secondary">启用后后端会按间隔自动采集，皇冠需要填写平台网址、账号和密码。</Text>
-      </div>
-
+    <PageShell
+      title="数据源设置"
+      description="启用后后端会按间隔自动采集，皇冠需要填写平台网址、账号和密码。"
+      actions={<Button type="primary" onClick={save} loading={saving}>保存</Button>}
+      className="data-source-settings-page"
+    >
       <Form form={form} layout="vertical" disabled={loading}>
         <Form.List name="configs">
           {(fields) => (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(240px, 1fr))', gap: 16 }}>
+            <div className="page-form-grid">
               {fields.map((field) => {
                 const sourceKey = form.getFieldValue(['configs', field.name, 'sourceKey'])
                 return (
@@ -84,10 +85,10 @@ const DataSourceSettings = () => {
         </Form.List>
       </Form>
 
-      <Button type="primary" onClick={save} loading={saving} style={{ width: 120 }}>
-        保存
-      </Button>
-    </Space>
+      <Text type="secondary" className="page-panel-note">
+        保存后由后端采集调度按间隔执行；本页不展示采集结果，状态请到数据源状态页查看。
+      </Text>
+    </PageShell>
   )
 }
 

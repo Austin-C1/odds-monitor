@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Typography } from 'antd'
+import { Card, Table, Tag } from 'antd'
 import { apiClient } from '../services/api'
+import { PageShell } from './PageShell'
 
-const { Title, Text } = Typography
-const SUPPORTED_SOURCE_KEYS = new Set(['pinnacle', 'crown'])
+const SUPPORTED_SOURCE_KEYS = new Set(['crown'])
 const STATUS_REFRESH_INTERVAL_MS = 60_000
 
 type ApiResponse<T> = { code: number; data: T; msg: string }
@@ -67,11 +67,14 @@ const DataSourceStatus = () => {
   }, [])
 
   return (
-    <Card>
-      <Title level={3} style={{ marginTop: 0 }}>数据源状态</Title>
-      <Text type="secondary">显示各平台最近一次采集状态。真实采集器接入后这里会自动更新。</Text>
+    <PageShell
+      title="数据源状态"
+      description="只展示真实采集器接入后的最近采集状态。"
+      actions={<Tag color="green">皇冠</Tag>}
+      className="data-source-status-page"
+    >
+      <Card>
       <Table
-        style={{ marginTop: 16 }}
         rowKey="sourceKey"
         loading={loading}
         dataSource={rows}
@@ -86,7 +89,8 @@ const DataSourceStatus = () => {
           { title: '失败原因', dataIndex: 'failureReason', render: (value?: string) => value || '-' },
         ]}
       />
-    </Card>
+      </Card>
+    </PageShell>
   )
 }
 

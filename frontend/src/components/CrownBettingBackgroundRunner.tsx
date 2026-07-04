@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react'
 import { apiClient } from '../services/api'
-import type { ApiResponse } from '../types'
 import {
   autoBettingSignalKey,
   buildCrownAlertSignalQueue,
@@ -10,7 +9,6 @@ import {
   isCompletedDuplicateAutoBettingReason,
   selectNextCrownAlertSignal,
   shouldCompleteCrownSignalForAccounts,
-  type AutoBettingMode,
   type AutoBettingSignal,
   type OddsAlertRecord,
 } from '../pages/crownBettingExecutionPlan'
@@ -18,164 +16,30 @@ import {
   acquireCrownBettingAutomationLock,
   releaseCrownBettingAutomationLock,
 } from '../pages/crownBettingAutomationLock'
-
-const ACCOUNTS_STORAGE_KEY = 'crown-betting-accounts'
-const SETTINGS_STORAGE_KEY = 'crown-betting-automation-settings'
-const POLL_INTERVAL_MS = 5000
-const ACCOUNT_EXECUTION_TIMEOUT_MS = 30000
-const DEFAULT_CROWN_LOGIN_URL = (import.meta.env.VITE_CROWN_LOGIN_URL || '').trim()
-
-type StoredAutomationSettings = {
-  autoMode: AutoBettingMode
-  autoEnabled: boolean
-  perAccountLimit: number
-  betLimit: number
-  minimumBetOdds: number
-  signalMaxAgeSeconds: number
-}
-
-type StoredCrownAccount = {
-  id: string
-  displayName: string
-  loginName: string
-  loginUrl?: string
-  adsPowerProfileId?: string
-  adsPowerStatus?: 'unlinked' | 'starting' | 'opened' | 'closed' | 'error'
-  bettingEnabled?: boolean
-  status: 'unchecked' | 'checking' | 'success' | 'error'
-  balance?: number | null
-  currency?: string
-}
-
-type NotificationConfigResponse = {
-  enabled?: boolean
-  config?: {
-    data?: {
-      monitorModeEnabled?: boolean
-      liveOnlyModeEnabled?: boolean
-    }
-    monitorModeEnabled?: boolean
-    liveOnlyModeEnabled?: boolean
-  }
-}
-
-type SystemConfigResponse = {
-  autoBettingEnabled?: boolean
-}
-
-type AutoBettingDecisionResponse = {
-  id?: number
-  status: string
-  reason?: string
-  crownHistoryVerified?: boolean
-  crownBetReference?: string | null
-  accountKey?: string
-}
-
-const resolveCrownLoginUrl = (loginUrl?: string | null) => loginUrl?.trim() || DEFAULT_CROWN_LOGIN_URL
-
-const normalizeNumberSetting = (
-  value: unknown,
-  fallback: number,
-  min: number,
-  max?: number,
-) => {
-  const numericValue = Number(value)
-  if (!Number.isFinite(numericValue)) return fallback
-  const lowerBoundedValue = Math.max(min, numericValue)
-  return typeof max === 'number' ? Math.min(max, lowerBoundedValue) : lowerBoundedValue
-}
-
-const readStoredAutomationSettings = (): StoredAutomationSettings => {
-  try {
-    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY)
-    const parsed = raw ? JSON.parse(raw) as Partial<StoredAutomationSettings> : {}
-    return {
-      autoMode: parsed.autoMode === 'live' ? 'live' : 'prematch',
-      autoEnabled: parsed.autoEnabled === true,
-      perAccountLimit: normalizeNumberSetting(parsed.perAccountLimit, 50, 50, 500),
-      betLimit: normalizeNumberSetting(parsed.betLimit, 100, 10),
-      minimumBetOdds: normalizeNumberSetting(parsed.minimumBetOdds, 0.70, 0.01),
-      signalMaxAgeSeconds: normalizeNumberSetting(parsed.signalMaxAgeSeconds, 360, 1, 3600),
-    }
-  } catch {
-    return {
-      autoMode: 'prematch',
-      autoEnabled: false,
-      perAccountLimit: 50,
-      betLimit: 100,
-      minimumBetOdds: 0.70,
-      signalMaxAgeSeconds: 360,
-    }
-  }
-}
-
-const writeStoredAutomationSettings = (settings: StoredAutomationSettings) => {
-  window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
-}
-
-const readStoredAccounts = (): StoredCrownAccount[] => {
-  try {
-    const raw = window.localStorage.getItem(ACCOUNTS_STORAGE_KEY)
-    const parsed = raw ? JSON.parse(raw) as StoredCrownAccount[] : []
-    return Array.isArray(parsed)
-      ? parsed.filter((account) => account?.id && account.displayName && account.loginName)
-      : []
-  } catch {
-    return []
-  }
-}
-
-const monitorModeFromNotificationConfigs = (configs: NotificationConfigResponse[]): AutoBettingMode | null => {
-  const monitorConfig = configs.find((config) => {
-    if (config.enabled === false) return false
-    const data = config.config?.data || config.config
-    return data?.monitorModeEnabled === true
-  })
-  const data = monitorConfig?.config?.data || monitorConfig?.config
-  if (!data || typeof data.liveOnlyModeEnabled !== 'boolean') {
-    return null
-  }
-  return data.liveOnlyModeEnabled ? 'live' : 'prematch'
-}
-
-const readMonitorMode = async (fallbackMode: AutoBettingMode): Promise<AutoBettingMode> => {
-  try {
-    const response = await apiClient.post<ApiResponse<NotificationConfigResponse[]>>(
-      '/system/notifications/configs/list',
-      {},
-    )
-    if (response.data.code !== 0 || !Array.isArray(response.data.data)) {
-      return fallbackMode
-    }
-    return monitorModeFromNotificationConfigs(response.data.data) || fallbackMode
-  } catch {
-    return fallbackMode
-  }
-}
-
-const readBackendAutoBettingEnabled = async (): Promise<boolean> => {
-  try {
-    const response = await apiClient.post<ApiResponse<SystemConfigResponse>>('/system/config/get', {})
-    return response.data.code === 0 && response.data.data?.autoBettingEnabled === true
-  } catch {
-    return false
-  }
-}
-
-const toExecutionAccounts = (accounts: StoredCrownAccount[]) => accounts.map((account) => ({
-  id: account.id,
-  displayName: account.displayName,
-  status: account.status,
-  adsPowerProfileId: account.adsPowerProfileId,
-  adsPowerStatus: account.adsPowerStatus,
-  bettingEnabled: account.bettingEnabled === true,
-}))
+import {
+  readStoredAccounts,
+  resolveCrownLoginUrl,
+  toExecutionAccounts,
+} from '../pages/crownBettingAccounts'
+import {
+  AUTO_BETTING_ACCOUNT_EXECUTION_TIMEOUT_MS as ACCOUNT_EXECUTION_TIMEOUT_MS,
+  AUTO_BETTING_POLL_INTERVAL_MS as POLL_INTERVAL_MS,
+  persistAutomationSettings as writeStoredAutomationSettings,
+  readBackendAutoBettingEnabled,
+  readMonitorMode,
+  readStoredAutomationSettings,
+} from '../pages/crownBettingSettings'
+import type {
+  ApiResponse,
+  AutoBettingDecisionResponse,
+  AutomationSettings,
+  CrownAccount,
+} from '../pages/crownBettingTypes'
 
 const runQueuedAutomationForSignal = async (
   signal: AutoBettingSignal,
-  settings: StoredAutomationSettings,
-  accounts: StoredCrownAccount[],
+  settings: AutomationSettings,
+  accounts: CrownAccount[],
   queuePosition?: number,
   queueTotal?: number,
 ): Promise<{ succeeded: boolean; stopRetry: boolean; completed: boolean }> => {
@@ -264,8 +128,8 @@ const runQueuedAutomationForSignal = async (
 
 const runAutomationForSignal = async (
   signal: AutoBettingSignal,
-  settings: StoredAutomationSettings,
-  accounts: StoredCrownAccount[],
+  settings: AutomationSettings,
+  accounts: CrownAccount[],
   queuePosition?: number,
   queueTotal?: number,
 ): Promise<{ succeeded: boolean; stopRetry: boolean; completed: boolean }> => {

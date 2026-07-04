@@ -1,6 +1,7 @@
 package com.wrbug.polymarketbot.service.autobetting
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.wrbug.polymarketbot.service.autobetting.crown.CrownSessionPageAnalyzer
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.assertEquals

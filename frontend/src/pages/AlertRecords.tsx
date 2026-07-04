@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Typography, message } from 'antd'
+import { Card, Table, Tag, message } from 'antd'
 import { apiClient } from '../services/api'
-
-const { Title, Text } = Typography
+import { PageShell } from './PageShell'
 
 type ApiResponse<T> = { code: number; data: T; msg: string }
 type AlertRecord = {
@@ -49,11 +48,14 @@ const AlertRecords = () => {
   }, [])
 
   return (
-    <Card>
-      <Title level={3} style={{ marginTop: 0 }}>告警记录</Title>
-      <Text type="secondary">底座阶段预留盘口变化、赔率快速变化、平台差异和数据源异常。</Text>
+    <PageShell
+      title="告警记录"
+      description="只看赔率变化、盘口变化、平台差异和数据源异常记录。"
+      actions={<Tag color="blue">odds_change</Tag>}
+      className="alert-records-page"
+    >
+      <Card>
       <Table
-        style={{ marginTop: 16 }}
         rowKey="id"
         loading={loading}
         dataSource={rows}
@@ -68,7 +70,8 @@ const AlertRecords = () => {
           { title: '时间', dataIndex: 'createdAt', render: (value: number) => new Date(value).toLocaleString('zh-CN') },
         ]}
       />
-    </Card>
+      </Card>
+    </PageShell>
   )
 }
 

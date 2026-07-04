@@ -1,4 +1,4 @@
-export type OddsMonitorSearchPlatform = 'pinnacle' | 'crown'
+export type OddsMonitorSearchPlatform = 'crown'
 
 export type OddsMonitorSearchMatch = {
   id: number
@@ -9,7 +9,6 @@ export type OddsMonitorSearchMatch = {
 }
 
 const platformSearchLabels: Record<OddsMonitorSearchPlatform, string> = {
-  pinnacle: '平博 pinnacle',
   crown: '皇冠 crown',
 }
 

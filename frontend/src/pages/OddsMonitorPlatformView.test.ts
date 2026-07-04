@@ -11,14 +11,14 @@ describe('odds monitor platform views', () => {
         awayTeam: '广岛三箭',
         startTime: 1777700000000,
         status: 'scheduled',
-        sourceCount: 2,
+        sourceCount: 1,
         alertCount: 0,
-        matchedPlatforms: ['pinnacle', 'crown'],
+        matchedPlatforms: ['crown'],
       },
     ])
 
     expect(views.map((view) => view.viewKey)).toEqual(['10'])
-    expect(views[0].matchedPlatforms).toEqual(['pinnacle', 'crown'])
+    expect(views[0].matchedPlatforms).toEqual(['crown'])
   })
 
   it('keeps all platform odds in the detail view', () => {
@@ -30,23 +30,21 @@ describe('odds monitor platform views', () => {
         awayTeam: '广岛三箭',
         startTime: 1777700000000,
         status: 'scheduled',
-        sourceCount: 2,
+        sourceCount: 1,
         alertCount: 0,
-        matchedPlatforms: ['pinnacle', 'crown'],
+        matchedPlatforms: ['crown'],
       },
     ])
 
     const detail = {
       match: matchView.sourceMatch,
       metrics: [
-        { label: 'handicap home 0.5', value: '1.060', trend: '', sourceKey: 'pinnacle' },
         { label: 'handicap home 0.5', value: '0.950', trend: '', sourceKey: 'crown' },
       ],
       oddsHistory: [],
     }
 
     expect(selectPlatformDetail(detail, matchView).metrics).toEqual([
-      { label: 'handicap home 0.5', value: '1.060', trend: '', sourceKey: 'pinnacle' },
       { label: 'handicap home 0.5', value: '0.950', trend: '', sourceKey: 'crown' },
     ])
   })

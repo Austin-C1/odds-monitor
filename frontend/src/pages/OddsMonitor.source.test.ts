@@ -1,10 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 describe('odds monitor dashboard source', () => {
-  const source = readFileSync(join(process.cwd(), 'src', 'pages', 'OddsMonitor.tsx'), 'utf8')
+  const readSourcesIn = (dir: string): string[] => readdirSync(dir)
+    .flatMap((entry) => {
+      const fullPath = join(dir, entry)
+      return statSync(fullPath).isDirectory() ? readSourcesIn(fullPath) : [fullPath]
+    })
+    .filter((path) => path.endsWith('.ts') || path.endsWith('.tsx'))
+
+  const componentDir = join(process.cwd(), 'src', 'pages', 'odds-monitor')
+  const source = [
+    readFileSync(join(process.cwd(), 'src', 'pages', 'OddsMonitor.tsx'), 'utf8'),
+    ...readSourcesIn(componentDir).map((file) => readFileSync(file, 'utf8')),
+  ].join('\n')
   const styles = readFileSync(join(process.cwd(), 'src', 'pages', 'OddsMonitor.css'), 'utf8')
+
+  it('keeps odds monitor page composed from focused child modules', () => {
+    expect(existsSync(join(componentDir, 'OddsMonitorTopbar.tsx'))).toBe(true)
+    expect(existsSync(join(componentDir, 'MatchListPanel.tsx'))).toBe(true)
+    expect(existsSync(join(componentDir, 'MarketCollapsePanel.tsx'))).toBe(true)
+    expect(existsSync(join(componentDir, 'useOddsMonitorData.ts'))).toBe(true)
+    expect(source).toContain('<OddsMonitorTopbar')
+    expect(source).toContain('<MatchListPanel')
+    expect(source).toContain('<MarketCollapsePanel')
+    expect(source).toContain('useOddsMonitorData()')
+  })
 
   it('uses a light monitoring surface with platform badges in the match list', () => {
     expect(source).toContain('odds-monitor-page light-mode')
@@ -14,6 +36,13 @@ describe('odds monitor dashboard source', () => {
     expect(source).toContain('league-heading')
     expect(source).toContain('platform-row')
     expect(source).toContain('platformLabels[platform]')
+  })
+
+  it('keeps the monitor shell visible while loading or empty', () => {
+    expect(source).toContain('renderMonitorFallback')
+    expect(source).toContain('odds-monitor-fallback')
+    expect(source).toContain('loading ? <Spin />')
+    expect(source).toContain('<Empty description="暂无比赛数据" />')
   })
 
   it('keeps visible monitor labels in Chinese', () => {
@@ -26,9 +55,6 @@ describe('odds monitor dashboard source', () => {
       '胜平负',
       '无盘口',
       '最新赔率显示在走势图最右侧',
-      '双平台都有',
-      '疑似盘口缺失',
-      '平博',
       '皇冠',
     ].forEach((label) => expect(source).toContain(label))
     expect(source).not.toContain('Real Madrid')
@@ -59,8 +85,8 @@ describe('odds monitor dashboard source', () => {
   })
 
   it('keeps the required platform chart colors and latest value labels', () => {
-    expect(source).toContain("pinnacle: '#ef4444'")
     expect(source).toContain("crown: '#16a34a'")
+    expect(source).not.toContain("pinnacle: '#ef4444'")
     expect(source).toContain('createSeriesWithLatestLabel')
     expect(source).toContain('toAsianOdd')
     expect(source).toContain('formatAsianOdd')
@@ -91,9 +117,11 @@ describe('odds monitor dashboard source', () => {
     expect(source).toContain('window.setTimeout')
   })
 
-  it('keeps odds monitor focused on pinnacle and crown only', () => {
-    expect(source).toContain("type PlatformKey = 'pinnacle' | 'crown'")
-    expect(source).toContain("visiblePlatformKeys: PlatformKey[] = ['pinnacle', 'crown']")
+  it('keeps odds monitor focused on crown only', () => {
+    expect(source).toContain("type PlatformKey = 'crown'")
+    expect(source).toContain("visiblePlatformKeys: PlatformKey[] = ['crown']")
+    expect(source).not.toContain('pinnacle')
+    expect(source).not.toContain('平博')
     expect(source).not.toContain('Polymarket')
     expect(source).not.toContain('polymarket')
   })

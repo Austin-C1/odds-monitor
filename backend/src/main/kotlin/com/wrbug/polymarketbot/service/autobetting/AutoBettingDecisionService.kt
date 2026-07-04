@@ -314,6 +314,6 @@ class AutoBettingDecisionService(
         const val STATUS_PLACED = "placed"
         const val STATUS_PLACED_UNVERIFIED = "placed_unverified"
         private const val DEFAULT_ACCOUNT_KEY = "default"
-        private val supportedReferenceSources = setOf("pinnacle", "crown")
+        private val supportedReferenceSources = setOf("crown")
     }
 }

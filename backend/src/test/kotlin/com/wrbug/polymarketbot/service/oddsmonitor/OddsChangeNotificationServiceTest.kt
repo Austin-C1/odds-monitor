@@ -48,17 +48,15 @@ class OddsChangeNotificationServiceTest {
             leagueName = "日本J1",
             marketLabel = "让球 主队 0.5",
             changes = listOf(
-                OddsChangeNotificationItem("pinnacle", BigDecimal("1.06"), BigDecimal("1.09")),
                 OddsChangeNotificationItem("crown", BigDecimal("0.90"), BigDecimal("0.94"))
             ),
-            expectedSources = listOf("pinnacle", "crown"),
+            expectedSources = listOf("crown"),
             timestampText = "2026-05-03 15:07"
         )
 
         assertTrue(message.contains("赔率变动：东京 vs 川崎前锋"))
         assertTrue(message.contains("联赛：日本J1"))
         assertTrue(message.contains("盘口：让球 主队 0.5"))
-        assertTrue(message.contains("平博：1.06 -> 1.09"))
         assertTrue(message.contains("皇冠：0.90 -> 0.94"))
         assertFalse(message.contains("Polymarket"))
         assertFalse(message.contains("{"))
@@ -87,7 +85,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `formats pinnacle handicap and total odds as asian water in merged alerts`() {
+    fun `formats crown handicap and total odds without source conversion in merged alerts`() {
         val message = buildMergedOddsChangeAlertMessage(
             matchName = "尼科西亚希腊人竞技 vs AEK拉纳卡",
             leagueName = "塞浦路斯 - 甲级联赛",
@@ -95,21 +93,20 @@ class OddsChangeNotificationServiceTest {
                 OddsChangeNotificationMarketItem(
                     marketType = "handicap",
                     marketLabel = "让球 客队 0/0.5",
-                    changes = listOf(OddsChangeNotificationItem("pinnacle", BigDecimal("1.591"), BigDecimal("2.18")))
+                    changes = listOf(OddsChangeNotificationItem("crown", BigDecimal("1.591"), BigDecimal("2.18")))
                 ),
                 OddsChangeNotificationMarketItem(
                     marketType = "total",
                     marketLabel = "大小球 大球 2.5",
-                    changes = listOf(OddsChangeNotificationItem("pinnacle", BigDecimal("1.833"), BigDecimal("2.02")))
+                    changes = listOf(OddsChangeNotificationItem("crown", BigDecimal("1.833"), BigDecimal("2.02")))
                 )
             ),
-            expectedSources = listOf("pinnacle", "crown"),
+            expectedSources = listOf("crown"),
             timestampText = "2026-05-03 13:21:28"
         )
 
-        assertTrue(message.contains("平博：0.591 -> 1.18"))
-        assertTrue(message.contains("平博：0.833 -> 1.02"))
-        assertFalse(message.contains("平博：1.591 -> 2.18"))
+        assertTrue(message.contains("皇冠：1.591 -> 2.18"))
+        assertTrue(message.contains("皇冠：1.833 -> 2.02"))
     }
 
     @Test
@@ -135,7 +132,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `movement filter does not treat pinnacle one to zero point nine nine as water explosion`() {
+    fun `movement filter does not treat one to zero point nine nine as water explosion`() {
         val configs = listOf(telegramMonitorConfig(totalOddsMoveMin = "0.06"))
 
         assertTrue(
@@ -750,7 +747,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `crown market state still does not send telegram after pinnacle is disabled`() {
+    fun `crown market state still does not send telegram when non-crown source is disabled`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -771,7 +768,7 @@ class OddsChangeNotificationServiceTest {
 
         `when`(dataSourceConfigRepository.findAll()).thenReturn(
             listOf(
-                OddsDataSourceConfig(sourceKey = "pinnacle", displayName = "pinnacle", enabled = false),
+                OddsDataSourceConfig(sourceKey = "polymarket", displayName = "Polymarket", enabled = false),
                 OddsDataSourceConfig(sourceKey = "crown", displayName = "crown", enabled = true)
             )
         )
@@ -793,7 +790,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `crown odds alert omits disabled sources after pinnacle is disabled`() {
+    fun `crown odds alert omits disabled non-crown sources`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -814,7 +811,6 @@ class OddsChangeNotificationServiceTest {
 
         `when`(dataSourceConfigRepository.findAll()).thenReturn(
             listOf(
-                OddsDataSourceConfig(sourceKey = "pinnacle", displayName = "pinnacle", enabled = false),
                 OddsDataSourceConfig(sourceKey = "crown", displayName = "crown", enabled = true),
                 OddsDataSourceConfig(sourceKey = "polymarket", displayName = "Polymarket", enabled = false)
             )
@@ -1232,8 +1228,8 @@ class OddsChangeNotificationServiceTest {
         )
         val market = oddsMarket(sourceKey = "crown", matchId = 100).copy(id = 20, selectionName = "home")
         val pairMarket = oddsMarket(sourceKey = "crown", matchId = 100).copy(id = 21, selectionName = "away")
-        val pinnacleMarket = oddsMarket(sourceKey = "pinnacle", matchId = 101).copy(id = 30, selectionName = "home")
-        val pinnaclePairMarket = oddsMarket(sourceKey = "pinnacle", matchId = 101).copy(id = 31, selectionName = "away")
+        val legacyMarket = oddsMarket(sourceKey = "legacy", matchId = 101).copy(id = 30, selectionName = "home")
+        val legacyPairMarket = oddsMarket(sourceKey = "legacy", matchId = 101).copy(id = 31, selectionName = "away")
 
         runBlocking {
             `when`(notificationConfigService.getEnabledConfigsByType("telegram")).thenReturn(
@@ -1255,14 +1251,14 @@ class OddsChangeNotificationServiceTest {
         `when`(
             marketRepository.findTopByMatchIdAndSourceKeyAndMarketTypeAndLineValueAndSelectionNameOrderByUpdatedAtDesc(
                 101,
-                "pinnacle",
+                "legacy",
                 "handicap",
                 "0",
                 "away"
             )
-        ).thenReturn(pinnaclePairMarket)
+        ).thenReturn(legacyPairMarket)
         `when`(snapshotRepository.findTop1ByMarketIdOrderByCapturedAtDesc(31)).thenReturn(
-            OddsSnapshot(marketId = 31, sourceKey = "pinnacle", oddsValue = BigDecimal("0.90"))
+            OddsSnapshot(marketId = 31, sourceKey = "legacy", oddsValue = BigDecimal("0.90"))
         )
 
         service.notifyIfChanged(
@@ -1278,14 +1274,14 @@ class OddsChangeNotificationServiceTest {
             BigDecimal("1.05")
         )
         service.notifyIfChanged(
-            platformMatch(sourceKey = "pinnacle", rawLeagueName = "埃及超级联赛-附加赛").copy(id = 101),
-            pinnacleMarket,
+            platformMatch(sourceKey = "legacy", rawLeagueName = "埃及超级联赛-附加赛").copy(id = 101),
+            legacyMarket,
             BigDecimal("0.88"),
             BigDecimal("1.05")
         )
         service.notifyIfChanged(
-            platformMatch(sourceKey = "pinnacle", rawLeagueName = "意大利甲组联赛-特别投注").copy(id = 101),
-            pinnacleMarket,
+            platformMatch(sourceKey = "legacy", rawLeagueName = "意大利甲组联赛-特别投注").copy(id = 101),
+            legacyMarket,
             BigDecimal("0.88"),
             BigDecimal("1.05")
         )
@@ -1443,7 +1439,7 @@ class OddsChangeNotificationServiceTest {
     }
 
     @Test
-    fun `records one merged alert when multiple platforms change same match and market`() {
+    fun `records one alert when crown changes match and market`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -1463,14 +1459,12 @@ class OddsChangeNotificationServiceTest {
             )
         }
 
-        service.notifyIfChanged(platformMatch(sourceKey = "pinnacle"), oddsMarket(sourceKey = "pinnacle"), BigDecimal("1.91"), BigDecimal("2.03"))
         service.notifyIfChanged(platformMatch(sourceKey = "crown"), oddsMarket(sourceKey = "crown"), BigDecimal("0.90"), BigDecimal("0.99"))
         Thread.sleep(1_800)
 
         val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
         verify(alertRepository, times(1)).save(captor.capture())
         assertEquals(1, Regex("盘口：").findAll(captor.value.message).count())
-        assertTrue(captor.value.message.contains("平博：0.91 -> 1.03"))
         assertTrue(captor.value.message.contains("皇冠：0.90 -> 0.99"))
         assertFalse(captor.value.message.contains("Polymarket"))
     }
@@ -1497,12 +1491,6 @@ class OddsChangeNotificationServiceTest {
         }
 
         service.notifyIfChanged(
-            platformMatch(sourceKey = "pinnacle"),
-            oddsMarket(sourceKey = "pinnacle").copy(lineValue = "0.75"),
-            BigDecimal("1.91"),
-            BigDecimal("2.03")
-        )
-        service.notifyIfChanged(
             platformMatch(sourceKey = "crown"),
             oddsMarket(sourceKey = "crown").copy(lineValue = "0.5/1"),
             BigDecimal("0.90"),
@@ -1514,12 +1502,11 @@ class OddsChangeNotificationServiceTest {
         verify(alertRepository, times(1)).save(captor.capture())
         assertEquals(1, Regex("盘口：").findAll(captor.value.message).count())
         assertTrue(captor.value.message.contains("盘口：让球 客队 0.5/1"))
-        assertTrue(captor.value.message.contains("平博：0.91 -> 1.03"))
         assertTrue(captor.value.message.contains("皇冠：0.90 -> 0.99"))
     }
 
     @Test
-    fun `merges platform alerts for similar matches even when standard ids differ`() {
+    fun `records crown alert for similar match candidate`() {
         val alertRepository = mock(OddsAlertRecordRepository::class.java)
         val telegramNotificationService = mock(TelegramNotificationService::class.java)
         val notificationConfigService = mock(NotificationConfigService::class.java)
@@ -1541,12 +1528,6 @@ class OddsChangeNotificationServiceTest {
         }
 
         service.notifyIfChanged(
-            platformMatch(sourceKey = "pinnacle", startTime = startTime, rawHomeTeam = "Tokyo", rawAwayTeam = "Kawasaki Frontale"),
-            oddsMarket(sourceKey = "pinnacle", matchId = 100),
-            BigDecimal("1.91"),
-            BigDecimal("2.03")
-        )
-        service.notifyIfChanged(
             platformMatch(sourceKey = "crown", startTime = startTime, rawHomeTeam = "FC Tokyo", rawAwayTeam = "Kawasaki Frontale"),
             oddsMarket(sourceKey = "crown", matchId = 101),
             BigDecimal("0.90"),
@@ -1556,7 +1537,6 @@ class OddsChangeNotificationServiceTest {
 
         val captor = ArgumentCaptor.forClass(OddsAlertRecord::class.java)
         verify(alertRepository, times(1)).save(captor.capture())
-        assertTrue(captor.value.message.contains("平博：0.91 -> 1.03"))
         assertTrue(captor.value.message.contains("皇冠：0.90 -> 0.99"))
     }
 

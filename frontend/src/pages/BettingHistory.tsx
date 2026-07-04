@@ -5,9 +5,10 @@ import { apiClient } from '../services/api'
 import { TelegramConfigForm } from '../components/notifications'
 import type { NotificationConfig } from '../types'
 import { extractApiErrorMessage } from '../utils/apiError'
+import { PageShell } from './PageShell'
 import { extractTelegramConfig, isTelegramConfigReadyForTest, normalizeChatIds } from './notificationSettingsHelpers'
 
-const { Text, Title } = Typography
+const { Text } = Typography
 
 type ApiResponse<T> = { code: number; data: T; msg?: string }
 
@@ -286,15 +287,12 @@ const BettingHistory = () => {
   }, [filteredRows])
 
   return (
-    <div>
-      <Space align="center" style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <div>
-          <Title level={2} style={{ margin: 0 }}>下注记录</Title>
-          <Text type="secondary">投注成功后自动写入这里；默认只显示已验证成功的下注，失败、冷却、重复等只在全状态记录里查看。</Text>
-        </div>
-      </Space>
-
-      <Space size={16} wrap style={{ marginBottom: 16 }}>
+    <PageShell
+      title="下注记录"
+      description="投注成功后自动写入这里；默认只显示已验证成功的下注，失败、冷却、重复等只在全状态记录里查看。"
+      className="betting-history-page"
+    >
+      <div className="page-stat-grid">
         <Card>
           <Statistic title="成功金额" value={summary.successStake} precision={2} prefix="¥" />
         </Card>
@@ -304,12 +302,11 @@ const BettingHistory = () => {
         <Card>
           <Statistic title="二次验证" value={summary.verifiedCount} suffix="条" />
         </Card>
-      </Space>
+      </div>
 
       <Card
         size="small"
         title="投注成功机器人"
-        style={{ marginBottom: 16 }}
         extra={(
           <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openBotModal}>
             添加机器人
@@ -388,7 +385,7 @@ const BettingHistory = () => {
         )}
       </Card>
 
-      <Card size="small" title="已导入账号" style={{ marginBottom: 16 }}>
+      <Card size="small" title="已导入账号">
         <Space wrap>
           <Button
             type={selectedAccountId === null ? 'primary' : 'default'}
@@ -541,7 +538,7 @@ const BettingHistory = () => {
           />
         )}
       </Card>
-    </div>
+    </PageShell>
   )
 }
 

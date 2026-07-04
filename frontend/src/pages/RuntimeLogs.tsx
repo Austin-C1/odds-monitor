@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Typography } from 'antd'
+import { Card, Table, Tag } from 'antd'
 import { apiClient } from '../services/api'
-
-const { Title, Text } = Typography
+import { PageShell } from './PageShell'
 
 type ApiResponse<T> = { code: number; data: T; msg: string }
 type RuntimeLog = {
@@ -37,11 +36,14 @@ const RuntimeLogs = () => {
   }, [])
 
   return (
-    <Card>
-      <Title level={3} style={{ marginTop: 0 }}>运行日志</Title>
-      <Text type="secondary">采集器启动后记录成功、失败和数据量。</Text>
+    <PageShell
+      title="运行日志"
+      description="采集器启动后记录成功、失败和数据量。"
+      actions={<Tag color="blue">采集器</Tag>}
+      className="runtime-logs-page"
+    >
+      <Card>
       <Table
-        style={{ marginTop: 16 }}
         rowKey="id"
         loading={loading}
         dataSource={rows}
@@ -59,7 +61,8 @@ const RuntimeLogs = () => {
           { title: '说明', dataIndex: 'message', render: (value?: string) => value || '-' },
         ]}
       />
-    </Card>
+      </Card>
+    </PageShell>
   )
 }
 

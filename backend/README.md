@@ -5,7 +5,7 @@
 ## 功能
 
 - 赔率监控数据源配置、状态、联赛筛选和比赛看板。
-- Pinnacle 和 Crown 盘口数据采集。
+- Crown 盘口数据采集。
 - 自动投注信号判断、执行记录和下注成功记录。
 - AdsPower 本地 API 检测、启动 Profile、读取 Crown 登录状态和余额。
 - 通知配置、通知模板、系统配置、更新和登录鉴权。
@@ -15,8 +15,6 @@
 - Spring Boot 3.2.0
 - Kotlin 1.9.20
 - OkHttp 4.12.0
-- Playwright 1.49.0
-- Jsoup 1.17.2
 - MySQL 8.2.0
 - Flyway
 

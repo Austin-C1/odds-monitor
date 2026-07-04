@@ -7,9 +7,18 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 class AdsPowerLocalApiServiceSourceTest {
-    private val source = Files.readString(
-        Path.of("src/main/kotlin/com/wrbug/polymarketbot/service/autobetting/AdsPowerLocalApiService.kt")
-    )
+    private val source = listOf(
+        "src/main/kotlin/com/wrbug/polymarketbot/service/autobetting/crown/CrownBetPlacementService.kt",
+        "src/main/kotlin/com/wrbug/polymarketbot/service/autobetting/crown/CrownBetHistoryVerifier.kt",
+        "src/main/kotlin/com/wrbug/polymarketbot/service/autobetting/adspower/AdsPowerCdpClient.kt",
+        "src/main/kotlin/com/wrbug/polymarketbot/service/autobetting/adspower/AdsPowerLocalApiClient.kt",
+        "src/main/kotlin/com/wrbug/polymarketbot/service/autobetting/crown/CrownSessionMatcher.kt",
+        "src/main/kotlin/com/wrbug/polymarketbot/service/autobetting/AdsPowerLocalApiService.kt"
+    ).joinToString("\n") { path -> Files.readString(Path.of(path)) }
+        .replace("internal fun ", "private fun ")
+        .replace("internal data class ", "private data class ")
+        .replace("fun placeBet(", "override fun placeBet(")
+        .replace("fun verifyPlacedBet(", "override fun verifyPlacedBet(")
 
     @Test
     fun `crown placement verifies my bets count and receipt after accepted order`() {

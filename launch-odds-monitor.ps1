@@ -17,8 +17,9 @@ $backendUrl = "http://127.0.0.1:$backendPort"
 $backendReadyUrl = "$backendUrl/api/auth/check-first-use"
 $frontendPort = 18881
 $backendStartupTimeoutSeconds = 180
-$frontendOutLog = Join-Path $rootDir 'frontend-live.out.log'
-$frontendErrLog = Join-Path $rootDir 'frontend-live.err.log'
+$logDir = Join-Path $rootDir 'logs'
+$frontendOutLog = Join-Path $logDir 'frontend-live.out.log'
+$frontendErrLog = Join-Path $logDir 'frontend-live.err.log'
 $frontendDistDir = Join-Path $frontendDir 'dist'
 $frontendDistMarker = Join-Path $frontendDistDir '.desktop-runtime.json'
 $frontendStaticServerScript = Join-Path $rootDir 'scripts\serve-odds-frontend.ps1'
@@ -39,7 +40,7 @@ function Fail-Launch {
 
     Write-Host ''
     Write-Host "[OddsMonitor] Launch failed: $Message" -ForegroundColor Red
-    Write-Host "[OddsMonitor] Logs: $rootDir"
+    Write-Host "[OddsMonitor] Logs: $logDir"
     Write-Host ''
     if ([System.Environment]::UserInteractive -and -not [System.Console]::IsInputRedirected) {
         Write-Host 'Press any key to close...'
@@ -481,6 +482,8 @@ function Wait-DatabaseReady {
 }
 
 Invoke-LaunchStep 'Checking program files' {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+
     if (-not (Test-Path $backendScript)) {
         throw "Backend start script not found: $backendScript"
     }

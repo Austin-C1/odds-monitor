@@ -84,8 +84,8 @@ class OddsStandardMatchServiceTest {
         ).resolveStandardMatch(
             OddsPlatformMatch(
                 id = 21,
-                sourceKey = "pinnacle",
-                sourceMatchId = "p1",
+                sourceKey = "external",
+                sourceMatchId = "e1",
                 rawLeagueName = "England Premier League",
                 rawHomeTeam = "Arsenal",
                 rawAwayTeam = "Chelsea",
@@ -115,7 +115,7 @@ class OddsStandardMatchServiceTest {
             awayTeam = "奥格雷联",
             startTime = 1893438000000L
         )
-        val pinnacleMatch = OddsMatch(
+        val betterMatch = OddsMatch(
             id = 11,
             leagueName = "拉脱维亚 - 超级联赛",
             homeTeam = "图库姆斯2000",
@@ -128,7 +128,7 @@ class OddsStandardMatchServiceTest {
         `when`(linkRepository.findByMatchId(11)).thenReturn(emptyList())
         `when`(matchRepository.findById(10)).thenReturn(Optional.of(staleCrownMatch))
         `when`(matchRepository.findTop500BySportOrderByStartTimeAsc("football")).thenReturn(
-            listOf(staleCrownMatch, pinnacleMatch)
+            listOf(staleCrownMatch, betterMatch)
         )
         `when`(matchRepository.save(any(OddsMatch::class.java))).thenAnswer { it.arguments[0] }
         `when`(linkRepository.save(any(OddsMatchLink::class.java))).thenAnswer { it.arguments[0] }
@@ -203,12 +203,12 @@ class OddsStandardMatchServiceTest {
     }
 
     @Test
-    fun `keeps existing standard start time when pinnacle has timezone offset`() {
+    fun `keeps existing standard start time when external source has timezone offset`() {
         val matchRepository = mock(OddsMatchRepository::class.java)
         val linkRepository = mock(OddsMatchLinkRepository::class.java)
         val platformMatchRepository = mock(OddsPlatformMatchRepository::class.java)
         val crownStartTime = 1893456000000L
-        val pinnacleOffsetStartTime = crownStartTime + 8 * 60 * 60 * 1000
+        val externalOffsetStartTime = crownStartTime + 8 * 60 * 60 * 1000
         val standardMatch = OddsMatch(
             id = 10,
             leagueName = "UEFA Europa League",
@@ -250,12 +250,12 @@ class OddsStandardMatchServiceTest {
         ).resolveStandardMatch(
             OddsPlatformMatch(
                 id = 21,
-                sourceKey = "pinnacle",
-                sourceMatchId = "p1",
+                sourceKey = "external",
+                sourceMatchId = "e1",
                 rawLeagueName = "UEFA Europa League",
                 rawHomeTeam = "Aston Villa",
                 rawAwayTeam = "Nottingham Forest",
-                rawStartTime = pinnacleOffsetStartTime
+                rawStartTime = externalOffsetStartTime
             )
         )
 

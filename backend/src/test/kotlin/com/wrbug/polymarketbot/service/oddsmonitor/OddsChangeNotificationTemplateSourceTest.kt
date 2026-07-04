@@ -9,9 +9,11 @@ class OddsChangeNotificationTemplateSourceTest {
 
     @Test
     fun `odds change notifications should render prematch and live templates`() {
-        val source = Files.readString(
-            Path.of("src/main/kotlin/com/wrbug/polymarketbot/service/oddsmonitor/OddsChangeNotificationService.kt")
-        )
+        val source = listOf(
+            "src/main/kotlin/com/wrbug/polymarketbot/service/oddsmonitor/OddsChangeNotificationService.kt",
+            "src/main/kotlin/com/wrbug/polymarketbot/service/oddsmonitor/OddsChangeNotificationFormatter.kt",
+            "src/main/kotlin/com/wrbug/polymarketbot/service/oddsmonitor/OddsNotificationDeliveryService.kt"
+        ).joinToString("\n") { path -> Files.readString(Path.of(path)) }
 
         assertTrue(source.contains("notificationTemplateService"))
         assertTrue(source.contains("renderTemplate("))

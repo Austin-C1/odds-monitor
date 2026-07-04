@@ -19,8 +19,8 @@ describe('data source settings source', () => {
 
   it('does not render Polymarket data source controls', () => {
     expect(source).toContain("SUPPORTED_SOURCE_KEYS")
-    expect(source).toContain("'pinnacle'")
     expect(source).toContain("'crown'")
+    expect(source).not.toContain("'pinnacle'")
     expect(source).not.toContain("sourceKey === 'polymarket'")
     expect(source).not.toContain('查询关键词')
   })
